@@ -30,8 +30,8 @@ contract OutstakeScript is BaseScript {
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
 
         // deployOutStakeRouter(3);
-        supportSlisBNB();
-        // deployOutrunDeployer(0);
+        // supportSlisBNB();
+        deployOutrunDeployer(0);
     }
 
     function deployOutrunDeployer(uint256 nonce) internal {
