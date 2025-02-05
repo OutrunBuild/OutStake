@@ -31,14 +31,6 @@ contract OutstakeScript is BaseScript {
 
         // deployOutStakeRouter(3);
         // supportSlisBNB();
-        deployOutrunDeployer(0);
-    }
-
-    function deployOutrunDeployer(uint256 nonce) internal {
-        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
-        address outrunDeployerAddr = Create2.deploy(0, salt, abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner)));
-
-        console.log("OutrunDeployer deployed on %s", outrunDeployerAddr);
     }
 
     function deployOutStakeRouter(uint256 nonce) internal {
