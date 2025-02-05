@@ -6,4 +6,4 @@ ds-test/=node_modules/@layerzerolabs/toolbox-foundry/lib/ds-test
 forge-std/=node_modules/@layerzerolabs/toolbox-foundry/lib/forge-std
 @layerzerolabs/=node_modules/@layerzerolabs/
 @pythnetwork/pyth-sdk-solidity/=node_modules/@pythnetwork/pyth-sdk-solidity
-@solmate/=lib/solmate/src/
+solmate/=lib/solmate/
