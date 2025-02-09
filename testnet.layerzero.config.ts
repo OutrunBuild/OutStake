@@ -1,49 +1,48 @@
-import { EndpointId } from '@layerzerolabs/lz-definitions'
-
+import { EndpointId } from "@layerzerolabs/lz-definitions";
 const base_sepoliaContract = {
     eid: EndpointId.BASESEP_V2_TESTNET,
-    contractName: 'OutrunUniversalPrincipalToken',
-}
-const mantle_sepoliaContract = {
-    eid: EndpointId.MANTLESEP_V2_TESTNET,
-    contractName: 'OutrunUniversalPrincipalToken',
-}
+    contractName: "OutrunUniversalPrincipalToken",
+};
 const bsc_testnetContract = {
     eid: EndpointId.BSC_V2_TESTNET,
-    contractName: 'OutrunUniversalPrincipalToken',
-}
-const blast_sepoliaContract = {
-    eid: EndpointId.BLAST_V2_TESTNET,
-    contractName: 'OutrunUniversalPrincipalTokenOnBlast',
-}
-
+    contractName: "OutrunUniversalPrincipalToken",
+};
+const scroll_sepoliaContract = {
+    eid: EndpointId.SCROLL_V2_TESTNET,
+    contractName: "OutrunUniversalPrincipalToken",
+};
 export default {
     contracts: [
         { contract: base_sepoliaContract },
-        { contract: mantle_sepoliaContract },
         { contract: bsc_testnetContract },
-        { contract: blast_sepoliaContract }
+        { contract: scroll_sepoliaContract },
     ],
     connections: [
         {
             from: base_sepoliaContract,
-            to: blast_sepoliaContract,
+            to: bsc_testnetContract,
             config: {
-                sendLibrary: '0xC1868e054425D378095A003EcbA3823a5D0135C9',
-                receiveLibraryConfig: { receiveLibrary: '0x12523de19dc41c91F7d2093E0CFbB76b17012C8d', gracePeriod: 0 },
+                sendLibrary: "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+                receiveLibraryConfig: {
+                    receiveLibrary: "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+                    gracePeriod: 0,
+                },
                 sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x8A3D588D9f6AC041476b094f97FF94ec30169d3D' },
+                    executorConfig: {
+                        maxMessageSize: 10000,
+                        executor: "0x8A3D588D9f6AC041476b094f97FF94ec30169d3D",
+                    },
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6'],
+                        requiredDVNs: ["0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
                 },
                 receiveConfig: {
                     ulnConfig: {
-                        confirmations: 1,
-                        requiredDVNs: ['0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6'],
+                        confirmations: 5,
+                        requiredDVNs: ["0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -52,15 +51,21 @@ export default {
         },
         {
             from: base_sepoliaContract,
-            to: mantle_sepoliaContract,
+            to: scroll_sepoliaContract,
             config: {
-                sendLibrary: '0xC1868e054425D378095A003EcbA3823a5D0135C9',
-                receiveLibraryConfig: { receiveLibrary: '0x12523de19dc41c91F7d2093E0CFbB76b17012C8d', gracePeriod: 0 },
+                sendLibrary: "0xC1868e054425D378095A003EcbA3823a5D0135C9",
+                receiveLibraryConfig: {
+                    receiveLibrary: "0x12523de19dc41c91F7d2093E0CFbB76b17012C8d",
+                    gracePeriod: 0,
+                },
                 sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x8A3D588D9f6AC041476b094f97FF94ec30169d3D' },
+                    executorConfig: {
+                        maxMessageSize: 10000,
+                        executor: "0x8A3D588D9f6AC041476b094f97FF94ec30169d3D",
+                    },
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6'],
+                        requiredDVNs: ["0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -68,107 +73,7 @@ export default {
                 receiveConfig: {
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-            },
-        },
-        {
-            from: base_sepoliaContract,
-            to: bsc_testnetContract,
-            config: {
-                sendLibrary: '0xC1868e054425D378095A003EcbA3823a5D0135C9',
-                receiveLibraryConfig: { receiveLibrary: '0x12523de19dc41c91F7d2093E0CFbB76b17012C8d', gracePeriod: 0 },
-                sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x8A3D588D9f6AC041476b094f97FF94ec30169d3D' },
-                    ulnConfig: {
-                        confirmations: 1,
-                        requiredDVNs: ['0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-                receiveConfig: {
-                    ulnConfig: {
-                        confirmations: 5,
-                        requiredDVNs: ['0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-            },
-        },
-        {
-            from: blast_sepoliaContract,
-            to: base_sepoliaContract,
-            config: {
-                sendLibrary: '0x701f3927871EfcEa1235dB722f9E608aE120d243',
-                receiveLibraryConfig: { receiveLibrary: '0x9dB9Ca3305B48F196D18082e91cB64663b13d014', gracePeriod: 0 },
-                sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0xE62d066e71fcA410eD48ad2f2A5A860443C04035' },
-                    ulnConfig: {
-                        confirmations: 1,
-                        requiredDVNs: ['0x939Afd54A8547078dBEa02b683A7F1FDC929f853'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-                receiveConfig: {
-                    ulnConfig: {
-                        confirmations: 1,
-                        requiredDVNs: ['0x939Afd54A8547078dBEa02b683A7F1FDC929f853'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-            },
-        },
-        // {
-        //     from: blast_sepoliaContract,
-        //     to: mantle_sepoliaContract,
-        //     config: {
-        //         sendLibrary: '0x701f3927871EfcEa1235dB722f9E608aE120d243',
-        //         receiveLibraryConfig: { receiveLibrary: '0x9dB9Ca3305B48F196D18082e91cB64663b13d014', gracePeriod: 0 },
-        //         sendConfig: {
-        //             executorConfig: { maxMessageSize: 10000, executor: '0xE62d066e71fcA410eD48ad2f2A5A860443C04035' },
-        //             ulnConfig: {
-        //                 confirmations: 1,
-        //                 requiredDVNs: ['0x939Afd54A8547078dBEa02b683A7F1FDC929f853'],
-        //                 optionalDVNs: [],
-        //                 optionalDVNThreshold: 0,
-        //             },
-        //         },
-        //         receiveConfig: {
-        //             ulnConfig: {
-        //                 confirmations: 1,
-        //                 requiredDVNs: ['0x939Afd54A8547078dBEa02b683A7F1FDC929f853'],
-        //                 optionalDVNs: [],
-        //                 optionalDVNThreshold: 0,
-        //             },
-        //         },
-        //     },
-        // },
-        {
-            from: blast_sepoliaContract,
-            to: bsc_testnetContract,
-            config: {
-                sendLibrary: '0x701f3927871EfcEa1235dB722f9E608aE120d243',
-                receiveLibraryConfig: { receiveLibrary: '0x9dB9Ca3305B48F196D18082e91cB64663b13d014', gracePeriod: 0 },
-                sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0xE62d066e71fcA410eD48ad2f2A5A860443C04035' },
-                    ulnConfig: {
-                        confirmations: 1,
-                        requiredDVNs: ['0x939Afd54A8547078dBEa02b683A7F1FDC929f853'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-                receiveConfig: {
-                    ulnConfig: {
-                        confirmations: 5,
-                        requiredDVNs: ['0x939Afd54A8547078dBEa02b683A7F1FDC929f853'],
+                        requiredDVNs: ["0xe1a12515F9AB2764b887bF60B923Ca494EBbB2d6"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -179,13 +84,19 @@ export default {
             from: bsc_testnetContract,
             to: base_sepoliaContract,
             config: {
-                sendLibrary: '0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7',
-                receiveLibraryConfig: { receiveLibrary: '0x188d4bbCeD671A7aA2b5055937F79510A32e9683', gracePeriod: 0 },
+                sendLibrary: "0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7",
+                receiveLibraryConfig: {
+                    receiveLibrary: "0x188d4bbCeD671A7aA2b5055937F79510A32e9683",
+                    gracePeriod: 0,
+                },
                 sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x31894b190a8bAbd9A067Ce59fde0BfCFD2B18470' },
+                    executorConfig: {
+                        maxMessageSize: 10000,
+                        executor: "0x31894b190a8bAbd9A067Ce59fde0BfCFD2B18470",
+                    },
                     ulnConfig: {
                         confirmations: 5,
-                        requiredDVNs: ['0x0eE552262f7B562eFcED6DD4A7e2878AB897d405'],
+                        requiredDVNs: ["0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -193,7 +104,7 @@ export default {
                 receiveConfig: {
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0x0eE552262f7B562eFcED6DD4A7e2878AB897d405'],
+                        requiredDVNs: ["0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -202,15 +113,21 @@ export default {
         },
         {
             from: bsc_testnetContract,
-            to: mantle_sepoliaContract,
+            to: scroll_sepoliaContract,
             config: {
-                sendLibrary: '0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7',
-                receiveLibraryConfig: { receiveLibrary: '0x188d4bbCeD671A7aA2b5055937F79510A32e9683', gracePeriod: 0 },
+                sendLibrary: "0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7",
+                receiveLibraryConfig: {
+                    receiveLibrary: "0x188d4bbCeD671A7aA2b5055937F79510A32e9683",
+                    gracePeriod: 0,
+                },
                 sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x31894b190a8bAbd9A067Ce59fde0BfCFD2B18470' },
+                    executorConfig: {
+                        maxMessageSize: 10000,
+                        executor: "0x31894b190a8bAbd9A067Ce59fde0BfCFD2B18470",
+                    },
                     ulnConfig: {
                         confirmations: 5,
-                        requiredDVNs: ['0x0eE552262f7B562eFcED6DD4A7e2878AB897d405'],
+                        requiredDVNs: ["0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -218,7 +135,7 @@ export default {
                 receiveConfig: {
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0x0eE552262f7B562eFcED6DD4A7e2878AB897d405'],
+                        requiredDVNs: ["0x0eE552262f7B562eFcED6DD4A7e2878AB897d405"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -226,41 +143,22 @@ export default {
             },
         },
         {
-            from: bsc_testnetContract,
-            to: blast_sepoliaContract,
-            config: {
-                sendLibrary: '0x55f16c442907e86D764AFdc2a07C2de3BdAc8BB7',
-                receiveLibraryConfig: { receiveLibrary: '0x188d4bbCeD671A7aA2b5055937F79510A32e9683', gracePeriod: 0 },
-                sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x31894b190a8bAbd9A067Ce59fde0BfCFD2B18470' },
-                    ulnConfig: {
-                        confirmations: 5,
-                        requiredDVNs: ['0x0eE552262f7B562eFcED6DD4A7e2878AB897d405'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-                receiveConfig: {
-                    ulnConfig: {
-                        confirmations: 1,
-                        requiredDVNs: ['0x0eE552262f7B562eFcED6DD4A7e2878AB897d405'],
-                        optionalDVNs: [],
-                        optionalDVNThreshold: 0,
-                    },
-                },
-            },
-        },
-        {
-            from: mantle_sepoliaContract,
+            from: scroll_sepoliaContract,
             to: base_sepoliaContract,
             config: {
-                sendLibrary: '0x9A289B849b32FF69A95F8584a03343a33Ff6e5Fd',
-                receiveLibraryConfig: { receiveLibrary: '0x8A3D588D9f6AC041476b094f97FF94ec30169d3D', gracePeriod: 0 },
+                sendLibrary: "0x21f1C2B131557c3AebA918D590815c47Dc4F20aa",
+                receiveLibraryConfig: {
+                    receiveLibrary: "0xf2dB23f9eA1311E9ED44E742dbc4268de4dB0a88",
+                    gracePeriod: 0,
+                },
                 sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x8BEEe743829af63F5b37e52D5ef8477eF12511dE' },
+                    executorConfig: {
+                        maxMessageSize: 10000,
+                        executor: "0xD0D47C34937DdbeBBe698267a6BbB1dacE51198D",
+                    },
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0x9454f0eabc7c4ea9ebf89190b8bf9051a0468e03'],
+                        requiredDVNs: ["0xb186F85d0604FE58af2Ea33fE40244f5EEF7351B"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -268,49 +166,30 @@ export default {
                 receiveConfig: {
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0x9454f0eabc7c4ea9ebf89190b8bf9051a0468e03'],
+                        requiredDVNs: ["0xb186F85d0604FE58af2Ea33fE40244f5EEF7351B"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
                 },
             },
         },
-        // {
-        //     from: mantle_sepoliaContract,
-        //     to: blast_sepoliaContract,
-        //     config: {
-        //         sendLibrary: '0x9A289B849b32FF69A95F8584a03343a33Ff6e5Fd',
-        //         receiveLibraryConfig: { receiveLibrary: '0x8A3D588D9f6AC041476b094f97FF94ec30169d3D', gracePeriod: 0 },
-        //         sendConfig: {
-        //             executorConfig: { maxMessageSize: 10000, executor: '0x8BEEe743829af63F5b37e52D5ef8477eF12511dE' },
-        //             ulnConfig: {
-        //                 confirmations: 1,
-        //                 requiredDVNs: ['0x9454f0eabc7c4ea9ebf89190b8bf9051a0468e03'],
-        //                 optionalDVNs: [],
-        //                 optionalDVNThreshold: 0,
-        //             },
-        //         },
-        //         receiveConfig: {
-        //             ulnConfig: {
-        //                 confirmations: 1,
-        //                 requiredDVNs: ['0x9454f0eabc7c4ea9ebf89190b8bf9051a0468e03'],
-        //                 optionalDVNs: [],
-        //                 optionalDVNThreshold: 0,
-        //             },
-        //         },
-        //     },
-        // },
         {
-            from: mantle_sepoliaContract,
+            from: scroll_sepoliaContract,
             to: bsc_testnetContract,
             config: {
-                sendLibrary: '0x9A289B849b32FF69A95F8584a03343a33Ff6e5Fd',
-                receiveLibraryConfig: { receiveLibrary: '0x8A3D588D9f6AC041476b094f97FF94ec30169d3D', gracePeriod: 0 },
+                sendLibrary: "0x21f1C2B131557c3AebA918D590815c47Dc4F20aa",
+                receiveLibraryConfig: {
+                    receiveLibrary: "0xf2dB23f9eA1311E9ED44E742dbc4268de4dB0a88",
+                    gracePeriod: 0,
+                },
                 sendConfig: {
-                    executorConfig: { maxMessageSize: 10000, executor: '0x8BEEe743829af63F5b37e52D5ef8477eF12511dE' },
+                    executorConfig: {
+                        maxMessageSize: 10000,
+                        executor: "0xD0D47C34937DdbeBBe698267a6BbB1dacE51198D",
+                    },
                     ulnConfig: {
                         confirmations: 1,
-                        requiredDVNs: ['0x9454f0eabc7c4ea9ebf89190b8bf9051a0468e03'],
+                        requiredDVNs: ["0xb186F85d0604FE58af2Ea33fE40244f5EEF7351B"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -318,7 +197,7 @@ export default {
                 receiveConfig: {
                     ulnConfig: {
                         confirmations: 5,
-                        requiredDVNs: ['0x9454f0eabc7c4ea9ebf89190b8bf9051a0468e03'],
+                        requiredDVNs: ["0xb186F85d0604FE58af2Ea33fE40244f5EEF7351B"],
                         optionalDVNs: [],
                         optionalDVNThreshold: 0,
                     },
@@ -326,4 +205,4 @@ export default {
             },
         },
     ],
-}
+};

@@ -2,15 +2,15 @@
 pragma solidity ^0.8.26;
 
 import "./BaseScript.s.sol";
-import { OutStakeRouterOnBlast } from "../src/router/OutStakeRouterOnBlast.sol";
+import { OutStakeRouter } from "../src/router/OutStakeRouter.sol";
 import { IPrincipalToken } from "../src/core/YieldContracts/interfaces/IPrincipalToken.sol";
 import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { IBlastGovernorable, BlastModeEnum } from "../src/external/blast/BlastGovernorable.sol";
 import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastETHSY.sol";
 import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastUSDSY.sol";
-import { OutrunPositionOptionTokenOnBlast } from "../src/core/Position/OutrunPositionOptionTokenOnBlast.sol";
-import { OutrunERC4626YieldTokenOnBlast } from "../src/core/YieldContracts/OutrunERC4626YieldTokenOnBlast.sol";
-import { OutrunPrincipalTokenOnBlast } from "../src/core/YieldContracts/OutrunPrincipalTokenOnBlast.sol";
+import { OutrunPositionOptionToken } from "../src/core/Position/OutrunPositionOptionToken.sol";
+import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
+import { OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
 
 contract OutstakeScriptOnBlast is BaseScript {
     address internal owner;
@@ -31,7 +31,6 @@ contract OutstakeScriptOnBlast is BaseScript {
         blastPoints = vm.envAddress("BLAST_POINTS");
         pointsOperator = vm.envAddress("POINTS_OPERATOR");
 
-        // deployOutStakeRouter(3);
         supportBlastETH();
         supportBlastUSD();
     }
@@ -53,31 +52,28 @@ contract OutstakeScriptOnBlast is BaseScript {
         address BETHSYAddress = address(SY_BETH);
 
         // PT
-        OutrunPrincipalTokenOnBlast PT_BETH = new OutrunPrincipalTokenOnBlast(
+        OutrunPrincipalToken PT_BETH = new OutrunPrincipalToken(
             "Outrun BETH Principal Token",
             "PT-BETH",
             18,
-            owner,
-            blastGovernor
+            owner
         );
         address BETHPTAddress = address(PT_BETH);
         
         // YT
-        OutrunERC4626YieldTokenOnBlast YT_BETH = new OutrunERC4626YieldTokenOnBlast(
+        OutrunERC4626YieldToken YT_BETH = new OutrunERC4626YieldToken(
             "Outrun Blast ETH Yield Token",
             "YT-BETH",
             18,
             owner, 
-            blastGovernor, 
             revenuePool, 
             protocolFeeRate
         );
         address BETHYTAddress = address(YT_BETH);
 
         // POT
-        OutrunPositionOptionTokenOnBlast POT_BETH = new OutrunPositionOptionTokenOnBlast(
+        OutrunPositionOptionToken POT_BETH = new OutrunPositionOptionToken(
             owner,
-            blastGovernor,
             "Blast ETH Position Option Token",
             "POT-BETH",
             18,
@@ -95,9 +91,6 @@ contract OutstakeScriptOnBlast is BaseScript {
         YT_BETH.initialize(BETHSYAddress, BETHPOTAddress);
 
         // IBlastGovernorable(SY_BETH).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
-        // IBlastGovernorable(PT_BETH).configure(BlastModeEnum.YieldMode.VOID, BlastModeEnum.GasMode.CLAIMABLE);
-        // IBlastGovernorable(YT_BETH).configure(BlastModeEnum.YieldMode.VOID, BlastModeEnum.GasMode.CLAIMABLE);
-        // IBlastGovernorable(POT_BETH).configure(BlastModeEnum.YieldMode.VOID, BlastModeEnum.GasMode.CLAIMABLE);
 
         console.log("SY_BETH deployed on %s", BETHSYAddress);
         console.log("PT_BETH deployed on %s", BETHPTAddress);
@@ -122,31 +115,28 @@ contract OutstakeScriptOnBlast is BaseScript {
         address USDBSYAddress = address(SY_USDB);
 
         // PT
-        OutrunPrincipalTokenOnBlast PT_USDB = new OutrunPrincipalTokenOnBlast(
+        OutrunPrincipalToken PT_USDB = new OutrunPrincipalToken(
             "Outrun USDB Principal Token",
             "PT-USDB",
             18,
-            owner,
-            blastGovernor
+            owner
         );
         address USDBPTAddress = address(PT_USDB);
         
         // YT
-        OutrunERC4626YieldTokenOnBlast YT_USDB = new OutrunERC4626YieldTokenOnBlast(
+        OutrunERC4626YieldToken YT_USDB = new OutrunERC4626YieldToken(
             "Outrun Blast USD Yield Token",
             "YT-USDB",
             18,
             owner, 
-            blastGovernor, 
             revenuePool, 
             protocolFeeRate
         );
         address USDBYTAddress = address(YT_USDB);
 
         // POT
-        OutrunPositionOptionTokenOnBlast POT_USDB = new OutrunPositionOptionTokenOnBlast(
+        OutrunPositionOptionToken POT_USDB = new OutrunPositionOptionToken(
             owner,
-            blastGovernor,
             "Blast USD Position Option Token",
             "POT-BETH",
             18,
@@ -164,24 +154,10 @@ contract OutstakeScriptOnBlast is BaseScript {
         YT_USDB.initialize(USDBSYAddress, USDBPOTAddress);
 
         // IBlastGovernorable(SY_USDB).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
-        // IBlastGovernorable(PT_USDB).configure(BlastModeEnum.YieldMode.VOID, BlastModeEnum.GasMode.CLAIMABLE);
-        // IBlastGovernorable(YT_USDB).configure(BlastModeEnum.YieldMode.VOID, BlastModeEnum.GasMode.CLAIMABLE);
-        // IBlastGovernorable(POT_USDB).configure(BlastModeEnum.YieldMode.VOID, BlastModeEnum.GasMode.CLAIMABLE);
 
         console.log("SY_USDB deployed on %s", USDBSYAddress);
         console.log("PT_USDB deployed on %s", USDBPTAddress);
         console.log("YT_USDB deployed on %s", USDBYTAddress);
         console.log("POT_USDB deployed on %s", USDBPOTAddress);
-    }
-
-    function deployOutStakeRouter(uint256 nonce) internal {
-        bytes32 salt = keccak256(abi.encodePacked("OutStakeRouter", nonce));
-        bytes memory initCode = abi.encodePacked(
-            type(OutStakeRouterOnBlast).creationCode,
-            abi.encode(blastGovernor)
-        );
-        address outStakeRouterAddr = IOutrunDeployer(outrunDeployer).deploy(salt, initCode);
-
-        console.log("OutStakeRouterOnBlast deployed on %s", outStakeRouterAddr);
     }
 }

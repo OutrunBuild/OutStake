@@ -10,7 +10,7 @@
 
 ## UPT
 
-**UETH** (Omnichain): 0x681dEde3849f070DC13a0e0DbA60b8dEAAE2aA2b  
+**UETH** (Omnichain): 0xa80848b94015AC13b716f05b6305466550fbA2AC  
 
 ## BSC Testnet
 
