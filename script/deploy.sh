@@ -22,7 +22,7 @@ forge script OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
     --verify 
 
 forge script OutstakeScript.s.sol:OutstakeScript --rpc-url scroll_sepolia \
-    --priority-gas-price 100 --with-gas-price 50000000 \
+    --priority-gas-price 100 --with-gas-price 80000000 \
     --optimize --optimizer-runs 100000 \
     --via-ir \
     --broadcast --ffi -vvvv \
