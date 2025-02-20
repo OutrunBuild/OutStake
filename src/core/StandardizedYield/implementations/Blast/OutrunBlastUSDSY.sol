@@ -3,7 +3,6 @@ pragma solidity ^0.8.26;
 
 import { SYBase, ArrayLib } from "../../SYBase.sol";
 import { SYUtils } from "../../../libraries/SYUtils.sol";
-import { IBlastPoints } from "../../../../external/blast/IBlastPoints.sol";
 import { IERC20Rebasing } from "../../../../external/blast/IERC20Rebasing.sol";
 import { BlastGovernorable } from "../../../../external/blast/BlastGovernorable.sol";
 
@@ -15,12 +14,9 @@ contract OutrunBlastUSDSY is SYBase, BlastGovernorable {
     constructor(
         address _USDB,
         address _owner,
-        address _blastGovernor,
-        address _blastPoints,
-        address _pointsOperator
+        address _blastGovernor
     ) SYBase("SY Blast USD", "SY-USDB", _USDB, _owner) BlastGovernorable(_blastGovernor) {
         USDB = _USDB;
-        IBlastPoints(_blastPoints).configurePointsOperator(_pointsOperator);
     }
 
     function _deposit(

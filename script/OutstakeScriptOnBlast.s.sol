@@ -45,9 +45,7 @@ contract OutstakeScriptOnBlast is BaseScript {
         OutrunBlastETHSY SY_BETH = new OutrunBlastETHSY(
             WETH,
             owner,
-            blastGovernor,
-            blastPoints,
-            pointsOperator
+            blastGovernor
         );
         address BETHSYAddress = address(SY_BETH);
 
@@ -108,9 +106,7 @@ contract OutstakeScriptOnBlast is BaseScript {
         OutrunBlastUSDSY SY_USDB = new OutrunBlastUSDSY(
             USDB,
             owner,
-            blastGovernor,
-            blastPoints,
-            pointsOperator
+            blastGovernor
         );
         address USDBSYAddress = address(SY_USDB);
 
