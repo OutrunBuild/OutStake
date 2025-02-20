@@ -46,8 +46,8 @@ abstract contract BlastGovernorable is IBlastGovernorable {
      * @dev Read all gas remaining balance 
      */
     function readGasBalance() external view override onlyBlastGovernor returns (uint256) {
-        (, uint256 gasBanlance, , ) = BLAST.readGasParams(address(this));
-        return gasBanlance;
+        (, uint256 gasBalance, , ) = BLAST.readGasParams(address(this));
+        return gasBalance;
     }
 
     /**
