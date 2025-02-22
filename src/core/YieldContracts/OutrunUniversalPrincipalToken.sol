@@ -60,4 +60,12 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT, T
 
         emit RedeemPT(authorizedPT, receiver, amountInUPT);
     }
+
+    /**
+     * @dev Any can burn their UPT
+     * @param amount - The amount of burned UPT
+     */
+    function burn(uint256 amount) external override {
+        _burn(msg.sender, amount);
+    }
 }

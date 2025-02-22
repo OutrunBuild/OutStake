@@ -11,6 +11,9 @@ interface IUniversalPrincipalToken {
 
 	function redeemPTFromUPT(address authorizedPT, address receiver, uint256 amountInUPT) external;
 
+	function burn(uint256 amount) external;
+	
+
 	event MintUPT(address indexed fromPT, address receiver, uint256 amountInUPT);
 
 	event RedeemPT(address indexed authorizedPT, address receiver, uint256 amountInPT);
