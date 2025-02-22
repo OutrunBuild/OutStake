@@ -27,7 +27,7 @@ const deploy: DeployFunction = async (hre) => {
         deployer // owner
     ];
 
-    const nonce = 2;
+    const nonce = 3;
     const salt = keccak256(hre.ethers.utils.defaultAbiCoder.encode(
         ['string', 'uint256'],
         ["OutrunUniversalPrincipalToken", nonce]

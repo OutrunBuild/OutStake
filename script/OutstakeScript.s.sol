@@ -3,15 +3,17 @@ pragma solidity ^0.8.26;
 
 import "./BaseScript.s.sol";
 import { OutStakeRouter } from "../src/router/OutStakeRouter.sol";
-import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
+import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
 import { ISlisBNBProvider } from "../src/external/lista/ISlisBNBProvider.sol";
-import { IListaBNBStakeManager } from "../src/external/lista/IListaBNBStakeManager.sol";
-import { OutrunPositionOptionToken } from "../src/core/Position/OutrunPositionOptionToken.sol";
-import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
 import { IYieldToken } from "../src/core/YieldContracts/interfaces/IYieldToken.sol";
+import { IListaBNBStakeManager } from "../src/external/lista/IListaBNBStakeManager.sol";
+import { IOAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
+import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
+import { OutrunPositionOptionToken } from "../src/core/Position/OutrunPositionOptionToken.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
-import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
+import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
+import { OutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 
 contract OutstakeScript is BaseScript {
     address internal owner;
@@ -21,6 +23,8 @@ contract OutstakeScript is BaseScript {
     address internal outrunDeployer;
     uint256 internal protocolFeeRate;
 
+    mapping(uint32 chainId => uint32) public endpointIds;
+
     function run() public broadcaster {
         owner = vm.envAddress("OWNER");
         slisBNB = vm.envAddress("TESTNET_SLISBNB");
@@ -29,8 +33,57 @@ contract OutstakeScript is BaseScript {
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
 
+        _deployUETH(4);
         // deployOutStakeRouter(3);
         // supportSlisBNB();
+    }
+
+    function _deployUETH(uint256 nonce) internal {
+        address endpoint;
+        if (block.chainid == vm.envUint("BSC_TESTNET_CHAINID")) {
+            endpoint = vm.envAddress("BSC_TESTNET_ENDPOINT");
+        } else if (block.chainid == vm.envUint("BASE_SEPOLIA_CHAINID")) {
+            endpoint = vm.envAddress("BASE_SEPOLIA_ENDPOINT");
+        } else if (block.chainid == vm.envUint("SCROLL_SEPOLIA_CHAINID")) {
+            endpoint = vm.envAddress("SCROLL_SEPOLIA_ENDPOINT");
+        }
+        bytes memory encodedArgs = abi.encode(
+            "Omnichain Universal Principal ETH",
+            "UETH",
+            18,
+            endpoint,
+            owner
+        );
+        bytes memory creationCode = abi.encodePacked(
+            type(OutrunUniversalPrincipalToken).creationCode,
+            encodedArgs
+        );
+        bytes32 salt = keccak256(abi.encodePacked("OutrunUniversalPrincipalToken", nonce));
+
+        address UETH = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        bytes32 peer = bytes32(uint256(uint160(UETH)));
+
+        uint32[] memory omnichainIds = new uint32[](3);
+        omnichainIds[0] = 97;
+        omnichainIds[1] = 84532;
+        omnichainIds[2] = 534351;
+
+        endpointIds[97] = 40102;
+        endpointIds[84532] = 40245;
+        endpointIds[534351] = 40170;
+
+        // Use default config
+        for (uint256 i = 0; i < omnichainIds.length; i++) {
+            uint32 omnichainId = omnichainIds[i];
+            if (omnichainId == block.chainid) continue;
+
+            uint32 endpointId = endpointIds[omnichainId];
+            require(endpointId != 0, "InvalidOmnichainId");
+
+            IOAppCore(UETH).setPeer(endpointId, peer);
+        }
+
+        console.log("UETH deployed on %s", UETH);
     }
 
     function deployOutStakeRouter(uint256 nonce) internal {
