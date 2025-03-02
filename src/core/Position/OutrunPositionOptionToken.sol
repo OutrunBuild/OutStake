@@ -3,11 +3,12 @@ pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
 
 import { SYUtils } from "../libraries/SYUtils.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { OutrunERC6909 } from "../common/OutrunERC6909.sol";
+import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { AutoIncrementId } from "../libraries/AutoIncrementId.sol";
 import { IOutrunStakeManager } from "./interfaces/IOutrunStakeManager.sol";
 import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
