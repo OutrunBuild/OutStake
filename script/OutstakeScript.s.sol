@@ -31,6 +31,7 @@ contract OutstakeScript is BaseScript {
     address internal outrunDeployer;
     uint256 internal protocolFeeRate;
 
+    mapping(uint32 chainId => address) public endpoints;
     mapping(uint32 chainId => uint32) public endpointIds;
 
     function run() public broadcaster {
@@ -42,6 +43,8 @@ contract OutstakeScript is BaseScript {
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
 
+        _chainsInit();
+
         // _deployTPT();
         _crossChainOFT();
         // _deployUETH(4);
@@ -52,49 +55,40 @@ contract OutstakeScript is BaseScript {
         // supportBlastUSD();
     }
 
-    function _deployTPT() internal {
-        OutrunPrincipalToken TPT = new OutrunPrincipalToken(
-            "Outrun Test Principal Token",
-            "TPT",
-            18,
-            owner
-        );
-        address TPTAddress = address(TPT);
-
-        console.log("TPT deployed on %s", TPTAddress);
-    }
-
-    function _crossChainOFT() internal {
-        address UETH = vm.envAddress("UETH");
-        bytes memory receiveOptions = OptionsBuilder.newOptions()
-            .addExecutorLzReceiveOption(85000, 0);
-        SendParam memory sendUPTParam = SendParam({
-                dstEid: uint32(vm.envUint("BASE_SEPOLIA_EID")),
-                to: bytes32(uint256(uint160(owner))),
-                amountLD: 10000000 * 1e18,
-                minAmountLD: 0,
-                extraOptions: receiveOptions,
-                composeMsg: abi.encode(),
-                oftCmd: abi.encode()
-            });
-        MessagingFee memory messagingFee = IOFT(UETH).quoteSend(sendUPTParam, false);
-        IOFT(UETH).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
+    function _chainsInit() internal {
+        endpoints[97] = vm.envAddress("BSC_TESTNET_ENDPOINT");
+        endpoints[84532] = vm.envAddress("BASE_SEPOLIA_ENDPOINT");
+        endpoints[421614] = vm.envAddress("ARBITRUM_SEPOLIA_ENDPOINT");
+        endpoints[43113] = vm.envAddress("AVALANCHE_FUJI_ENDPOINT");
+        endpoints[80002] = vm.envAddress("POLYGON_AMOY_ENDPOINT");
+        endpoints[57054] = vm.envAddress("SONIC_BLAZE_ENDPOINT");
+        endpoints[11155420] = vm.envAddress("OPTIMISTIC_SEPOLIA_ENDPOINT");
+        endpoints[300] = vm.envAddress("ZKSYNC_SEPOLIA_ENDPOINT");
+        endpoints[59141] = vm.envAddress("LINEA_SEPOLIA_ENDPOINT");
+        endpoints[168587773] = vm.envAddress("BLAST_SEPOLIA_ENDPOINT");
+        endpoints[534351] = vm.envAddress("SCROLL_SEPOLIA_ENDPOINT");
+        endpoints[10143] = vm.envAddress("MONAD_TESTNET_ENDPOINT");
+        
+        endpointIds[97] = uint32(vm.envUint("BSC_TESTNET_EID"));
+        endpointIds[84532] = uint32(vm.envUint("BASE_SEPOLIA_EID"));
+        endpointIds[421614] = uint32(vm.envUint("ARBITRUM_SEPOLIA_EID"));
+        endpointIds[43113] = uint32(vm.envUint("AVALANCHE_FUJI_EID"));
+        endpointIds[80002] = uint32(vm.envUint("POLYGON_AMOY_EID"));
+        endpointIds[57054] = uint32(vm.envUint("SONIC_BLAZE_EID"));
+        endpointIds[11155420] = uint32(vm.envUint("OPTIMISTIC_SEPOLIA_EID"));
+        endpointIds[300] = uint32(vm.envUint("ZKSYNC_SEPOLIA_EID"));
+        endpointIds[59141] = uint32(vm.envUint("LINEA_SEPOLIA_EID"));
+        endpointIds[168587773] = uint32(vm.envUint("BLAST_SEPOLIA_EID"));
+        endpointIds[534351] = uint32(vm.envUint("SCROLL_SEPOLIA_EID"));
+        endpointIds[10143] = uint32(vm.envUint("MONAD_TESTNET_EID"));
     }
 
     function _deployUETH(uint256 nonce) internal {
-        address endpoint;
-        if (block.chainid == vm.envUint("BSC_TESTNET_CHAINID")) {
-            endpoint = vm.envAddress("BSC_TESTNET_ENDPOINT");
-        } else if (block.chainid == vm.envUint("BASE_SEPOLIA_CHAINID")) {
-            endpoint = vm.envAddress("BASE_SEPOLIA_ENDPOINT");
-        } else if (block.chainid == vm.envUint("SCROLL_SEPOLIA_CHAINID")) {
-            endpoint = vm.envAddress("SCROLL_SEPOLIA_ENDPOINT");
-        }
         bytes memory encodedArgs = abi.encode(
             "Omnichain Universal Principal ETH",
             "UETH",
             18,
-            endpoint,
+            endpoints[uint32(block.chainid)],
             owner
         );
         bytes memory creationCode = abi.encodePacked(
@@ -106,14 +100,19 @@ contract OutstakeScript is BaseScript {
         address UETH = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
         bytes32 peer = bytes32(uint256(uint160(UETH)));
 
-        uint32[] memory omnichainIds = new uint32[](3);
-        omnichainIds[0] = 97;
-        omnichainIds[1] = 84532;
-        omnichainIds[2] = 534351;
-
-        endpointIds[97] = 40102;
-        endpointIds[84532] = 40245;
-        endpointIds[534351] = 40170;
+        uint32[] memory omnichainIds = new uint32[](12);
+        omnichainIds[0] = 97;           // BSC Testnet
+        omnichainIds[1] = 84532;        // Base Sepolia
+        omnichainIds[2] = 421614;       // Arbitrum Sepolia
+        omnichainIds[3] = 43113;        // Avalanche Fuji C-Chain
+        omnichainIds[4] = 80002;        // Polygon Amoy
+        omnichainIds[5] = 57054;        // Sonic Blaze
+        omnichainIds[6] = 11155420;     // Optimistic Sepolia
+        omnichainIds[7] = 300;          // ZKsync Sepolia
+        omnichainIds[8] = 59141;        // Linea Sepolia
+        omnichainIds[9] = 168587773;    // Blast Sepolia
+        omnichainIds[10] = 534351;      // Scroll Sepolia
+        omnichainIds[11] = 10143;       // Monad Testnet
 
         // Use default config
         for (uint256 i = 0; i < omnichainIds.length; i++) {
@@ -267,7 +266,7 @@ contract OutstakeScript is BaseScript {
      */
     function supportBlastUSD() internal {
         if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
-        
+
         address USDB = vm.envAddress("TESTNET_USDB");
 
         // SY
@@ -324,5 +323,36 @@ contract OutstakeScript is BaseScript {
         console.log("PT_USDB deployed on %s", USDBPTAddress);
         console.log("YT_USDB deployed on %s", USDBYTAddress);
         console.log("POT_USDB deployed on %s", USDBPOTAddress);
+    }
+
+
+    // Test
+    function _deployTPT() internal {
+        OutrunPrincipalToken TPT = new OutrunPrincipalToken(
+            "Outrun Test Principal Token",
+            "TPT",
+            18,
+            owner
+        );
+        address TPTAddress = address(TPT);
+
+        console.log("TPT deployed on %s", TPTAddress);
+    }
+
+    function _crossChainOFT() internal {
+        address UETH = vm.envAddress("UETH");
+        bytes memory receiveOptions = OptionsBuilder.newOptions()
+            .addExecutorLzReceiveOption(85000, 0);
+        SendParam memory sendUPTParam = SendParam({
+                dstEid: uint32(vm.envUint("BASE_SEPOLIA_EID")),
+                to: bytes32(uint256(uint160(owner))),
+                amountLD: 10000000 * 1e18,
+                minAmountLD: 0,
+                extraOptions: receiveOptions,
+                composeMsg: abi.encode(),
+                oftCmd: abi.encode()
+            });
+        MessagingFee memory messagingFee = IOFT(UETH).quoteSend(sendUPTParam, false);
+        IOFT(UETH).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
     }
 }
