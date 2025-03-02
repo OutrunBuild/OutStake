@@ -15,7 +15,7 @@ interface IBlastGovernorable is BlastModeEnum  {
 }
 
 abstract contract BlastGovernorable is IBlastGovernorable {
-    IBlast public constant BLAST = IBlast(0x4300000000000000000000000000000000000002);  // TODO mainnet
+    IBlast public constant BLAST = IBlast(0x4300000000000000000000000000000000000002);  // OutrunTODO mainnet
 
     address public blastGovernor;
 
