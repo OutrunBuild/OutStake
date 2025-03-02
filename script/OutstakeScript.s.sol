@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.28;
 
 import "./BaseScript.s.sol";
 import { OutStakeRouter } from "../src/router/OutStakeRouter.sol";

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.28;
 
 import { SYBase, ArrayLib } from "../../SYBase.sol";
 import { SYUtils } from "../../../libraries/SYUtils.sol";
