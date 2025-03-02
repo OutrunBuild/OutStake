@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 import { OutrunERC20 } from "../common/OutrunERC20.sol";
-import { Initializable } from "../common/Initializable.sol";
+import { Initializable } from "../libraries/Initializable.sol";
 import { IPrincipalToken } from "./interfaces/IPrincipalToken.sol";
 
 contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20, Ownable, Initializable {

@@ -8,7 +8,7 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 import { SYUtils } from "../libraries/SYUtils.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { OutrunERC6909 } from "../common/OutrunERC6909.sol";
-import { AutoIncrementId } from "../common/AutoIncrementId.sol";
+import { AutoIncrementId } from "../libraries/AutoIncrementId.sol";
 import { IOutrunStakeManager } from "./interfaces/IOutrunStakeManager.sol";
 import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
 import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
