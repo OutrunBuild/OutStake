@@ -10,7 +10,7 @@ contract OutrunDeployerScript is BaseScript {
     function run() public broadcaster {
         owner = vm.envAddress("OWNER");
 
-        deployOutrunDeployer(0);
+        deployOutrunDeployer(1);
     }
 
     function deployOutrunDeployer(uint256 nonce) internal {

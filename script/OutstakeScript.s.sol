@@ -10,13 +10,21 @@ import { IListaBNBStakeManager } from "../src/external/lista/IListaBNBStakeManag
 import { IOAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
 import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { OutrunPositionOptionToken } from "../src/core/Position/OutrunPositionOptionToken.sol";
+import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
-import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
+import { IOFT, SendParam, MessagingFee } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
 import { OutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 
+import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
+import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastUSDSY.sol";
+import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastETHSY.sol";
+
 contract OutstakeScript is BaseScript {
+    using OptionsBuilder for bytes;
+
     address internal owner;
+    address internal blastGovernor;
     address internal slisBNB;
     address internal revenuePool;
     address internal listaBNBStakeManager;
@@ -32,10 +40,45 @@ contract OutstakeScript is BaseScript {
         listaBNBStakeManager = vm.envAddress("TESTNET_LISTA_BNB_STAKE_MANAGER");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
+        blastGovernor = vm.envAddress("BLAST_GOVERNOR");
 
-        _deployUETH(4);
+        // _deployTPT();
+        _crossChainOFT();
+        // _deployUETH(4);
         // deployOutStakeRouter(3);
+
         // supportSlisBNB();
+        // supportBlastETH();
+        // supportBlastUSD();
+    }
+
+    function _deployTPT() internal {
+        OutrunPrincipalToken TPT = new OutrunPrincipalToken(
+            "Outrun Test Principal Token",
+            "TPT",
+            18,
+            owner
+        );
+        address TPTAddress = address(TPT);
+
+        console.log("TPT deployed on %s", TPTAddress);
+    }
+
+    function _crossChainOFT() internal {
+        address UETH = vm.envAddress("UETH");
+        bytes memory receiveOptions = OptionsBuilder.newOptions()
+            .addExecutorLzReceiveOption(85000, 0);
+        SendParam memory sendUPTParam = SendParam({
+                dstEid: uint32(vm.envUint("BASE_SEPOLIA_EID")),
+                to: bytes32(uint256(uint160(owner))),
+                amountLD: 10000000 * 1e18,
+                minAmountLD: 0,
+                extraOptions: receiveOptions,
+                composeMsg: abi.encode(),
+                oftCmd: abi.encode()
+            });
+        MessagingFee memory messagingFee = IOFT(UETH).quoteSend(sendUPTParam, false);
+        IOFT(UETH).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
     }
 
     function _deployUETH(uint256 nonce) internal {
@@ -98,6 +141,8 @@ contract OutstakeScript is BaseScript {
      * Support slisBNB 
      */
     function supportSlisBNB() internal {
+        if (block.chainid != vm.envUint("BSC_TESTNET_CHAINID")) return;
+
         // SY
         OutrunSlisBNBSY SY_SLISBNB = new OutrunSlisBNBSY(
             owner, 
@@ -151,5 +196,133 @@ contract OutstakeScript is BaseScript {
         console.log("PT_SLISBNB deployed on %s", slisBNBPTAddress);
         console.log("YT_SLISBNB deployed on %s", slisBNBYTAddress);
         console.log("POT_SLISBNB deployed on %s", slisBNBPOTAddress);
+    }
+
+    /**
+     * Support Blast ETH 
+     */
+    function supportBlastETH() internal {
+        if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
+
+        address WETH = vm.envAddress("TESTNET_WETH");
+ 
+        // SY
+        OutrunBlastETHSY SY_BETH = new OutrunBlastETHSY(
+            WETH,
+            owner,
+            blastGovernor
+        );
+        address BETHSYAddress = address(SY_BETH);
+
+        // PT
+        OutrunPrincipalToken PT_BETH = new OutrunPrincipalToken(
+            "Outrun BETH Principal Token",
+            "PT-BETH",
+            18,
+            owner
+        );
+        address BETHPTAddress = address(PT_BETH);
+        
+        // YT
+        OutrunERC4626YieldToken YT_BETH = new OutrunERC4626YieldToken(
+            "Outrun Blast ETH Yield Token",
+            "YT-BETH",
+            18,
+            owner, 
+            revenuePool, 
+            protocolFeeRate
+        );
+        address BETHYTAddress = address(YT_BETH);
+
+        // POT
+        OutrunPositionOptionToken POT_BETH = new OutrunPositionOptionToken(
+            owner,
+            "Blast ETH Position Option Token",
+            "POT-BETH",
+            18,
+            0,
+            protocolFeeRate,
+            revenuePool,
+            BETHSYAddress,
+            BETHPTAddress,
+            BETHYTAddress
+        );
+        POT_BETH.setLockupDuration(1, 365);
+        address BETHPOTAddress = address(POT_BETH);
+
+        IPrincipalToken(PT_BETH).initialize(BETHPOTAddress);
+        YT_BETH.initialize(BETHSYAddress, BETHPOTAddress);
+
+        // After deploy, configure the yield and gas mode
+        // IBlastGovernorable(SY_BETH).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
+
+        console.log("SY_BETH deployed on %s", BETHSYAddress);
+        console.log("PT_BETH deployed on %s", BETHPTAddress);
+        console.log("YT_BETH deployed on %s", BETHYTAddress);
+        console.log("POT_BETH deployed on %s", BETHPOTAddress);
+    }
+
+    /**
+     * Support USDB 
+     */
+    function supportBlastUSD() internal {
+        if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
+        
+        address USDB = vm.envAddress("TESTNET_USDB");
+
+        // SY
+        OutrunBlastUSDSY SY_USDB = new OutrunBlastUSDSY(
+            USDB,
+            owner,
+            blastGovernor
+        );
+        address USDBSYAddress = address(SY_USDB);
+
+        // PT
+        OutrunPrincipalToken PT_USDB = new OutrunPrincipalToken(
+            "Outrun USDB Principal Token",
+            "PT-USDB",
+            18,
+            owner
+        );
+        address USDBPTAddress = address(PT_USDB);
+        
+        // YT
+        OutrunERC4626YieldToken YT_USDB = new OutrunERC4626YieldToken(
+            "Outrun Blast USD Yield Token",
+            "YT-USDB",
+            18,
+            owner, 
+            revenuePool, 
+            protocolFeeRate
+        );
+        address USDBYTAddress = address(YT_USDB);
+
+        // POT
+        OutrunPositionOptionToken POT_USDB = new OutrunPositionOptionToken(
+            owner,
+            "Blast USD Position Option Token",
+            "POT-BETH",
+            18,
+            0,
+            protocolFeeRate,
+            revenuePool,
+            USDBSYAddress,
+            USDBPTAddress,
+            USDBYTAddress
+        );
+        POT_USDB.setLockupDuration(1, 365);
+        address USDBPOTAddress = address(POT_USDB);
+
+        IPrincipalToken(PT_USDB).initialize(USDBPOTAddress);
+        YT_USDB.initialize(USDBSYAddress, USDBPOTAddress);
+
+        // After deploy, configure the yield and gas mode
+        // IBlastGovernorable(SY_USDB).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
+
+        console.log("SY_USDB deployed on %s", USDBSYAddress);
+        console.log("PT_USDB deployed on %s", USDBPTAddress);
+        console.log("YT_USDB deployed on %s", USDBYTAddress);
+        console.log("POT_USDB deployed on %s", USDBPOTAddress);
     }
 }
