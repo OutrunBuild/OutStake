@@ -5,7 +5,6 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-
 import { SYUtils } from "../libraries/SYUtils.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { OutrunERC6909 } from "../common/OutrunERC6909.sol";
