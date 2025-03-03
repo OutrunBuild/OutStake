@@ -11,7 +11,7 @@ import { IERC3156FlashBorrower } from "@openzeppelin/contracts/interfaces/IERC31
  */
 abstract contract OutrunERC20FlashMint is OutrunERC20, IERC3156FlashLender {
     bytes32 private constant RETURN_VALUE = keccak256("ERC3156FlashBorrower.onFlashLoan");
-    uint256 public constant flashloanFeeRate = 20;   // 0.2 %.
+    uint256 public constant flashloanFeeRate = 25;   // 0.25 %.
 
     /**
      * @dev The loan token is not valid.
