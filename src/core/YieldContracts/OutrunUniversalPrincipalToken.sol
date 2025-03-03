@@ -41,7 +41,7 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT, T
      * @param receiver - Address of UPT receiver
      * @param amountInPT - Amount of PT
      */
-    function mintUPTFromPT(address authorizedPT, address receiver, uint256 amountInPT) external override onlyAuthorizedPT(authorizedPT) {
+    function mintUPTFromPT(address authorizedPT, address receiver, uint256 amountInPT) external override onlyAuthorizedPT(authorizedPT) whenNotPaused {
         IPrincipalToken(authorizedPT).burn(msg.sender, amountInPT);
         _mint(receiver, amountInPT);
 

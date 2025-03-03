@@ -4,12 +4,14 @@ pragma solidity ^0.8.28;
 import { IOFT, OFTCore } from "@layerzerolabs/oft-evm/contracts/OFTCore.sol";
 
 import { OutrunERC20 } from "./OutrunERC20.sol";
+import { OutrunERC20Pausable } from "./OutrunERC20Pausable.sol";
+import { OutrunERC20FlashMint } from "./OutrunERC20FlashMint.sol";
 
 /**
  * @title Outrun OFT Contract
  * @dev OFT is an ERC-20 token that extends the functionality of the OFTCore contract.
  */
-abstract contract OutrunOFT is OFTCore, OutrunERC20 {
+abstract contract OutrunOFT is OutrunERC20FlashMint, OutrunERC20Pausable, OFTCore {
     /**
      * @dev Constructor for the OFT contract.
      * @param name_ The name of the OFT.
@@ -44,6 +46,17 @@ abstract contract OutrunOFT is OFTCore, OutrunERC20 {
      */
     function approvalRequired() external pure virtual returns (bool) {
         return false;
+    }
+
+    /**
+     * @dev See {OutrunERC20-_update}.
+     */
+    function _update(
+        address from,
+        address to,
+        uint256 value
+    ) internal virtual override(OutrunERC20, OutrunERC20Pausable) {
+        super._update(from, to, value);
     }
 
     /**

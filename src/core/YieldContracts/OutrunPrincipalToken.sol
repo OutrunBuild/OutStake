@@ -4,10 +4,12 @@ pragma solidity ^0.8.28;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 import { OutrunERC20 } from "../common/OutrunERC20.sol";
+import { OutrunERC20Pausable } from "../common/OutrunERC20Pausable.sol";
+import { OutrunERC20FlashMint } from "../common/OutrunERC20FlashMint.sol";
 import { Initializable } from "../libraries/Initializable.sol";
 import { IPrincipalToken } from "./interfaces/IPrincipalToken.sol";
 
-contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20, Ownable, Initializable {
+contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20FlashMint, OutrunERC20Pausable, Initializable {
     address public POT;
     address public UPT;
     bool public UPTConvertiblestatus;
@@ -49,7 +51,7 @@ contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20, Ownable, Initiali
      * @param account - Address who receive PT 
      * @param amount - The amount of minted PT
      */
-    function mint(address account, uint256 amount) external override onlyAuthorized {
+    function mint(address account, uint256 amount) external override onlyAuthorized whenNotPaused {
         _mint(account, amount);
     }
 
@@ -60,5 +62,9 @@ contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20, Ownable, Initiali
      */
     function burn(address account, uint256 amount) external override onlyAuthorized {
         _burn(account, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override(OutrunERC20, OutrunERC20Pausable) {
+        super._update(from, to, value);
     }
 }
