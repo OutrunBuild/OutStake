@@ -135,7 +135,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
      * @dev Burn YT to withdraw yields
      * @param amountInBurnedYT - The amount of burned YT
      */
-    function withdrawYields(uint256 amountInBurnedYT) external override nonReentrant returns (uint256 amountYieldsOut) {
+    function withdrawYields(uint256 amountInBurnedYT) external override nonReentrant whenNotPaused returns (uint256 amountYieldsOut) {
         require(amountInBurnedYT != 0, ZeroInput());
         uint256 _totalSupply = totalSupply();
         require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, InvalidInput());

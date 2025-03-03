@@ -23,7 +23,7 @@ abstract contract SYBaseWithRewards is SYBase, RewardManager {
     /**
      * @dev See {IStandardizedYield-claimRewards}
      */
-    function claimRewards(address user) external virtual override nonReentrant returns (uint256[] memory rewardAmounts) {
+    function claimRewards(address user) external whenNotPaused virtual override nonReentrant returns (uint256[] memory rewardAmounts) {
         _updateAndDistributeRewards(user);
         rewardAmounts = _doTransferOutRewards(user, user);
 
@@ -51,7 +51,7 @@ abstract contract SYBaseWithRewards is SYBase, RewardManager {
         }
     }
 
-    function rewardIndexesCurrent() external override nonReentrant returns (uint256[] memory indexes) {
+    function rewardIndexesCurrent() external whenNotPaused override nonReentrant returns (uint256[] memory indexes) {
         (, indexes) = _updateRewardIndex();
     }
 

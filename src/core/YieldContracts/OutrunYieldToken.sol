@@ -4,10 +4,11 @@ pragma solidity ^0.8.28;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 import { OutrunERC20 } from "../common/OutrunERC20.sol";
+import { OutrunERC20Pausable } from "../common/OutrunERC20Pausable.sol";
 import { Initializable } from "../libraries/Initializable.sol";
 import { IYieldToken } from "./interfaces/IYieldToken.sol";
 
-abstract contract OutrunYieldToken is IYieldToken, OutrunERC20, Initializable, Ownable {
+abstract contract OutrunYieldToken is IYieldToken, OutrunERC20Pausable, Initializable {
     address public SY;
     address public POT;
 
@@ -37,7 +38,7 @@ abstract contract OutrunYieldToken is IYieldToken, OutrunERC20, Initializable, O
      * @param account - Address who receive YT 
      * @param amount - The amount of minted YT
      */
-    function mint(address account, uint256 amount) external override onlyPositionOptionContract{
+    function mint(address account, uint256 amount) external override whenNotPaused onlyPositionOptionContract {
         _mint(account, amount);
     }
 }

@@ -162,7 +162,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      *
      * Emits a {Transfer} event.
      */
-    function _update(address from, address to, uint256 value) internal {
+    function _update(address from, address to, uint256 value) internal virtual {
         _beforeTokenTransfer(from, to, value);
 
         if (from == address(0)) {

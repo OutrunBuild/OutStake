@@ -8,11 +8,12 @@ import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { IStandardizedYield } from "./IStandardizedYield.sol";
 import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { OutrunERC20, IERC20Metadata } from "../common/OutrunERC20.sol";
+import { OutrunERC20Pausable } from "../common/OutrunERC20Pausable.sol";
 
 /**
  * @dev Standardized Yield Base Contract
  */
-abstract contract SYBase is IStandardizedYield, OutrunERC20, TokenHelper, ReentrancyGuard, Ownable {
+abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper, ReentrancyGuard {
     address public immutable yieldBearingToken;
 
     constructor(
@@ -40,7 +41,7 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20, TokenHelper, Reentr
         address tokenIn,
         uint256 amountTokenToDeposit,
         uint256 minSharesOut
-    ) external payable nonReentrant returns (uint256 amountSharesOut) {
+    ) external payable nonReentrant whenNotPaused returns (uint256 amountSharesOut) {
         require(isValidTokenIn(tokenIn), SYInvalidTokenIn(tokenIn));
         require(amountTokenToDeposit != 0, SYZeroDeposit());
 
@@ -62,7 +63,7 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20, TokenHelper, Reentr
         address tokenOut,
         uint256 minTokenOut,
         bool burnFromInternalBalance
-    ) external nonReentrant returns (uint256 amountTokenOut) {
+    ) external nonReentrant whenNotPaused returns (uint256 amountTokenOut) {
         require(isValidTokenOut(tokenOut), SYInvalidTokenOut(tokenOut));
         require(amountSharesToRedeem != 0, SYZeroRedeem());
         amountTokenOut = _redeem(receiver, tokenOut, amountSharesToRedeem);

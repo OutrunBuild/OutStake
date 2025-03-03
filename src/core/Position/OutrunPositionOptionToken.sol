@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 
@@ -27,6 +28,7 @@ contract OutrunPositionOptionToken is
     OutrunERC6909, 
     TokenHelper, 
     ReentrancyGuard, 
+    Pausable, 
     Ownable
 {
     using Math for uint256;
@@ -139,7 +141,7 @@ contract OutrunPositionOptionToken is
         address PTRecipient, 
         address YTRecipient,
         address positionOwner
-    ) external override nonReentrant accumulateYields returns (uint256 PTGenerated, uint256 YTGenerated) {
+    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 PTGenerated, uint256 YTGenerated) {
         _stakeParamValidate(amountInSY, lockupDays);
         _transferIn(SY, msg.sender, amountInSY);
         
@@ -165,14 +167,14 @@ contract OutrunPositionOptionToken is
     }
 
     /**
-     * @dev Allows user to unstake SY by burnning PT and POT.
+     * @dev Allows user to unstake SY by burning PT and POT.
      * @param positionId - Position Id
      * @param positionShare - Share of the position
      */
     function redeem(
         uint256 positionId, 
         uint256 positionShare
-    ) external override nonReentrant accumulateYields returns (uint256 redeemedSyAmount) {
+    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 redeemedSyAmount) {
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
         require(deadline <= block.timestamp, LockTimeNotExpired(deadline));
@@ -205,7 +207,7 @@ contract OutrunPositionOptionToken is
      * @dev Allows redemption of generated rewards after position unlocks
      * @param positionId - Position id
      */
-    function redeemReward(uint256 positionId) external override {
+    function redeemReward(uint256 positionId) external whenNotPaused override {
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
         require(deadline <= block.timestamp, LockTimeNotExpired(deadline));
@@ -218,9 +220,17 @@ contract OutrunPositionOptionToken is
      * @param receiver - Address of receiver
      * @param syAmount - Amount of protocol fee
      */
-    function transferYields(address receiver, uint256 syAmount) external override onlyYT {
+    function transferYields(address receiver, uint256 syAmount) external whenNotPaused override onlyYT {
         require(msg.sender == YT, PermissionDenied());
         _transferSY(receiver, syAmount);
+    }
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     /**
