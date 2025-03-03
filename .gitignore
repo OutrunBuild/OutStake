@@ -36,6 +36,7 @@ pnpm-error.log
 .vscode
 .github
 .history
+.cursorignore
 
 #node.js
 .deps
