@@ -2,8 +2,10 @@
 pragma solidity ^0.8.28;
 
 import "./BaseScript.s.sol";
+
 import { OutStakeRouter } from "../src/router/OutStakeRouter.sol";
 import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
+import { OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { ISlisBNBProvider } from "../src/external/lista/ISlisBNBProvider.sol";
 import { IYieldToken } from "../src/core/YieldContracts/interfaces/IYieldToken.sol";
 import { IListaBNBStakeManager } from "../src/external/lista/IListaBNBStakeManager.sol";
@@ -17,6 +19,7 @@ import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContract
 import { OutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
+import { OutrunSlisUSDSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisUSDSY.sol";
 import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastUSDSY.sol";
 import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastETHSY.sol";
 
@@ -43,16 +46,26 @@ contract OutstakeScript is BaseScript {
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
 
+        // _deployOutrunDeployer(1);
+
         _chainsInit();
 
         // _deployTPT();
-        _crossChainOFT();
-        // _deployUETH(4);
-        // deployOutStakeRouter(3);
+        // _crossChainOFT();
+        _deployUETH(5);
+        // _deployOutStakeRouter(4);
 
-        // supportSlisBNB();
-        // supportBlastETH();
-        // supportBlastUSD();
+        // _supportSlisBNB();
+        // _supportSlisUSD();
+        // _supportBlastETH();
+        // _supportBlastUSD();
+    }
+
+    function _deployOutrunDeployer(uint256 nonce) internal {
+        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
+        address outrunDeployerAddr = Create2.deploy(0, salt, abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner)));
+
+        console.log("OutrunDeployer deployed on %s", outrunDeployerAddr);
     }
 
     function _chainsInit() internal {
@@ -100,19 +113,19 @@ contract OutstakeScript is BaseScript {
         address UETH = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
         bytes32 peer = bytes32(uint256(uint160(UETH)));
 
-        uint32[] memory omnichainIds = new uint32[](12);
+        uint32[] memory omnichainIds = new uint32[](9);
         omnichainIds[0] = 97;           // BSC Testnet
         omnichainIds[1] = 84532;        // Base Sepolia
         omnichainIds[2] = 421614;       // Arbitrum Sepolia
         omnichainIds[3] = 43113;        // Avalanche Fuji C-Chain
         omnichainIds[4] = 80002;        // Polygon Amoy
         omnichainIds[5] = 57054;        // Sonic Blaze
-        omnichainIds[6] = 11155420;     // Optimistic Sepolia
-        omnichainIds[7] = 300;          // ZKsync Sepolia
-        omnichainIds[8] = 59141;        // Linea Sepolia
-        omnichainIds[9] = 168587773;    // Blast Sepolia
-        omnichainIds[10] = 534351;      // Scroll Sepolia
-        omnichainIds[11] = 10143;       // Monad Testnet
+        omnichainIds[6] = 168587773;    // Blast Sepolia
+        omnichainIds[7] = 534351;       // Scroll Sepolia
+        omnichainIds[8] = 10143;        // Monad Testnet
+        // omnichainIds[9] = 11155420;     // Optimistic Sepolia
+        // omnichainIds[10] = 300;         // ZKsync Sepolia
+        // omnichainIds[11] = 59141;       // Linea Sepolia
 
         // Use default config
         for (uint256 i = 0; i < omnichainIds.length; i++) {
@@ -128,7 +141,7 @@ contract OutstakeScript is BaseScript {
         console.log("UETH deployed on %s", UETH);
     }
 
-    function deployOutStakeRouter(uint256 nonce) internal {
+    function _deployOutStakeRouter(uint256 nonce) internal {
         bytes32 salt = keccak256(abi.encodePacked("OutStakeRouter", nonce));
         bytes memory creationCode = abi.encodePacked(type(OutStakeRouter).creationCode);
         address outStakeRouterAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
@@ -139,7 +152,7 @@ contract OutstakeScript is BaseScript {
     /**
      * Support slisBNB 
      */
-    function supportSlisBNB() internal {
+    function _supportSlisBNB() internal {
         if (block.chainid != vm.envUint("BSC_TESTNET_CHAINID")) return;
 
         // SY
@@ -200,7 +213,7 @@ contract OutstakeScript is BaseScript {
     /**
      * Support Blast ETH 
      */
-    function supportBlastETH() internal {
+    function _supportBlastETH() internal {
         if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
 
         address WETH = vm.envAddress("TESTNET_WETH");
@@ -264,7 +277,7 @@ contract OutstakeScript is BaseScript {
     /**
      * Support USDB 
      */
-    function supportBlastUSD() internal {
+    function _supportBlastUSD() internal {
         if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
 
         address USDB = vm.envAddress("TESTNET_USDB");
