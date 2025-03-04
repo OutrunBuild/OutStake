@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { IERC1155Receiver, IERC165 } from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
-
 import { IOutStakeRouter } from "./interfaces/IOutStakeRouter.sol";
-import { TokenHelper, IERC20, IERC1155 } from "../core/libraries/TokenHelper.sol";
+import { TokenHelper, IERC20, IERC6909 } from "../core/libraries/TokenHelper.sol";
 import { IStandardizedYield } from "../core/StandardizedYield/IStandardizedYield.sol";
 import { IOutrunStakeManager } from "../core/Position/interfaces/IOutrunStakeManager.sol";
 import { IUniversalPrincipalToken } from "../core/YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
-contract OutStakeRouter is IOutStakeRouter, IERC1155Receiver, TokenHelper {
-    function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
-        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IERC1155Receiver).interfaceId;
-    }
-
+contract OutStakeRouter is IOutStakeRouter, TokenHelper {
     /** MINT/REDEEM SY **/
     function mintSYFromToken(
         address SY,
@@ -140,7 +134,7 @@ contract OutStakeRouter is IOutStakeRouter, IERC1155Receiver, TokenHelper {
 
     /** REDEEM From PT, POT **/
     /**
-     * @dev Redeem SY by burnning PT and POT
+     * @dev Redeem SY by burning PT and POT
      * @notice When redeeming from UPT is not required, UPT can be address(0)
      */
     function redeemPPToSy(
@@ -160,7 +154,7 @@ contract OutStakeRouter is IOutStakeRouter, IERC1155Receiver, TokenHelper {
     }
 
     /**
-     * @dev Redeem native yield token(tokenOut) by burnning PT and POT
+     * @dev Redeem native yield token(tokenOut) by burning PT and POT
      * @notice When redeeming from UPT is not required, UPT can be address(0)
      */
     function redeemPPToToken(
@@ -196,28 +190,8 @@ contract OutStakeRouter is IOutStakeRouter, IERC1155Receiver, TokenHelper {
         }
 
         uint256 positionId = redeemParam.positionId;
-        _transferFrom(IERC1155(POT), msg.sender, address(this), positionId, share);
+        _transferFrom(IERC6909(POT), msg.sender, address(this), positionId, share);
 
         redeemedSyAmount = IOutrunStakeManager(POT).redeem(positionId, share);
-    }
-
-    function onERC1155Received(
-        address /*operator*/,
-        address /*from*/,
-        uint256 /*id*/,
-        uint256 /*value*/,
-        bytes calldata /*data*/
-    ) external pure override returns (bytes4) {
-        return this.onERC1155Received.selector;
-    }
-
-    function onERC1155BatchReceived(
-        address /*operator*/,
-        address /*from*/,
-        uint256[] calldata /*ids*/,
-        uint256[] calldata /*values*/,
-        bytes calldata /*data*/
-    ) external pure override returns (bytes4) {
-        return IERC1155Receiver.onERC1155BatchReceived.selector;
     }
 }
