@@ -9,7 +9,6 @@ libs = [
     'node_modules',
 ]
 solc = "0.8.28"
-evm_version = "london"
 
 via_ir = true
 build_info = true
@@ -29,6 +28,7 @@ linea_sepolia = "${LINEA_SEPOLIA_RPC}"
 blast_sepolia = "${BLAST_SEPOLIA_RPC}"
 scroll_sepolia = "${SCROLL_SEPOLIA_RPC}"
 monad_testnet = "${MONAD_TESTNET_RPC}"
+bera_testnet = "${BERA_TESTNET_RPC}"
 
 bsc_mainnet = "${BSC_MAINNET_RPC}"
 
@@ -44,6 +44,7 @@ zksync_sepolia = { key = "${ZKSYNCSCAN_API_KEY}", chain = "300", url = "${ZKSYNC
 linea_sepolia = { key = "${LINEASCAN_API_KEY}", chain = "59141", url = "${LINEASCAN_API_URL}" }
 blast_sepolia = { key = "${BLASTSCAN_API_KEY}", chain = "168587773", url = "${BLASTSCAN_API_URL}" }
 scroll_sepolia = { key = "${SCROLLSCAN_API_KEY}", chain = "534351", url = "${SCROLLSCAN_API_URL}" }
+bera_testnet = { key = "${BERASCAN_API_KEY}", chain = "80069", url = "${BERASCAN_API_URL}" }
 
 bsc_mainnet = { key = "${BSCSCAN_API_KEY}", chain = "56", url = "${BSCSCAN_API_URL}" }
 

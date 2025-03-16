@@ -46,13 +46,13 @@ contract OutstakeScript is BaseScript {
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
 
-        // _deployOutrunDeployer(1);
+        // _deployOutrunDeployer(0);
 
         _chainsInit();
 
         // _deployTPT();
-        // _crossChainOFT();
-        _deployUETH(5);
+        _crossChainOFT();
+        // _deployUETH(0);
         // _deployOutStakeRouter(4);
 
         // _supportSlisBNB();
@@ -113,7 +113,7 @@ contract OutstakeScript is BaseScript {
         address UETH = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
         bytes32 peer = bytes32(uint256(uint160(UETH)));
 
-        uint32[] memory omnichainIds = new uint32[](9);
+        uint32[] memory omnichainIds = new uint32[](10);
         omnichainIds[0] = 97;           // BSC Testnet
         omnichainIds[1] = 84532;        // Base Sepolia
         omnichainIds[2] = 421614;       // Arbitrum Sepolia
@@ -123,9 +123,10 @@ contract OutstakeScript is BaseScript {
         omnichainIds[6] = 168587773;    // Blast Sepolia
         omnichainIds[7] = 534351;       // Scroll Sepolia
         omnichainIds[8] = 10143;        // Monad Testnet
-        // omnichainIds[9] = 11155420;     // Optimistic Sepolia
-        // omnichainIds[10] = 300;         // ZKsync Sepolia
-        // omnichainIds[11] = 59141;       // Linea Sepolia
+        omnichainIds[9] = 59141;        // Linea Sepolia
+        // omnichainIds[10] = 11155420; // Optimistic Sepolia
+        // omnichainIds[11] = 300;      // ZKsync Sepolia
+        
 
         // Use default config
         for (uint256 i = 0; i < omnichainIds.length; i++) {
@@ -357,9 +358,9 @@ contract OutstakeScript is BaseScript {
         bytes memory receiveOptions = OptionsBuilder.newOptions()
             .addExecutorLzReceiveOption(85000, 0);
         SendParam memory sendUPTParam = SendParam({
-                dstEid: uint32(vm.envUint("BASE_SEPOLIA_EID")),
+                dstEid: uint32(vm.envUint("SCROLL_SEPOLIA_EID")),
                 to: bytes32(uint256(uint160(owner))),
-                amountLD: 10000000 * 1e18,
+                amountLD: 500000 * 1e18,
                 minAmountLD: 0,
                 extraOptions: receiveOptions,
                 composeMsg: abi.encode(),

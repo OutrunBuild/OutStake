@@ -2,7 +2,7 @@
 
 ## OutrunDeployer
 
-0x8E7388738538448bc59747051fb420A6952488aE  
+0xCf8ddAb7A0ee83131a015b32A2bbA922b7a428FA  
 
 ## OutStakeRouter
 
@@ -10,7 +10,7 @@
 
 ## UPT
 
-**UETH** (Omnichain): 0x06ec1dF7bbc7D70f8C170b873d70E7E2DfFa42a6  
+**UETH** (Omnichain): 0x366f69983D42CeA00f695F5860595667A9Eddc9E  
 
 ## BSC Testnet
 
