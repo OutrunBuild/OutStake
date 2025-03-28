@@ -49,18 +49,18 @@ interface IOutStakeRouter {
 
 
     /** MINT PT(UPT), YT, POT Tokens **/
-    function mintPPYFromToken(
+    function mintPYFromToken(
         address SY,
-        address POT,
+        address SP,
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam,
         MintUPTParam calldata mintUPTParam
     ) external payable returns (uint256 PTGenerated, uint256 YTGenerated);
 
-    function mintPPYFromSY(
+    function mintPYFromSY(
         address SY,
-        address POT,
+        address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam,
         MintUPTParam calldata mintUPTParam
@@ -68,23 +68,25 @@ interface IOutStakeRouter {
 
 
     /** REDEEM From PT, POT **/
-    function redeemPPToSy(
+    function redeemPSPToSy(
         address SY,
         address PT,
         address UPT,
-        address POT,
+        address SP,
         address receiver,
-        RedeemParam calldata redeemParam
+        RedeemParam calldata redeemParam,
+        bool useSP
     ) external returns (uint256 redeemedSyAmount);
 
-    function redeemPPToToken(
+    function redeemPSPToToken(
         address SY,
         address PT,
         address UPT,
-        address POT,
+        address SP,
         address tokenOut,
         address receiver,
-        RedeemParam calldata redeemParam
+        RedeemParam calldata redeemParam,
+        bool useSP
     ) external returns (uint256 redeemedSyAmount);
 
     error InsufficientPTGenerated(uint256 PTGenerated, uint256 minPTGenerated);

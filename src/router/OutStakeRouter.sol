@@ -64,14 +64,14 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         amountInRedeemed = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, doPull);
     }
 
-    /** MINT PT(UPT), YT, POT Tokens **/
+    /** MINT PT(UPT), YT **/
     /**
-     * @dev Mint PT(UPT), POT, YT from native yield token
+     * @dev Mint PT(UPT), YT from yield-Bearing token
      * @notice When minting UPT is not required, mintUPTParam can be empty
      */
-    function mintPPYFromToken(
+    function mintPYFromToken(
         address SY,
-        address POT,
+        address SP,
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam,
@@ -79,9 +79,9 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
     ) external payable returns (uint256 PTGenerated, uint256 YTGenerated) {
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, 0, true);
 
-        _safeApproveInf(SY, POT);
-        (PTGenerated, YTGenerated) = _mintPPYFromSY(
-            POT,
+        _safeApproveInf(SY, SP);
+        (PTGenerated, YTGenerated) = _mintPYFromSY(
+            SP,
             amountInSY, 
             stakeParam,
             mintUPTParam
@@ -89,36 +89,36 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
     }
 
     /**
-     * @dev Mint PT(UPT), POT, YT by staking SY
+     * @dev Mint PT(UPT), YT by staking SY
      * @notice When minting UPT is not required, mintUPTParam can be empty
      */
-    function mintPPYFromSY(
+    function mintPYFromSY(
         address SY,
-        address POT,
+        address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam,
         MintUPTParam calldata mintUPTParam
     ) external returns (uint256 PTGenerated, uint256 YTGenerated) {
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
 
-        _safeApproveInf(SY, POT);
-        (PTGenerated, YTGenerated) = _mintPPYFromSY(
-            POT,
+        _safeApproveInf(SY, SP);
+        (PTGenerated, YTGenerated) = _mintPYFromSY(
+            SP,
             amountInSY, 
             stakeParam,
             mintUPTParam
         );
     }
 
-    function _mintPPYFromSY(
-        address POT,
+    function _mintPYFromSY(
+        address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam,
         MintUPTParam calldata mintUPTParam
     ) internal returns (uint256 PTGenerated, uint256 YTGenerated) {
         address UPT = mintUPTParam.UPT;
 
-        (PTGenerated, YTGenerated) = IOutrunStakeManager(POT).stake(
+        (PTGenerated, YTGenerated) = IOutrunStakeManager(SP).stake(
             amountInSY, 
             stakeParam.lockupDays,
             UPT == address(0) ? stakeParam.PTRecipient : address(this),
@@ -132,20 +132,21 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         require(PTGenerated >= minPTGenerated, InsufficientPTGenerated(PTGenerated, minPTGenerated));
     }
 
-    /** REDEEM From PT, POT **/
+    /** REDEEM From PT, SP **/
     /**
-     * @dev Redeem SY by burning PT and POT
+     * @dev Redeem SY by burning PT, SP
      * @notice When redeeming from UPT is not required, UPT can be address(0)
      */
-    function redeemPPToSy(
+    function redeemPSPToSy(
         address SY,
         address PT,
         address UPT,
-        address POT,
+        address SP,
         address receiver,
-        RedeemParam calldata redeemParam
+        RedeemParam calldata redeemParam,
+        bool useSP
     ) external returns (uint256 redeemedSyAmount) {
-        redeemedSyAmount = _redeemPPToSy(PT, UPT, POT, redeemParam);
+        redeemedSyAmount = _redeemPSPToSy(PT, UPT, SP, redeemParam, useSP);
 
         uint256 minRedeemedSyAmount = redeemParam.minRedeemedSyAmount;
         require(redeemedSyAmount >= minRedeemedSyAmount, InsufficientSYRedeemed(redeemedSyAmount, minRedeemedSyAmount));
@@ -154,19 +155,20 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
     }
 
     /**
-     * @dev Redeem native yield token(tokenOut) by burning PT and POT
+     * @dev Redeem native yield token(tokenOut) by burning PT, SP
      * @notice When redeeming from UPT is not required, UPT can be address(0)
      */
-    function redeemPPToToken(
+    function redeemPSPToToken(
         address SY,
         address PT,
         address UPT,
-        address POT,
+        address SP,
         address tokenOut,
         address receiver,
-        RedeemParam calldata redeemParam
+        RedeemParam calldata redeemParam,
+        bool useSP
     ) external returns (uint256 redeemedSyAmount) {
-        redeemedSyAmount = _redeemPPToSy(PT, UPT, POT, redeemParam);
+        redeemedSyAmount = _redeemPSPToSy(PT, UPT, SP, redeemParam, useSP);
 
         uint256 minRedeemedSyAmount = redeemParam.minRedeemedSyAmount;
         require(redeemedSyAmount >= minRedeemedSyAmount, InsufficientSYRedeemed(redeemedSyAmount, minRedeemedSyAmount));
@@ -174,24 +176,27 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         _redeemSy(SY, receiver, tokenOut, redeemedSyAmount, 0, false);
     }
 
-    function _redeemPPToSy(
+    function _redeemPSPToSy(
         address PT,
         address UPT,
-        address POT,
-        RedeemParam calldata redeemParam
+        address SP,
+        RedeemParam calldata redeemParam,
+        bool useSP
     ) internal returns (uint256 redeemedSyAmount) {
         uint256 share = redeemParam.positionShare;
+        uint256 positionId = redeemParam.positionId;
 
-        if (UPT != address(0)) {
-            _transferFrom(IERC20(UPT), msg.sender, address(this), share);
-            IUniversalPrincipalToken(UPT).redeemPTFromUPT(PT, address(this), share);
+        if (useSP) {
+            _transferFrom(IERC6909(SP), msg.sender, address(this), positionId, share);
         } else {
-            _transferFrom(IERC20(PT), msg.sender, address(this), share);
+            if (UPT != address(0)) {
+                _transferFrom(IERC20(UPT), msg.sender, address(this), share);
+                IUniversalPrincipalToken(UPT).redeemPTFromUPT(PT, address(this), share);
+            } else {
+                _transferFrom(IERC20(PT), msg.sender, address(this), share);
+            }
         }
 
-        uint256 positionId = redeemParam.positionId;
-        _transferFrom(IERC6909(POT), msg.sender, address(this), positionId, share);
-
-        redeemedSyAmount = IOutrunStakeManager(POT).redeem(positionId, share);
+        redeemedSyAmount = IOutrunStakeManager(SP).redeem(redeemParam.positionId, share, useSP);
     }
 }

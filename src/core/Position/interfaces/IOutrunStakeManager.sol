@@ -9,6 +9,7 @@ interface IOutrunStakeManager {
         uint256 SYRedeemable;           // Amount of SY redeemable
         uint256 PTRedeemable;           // Amount of PT redeemable
         uint256 principalRedeemable;    // The principal value redeemable
+        uint256 SPShareMinted;          // Amount of SP Minted
         uint256 deadline;               // Position unlock time
         address initOwner;              // Address of init staker(For redeem reward)
     }
@@ -29,9 +30,9 @@ interface IOutrunStakeManager {
 
     error MinStakeInsufficient(uint256 minStake);
 
-    error InvalidLockupDays(uint256 minLockupDays, uint256 maxLockupDays);
+    error InsufficientSPMintable(uint256 SPMintable);
 
-    error InsufficientSYRedeemed(uint256 redeemedSyAmount, uint256 mintRedeemedSyAmount);
+    error InvalidLockupDays(uint256 minLockupDays, uint256 maxLockupDays);
 
 
     function syTotalStaking() external view returns (uint256);
@@ -60,9 +61,12 @@ interface IOutrunStakeManager {
         address positionOwner
     ) external returns (uint256 PTGenerated, uint256 YTGenerated);
 
+    function mintSP(uint256 positionId, uint256 positionShare) external;
+
     function redeem(
         uint256 positionId, 
-        uint256 positionShare
+        uint256 positionShare,
+        bool useSP
     ) external returns (uint256 redeemedSyAmount);
 
     function transferYields(address receiver, uint256 syAmount) external;
@@ -77,7 +81,9 @@ interface IOutrunStakeManager {
         uint256 PTGenerated,
         uint256 YTGenerated,
         uint256 indexed deadline
-    );    
+    );
+
+    event MintSP(uint256 indexed positionId, uint256 positionShare);
 
     event Redeem(
         uint256 indexed positionId, 

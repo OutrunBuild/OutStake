@@ -18,9 +18,9 @@ import { IYieldManager } from "../YieldContracts/interfaces/IYieldManager.sol";
 import { IPrincipalToken } from "../YieldContracts/interfaces/IPrincipalToken.sol";
 
 /**
- * @title Outrun Position Option Token
+ * @title Outrun Staking Position
  */
-contract OutrunPositionOptionToken is 
+contract OutrunStakingPosition is 
     IOutrunStakeManager, 
     PositionRewardManager, 
     AutoIncrementId, 
@@ -126,7 +126,7 @@ contract OutrunPositionOptionToken is
     }
 
     /**
-     * @dev Allows user to deposit SY, then mints PT, YT and POT for the user.
+     * @dev Allows user to deposit SY, then mints PT, YT.
      * @param amountInSY - Staked amount of SY
      * @param lockupDays - User can redeem after lockupDays
      * @param PTRecipient - Receiver of PT
@@ -141,6 +141,8 @@ contract OutrunPositionOptionToken is
         address YTRecipient,
         address positionOwner
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 PTGenerated, uint256 YTGenerated) {
+        require(PTRecipient != address(0) && YTRecipient != address(0) && positionOwner != address(0), ZeroInput());
+
         _stakeParamValidate(amountInSY, lockupDays);
         _transferIn(SY, msg.sender, amountInSY);
         
@@ -155,10 +157,9 @@ contract OutrunPositionOptionToken is
 
         uint256 positionId = _nextId();
         PTGenerated = calcPTAmount(principalValue, YTGenerated);
-        positions[positionId] = Position(amountInSY, principalValue, PTGenerated, deadline, positionOwner);
+        positions[positionId] = Position(amountInSY, PTGenerated, principalValue, 0, deadline, positionOwner);
         IYieldToken(YT).mint(YTRecipient, YTGenerated);
         IPrincipalToken(PT).mint(PTRecipient, PTGenerated);
-        _mint(positionOwner, positionId, PTGenerated);  // mint POT
 
         _storeRewardIndexes(positionId);
 
@@ -166,27 +167,57 @@ contract OutrunPositionOptionToken is
     }
 
     /**
+     * @dev Allows position owner to mint SP(Staking Position) by depositing PT into the position
+     * @param positionId - Position Id
+     * @param positionShare - Share of the position
+     * @notice User must have approved this contract to spend PT
+     */
+    function mintSP(uint256 positionId, uint256 positionShare) external override whenNotPaused {
+        require(positionShare != 0, ZeroInput());
+        Position storage position = positions[positionId];
+        uint256 PTRedeemable = position.PTRedeemable;
+        uint256 SPShareMinted = position.SPShareMinted;
+        uint256 SPMintable = PTRedeemable - SPShareMinted;
+
+        require(block.timestamp < position.deadline, PermissionDenied());
+        require(positionShare <= SPMintable, InsufficientSPMintable(SPMintable));
+
+        _transferIn(PT, msg.sender, positionShare);
+        _mint(msg.sender, positionId, positionShare);
+
+        unchecked {
+            position.SPShareMinted += positionShare;
+        }
+
+        emit MintSP(positionId, positionShare);
+    }
+
+    /**
      * @dev Allows user to unstake SY by burning PT and POT.
      * @param positionId - Position Id
      * @param positionShare - Share of the position
+     * @param useSP - Burning SP at the same time
      */
     function redeem(
         uint256 positionId, 
-        uint256 positionShare
+        uint256 positionShare,
+        bool useSP
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 redeemedSyAmount) {
+        require(positionShare != 0, ZeroInput());
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
-        require(deadline <= block.timestamp, LockTimeNotExpired(deadline));
+        require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
 
-        address msgSender = msg.sender;
-        _burn(msgSender, positionId, positionShare);
+        if (useSP) {
+            _burn(msg.sender, positionId, positionShare);
+            IPrincipalToken(PT).burn(address(this), positionShare);
+        } else {
+            IPrincipalToken(PT).burn(msg.sender, positionShare);
+        }
         
+        _redeemRewards(position.initOwner, positionId, position.SYRedeemable);
         uint256 PTRedeemable = position.PTRedeemable;
         uint256 principalRedeemable = position.principalRedeemable;
-
-        IPrincipalToken(PT).burn(msgSender, positionShare);
-        _redeemRewards(position.initOwner, positionId, position.SYRedeemable);
-
         uint256 redeemedPrincipalValue = principalRedeemable * positionShare / PTRedeemable;
         redeemedSyAmount = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemedPrincipalValue);
         
@@ -197,9 +228,9 @@ contract OutrunPositionOptionToken is
             position.principalRedeemable -= redeemedPrincipalValue;
         }
 
-        _transferSY(msgSender, redeemedSyAmount);
+        _transferSY(msg.sender, redeemedSyAmount);
         
-        emit Redeem(positionId, msgSender, redeemedSyAmount, positionShare);
+        emit Redeem(positionId, msg.sender, redeemedSyAmount, positionShare);
     }
 
     /**

@@ -9,14 +9,14 @@ import { OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { ISlisBNBProvider } from "../src/external/lista/ISlisBNBProvider.sol";
 import { IYieldToken } from "../src/core/YieldContracts/interfaces/IYieldToken.sol";
 import { IListaBNBStakeManager } from "../src/external/lista/IListaBNBStakeManager.sol";
-import { IOAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
 import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
-import { OutrunPositionOptionToken } from "../src/core/Position/OutrunPositionOptionToken.sol";
-import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import { OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
-import { IOFT, SendParam, MessagingFee } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
 import { OutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
+import { IOAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
+import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import { IOFT, SendParam, MessagingFee } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
 import { OutrunSlisUSDSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisUSDSY.sol";
@@ -187,10 +187,10 @@ contract OutstakeScript is BaseScript {
         address slisBNBYTAddress = address(YT_SLISBNB);
 
         // POT
-        OutrunPositionOptionToken POT_SLISBNB = new OutrunPositionOptionToken(
+        OutrunStakingPosition SP_SLISBNB = new OutrunStakingPosition(
             owner,
-            "Outrun SlisBNB Position Option Token",
-            "POT-slisBNB",
+            "Outrun SlisBNB Staking Position",
+            "SP-slisBNB",
             18,
             0,
             protocolFeeRate,
@@ -199,16 +199,16 @@ contract OutstakeScript is BaseScript {
             slisBNBPTAddress,
             slisBNBYTAddress
         );
-        POT_SLISBNB.setLockupDuration(1, 365);
-        address slisBNBPOTAddress = address(POT_SLISBNB);
+        SP_SLISBNB.setLockupDuration(1, 365);
+        address slisBNBSPAddress = address(SP_SLISBNB);
 
-        IPrincipalToken(slisBNBPTAddress).initialize(slisBNBPOTAddress);
-        IYieldToken(slisBNBYTAddress).initialize(slisBNBSYAddress, slisBNBPOTAddress);
+        IPrincipalToken(slisBNBPTAddress).initialize(slisBNBSPAddress);
+        IYieldToken(slisBNBYTAddress).initialize(slisBNBSYAddress, slisBNBSPAddress);
 
         console.log("SY_SLISBNB deployed on %s", slisBNBSYAddress);
         console.log("PT_SLISBNB deployed on %s", slisBNBPTAddress);
         console.log("YT_SLISBNB deployed on %s", slisBNBYTAddress);
-        console.log("POT_SLISBNB deployed on %s", slisBNBPOTAddress);
+        console.log("SP_SLISBNB deployed on %s", slisBNBSPAddress);
     }
 
     /**
@@ -248,10 +248,10 @@ contract OutstakeScript is BaseScript {
         address BETHYTAddress = address(YT_BETH);
 
         // POT
-        OutrunPositionOptionToken POT_BETH = new OutrunPositionOptionToken(
+        OutrunStakingPosition SP_BETH = new OutrunStakingPosition(
             owner,
-            "Blast ETH Position Option Token",
-            "POT-BETH",
+            "Blast ETH Staking Position",
+            "SP-BETH",
             18,
             0,
             protocolFeeRate,
@@ -260,11 +260,11 @@ contract OutstakeScript is BaseScript {
             BETHPTAddress,
             BETHYTAddress
         );
-        POT_BETH.setLockupDuration(1, 365);
-        address BETHPOTAddress = address(POT_BETH);
+        SP_BETH.setLockupDuration(1, 365);
+        address BETHSPAddress = address(SP_BETH);
 
-        IPrincipalToken(PT_BETH).initialize(BETHPOTAddress);
-        YT_BETH.initialize(BETHSYAddress, BETHPOTAddress);
+        IPrincipalToken(PT_BETH).initialize(BETHSPAddress);
+        YT_BETH.initialize(BETHSYAddress, BETHSPAddress);
 
         // After deploy, configure the yield and gas mode
         // IBlastGovernorable(SY_BETH).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
@@ -272,7 +272,7 @@ contract OutstakeScript is BaseScript {
         console.log("SY_BETH deployed on %s", BETHSYAddress);
         console.log("PT_BETH deployed on %s", BETHPTAddress);
         console.log("YT_BETH deployed on %s", BETHYTAddress);
-        console.log("POT_BETH deployed on %s", BETHPOTAddress);
+        console.log("SP_BETH deployed on %s", BETHSPAddress);
     }
 
     /**
@@ -312,10 +312,10 @@ contract OutstakeScript is BaseScript {
         address USDBYTAddress = address(YT_USDB);
 
         // POT
-        OutrunPositionOptionToken POT_USDB = new OutrunPositionOptionToken(
+        OutrunStakingPosition SP_USDB = new OutrunStakingPosition(
             owner,
-            "Blast USD Position Option Token",
-            "POT-BETH",
+            "Blast USD Staking Position",
+            "SP-BETH",
             18,
             0,
             protocolFeeRate,
@@ -324,11 +324,11 @@ contract OutstakeScript is BaseScript {
             USDBPTAddress,
             USDBYTAddress
         );
-        POT_USDB.setLockupDuration(1, 365);
-        address USDBPOTAddress = address(POT_USDB);
+        SP_USDB.setLockupDuration(1, 365);
+        address USDBSPAddress = address(SP_USDB);
 
-        IPrincipalToken(PT_USDB).initialize(USDBPOTAddress);
-        YT_USDB.initialize(USDBSYAddress, USDBPOTAddress);
+        IPrincipalToken(PT_USDB).initialize(USDBSPAddress);
+        YT_USDB.initialize(USDBSYAddress, USDBSPAddress);
 
         // After deploy, configure the yield and gas mode
         // IBlastGovernorable(SY_USDB).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
@@ -336,7 +336,7 @@ contract OutstakeScript is BaseScript {
         console.log("SY_USDB deployed on %s", USDBSYAddress);
         console.log("PT_USDB deployed on %s", USDBPTAddress);
         console.log("YT_USDB deployed on %s", USDBYTAddress);
-        console.log("POT_USDB deployed on %s", USDBPOTAddress);
+        console.log("SP_USDB deployed on %s", USDBSPAddress);
     }
 
 
