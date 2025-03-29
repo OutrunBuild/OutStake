@@ -66,30 +66,5 @@ interface IOutStakeRouter {
         MintUPTParam calldata mintUPTParam
     ) external returns (uint256 PTGenerated, uint256 YTGenerated);
 
-
-    /** REDEEM From PT, POT **/
-    function redeemPSPToSy(
-        address SY,
-        address PT,
-        address UPT,
-        address SP,
-        address receiver,
-        RedeemParam calldata redeemParam,
-        bool useSP
-    ) external returns (uint256 redeemedSyAmount);
-
-    function redeemPSPToToken(
-        address SY,
-        address PT,
-        address UPT,
-        address SP,
-        address tokenOut,
-        address receiver,
-        RedeemParam calldata redeemParam,
-        bool useSP
-    ) external returns (uint256 redeemedSyAmount);
-
     error InsufficientPTGenerated(uint256 PTGenerated, uint256 minPTGenerated);
-
-    error InsufficientSYRedeemed(uint256 redeemedSyAmount, uint256 minRedeemedSyAmount);
 }
