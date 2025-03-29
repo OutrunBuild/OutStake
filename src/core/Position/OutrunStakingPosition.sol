@@ -179,8 +179,8 @@ contract OutrunStakingPosition is
         uint256 SPShareMinted = position.SPShareMinted;
         uint256 SPMintable = PTRedeemable - SPShareMinted;
 
-        require(block.timestamp < position.deadline, PermissionDenied());
         require(positionShare <= SPMintable, InsufficientSPMintable(SPMintable));
+        require(msg.sender == position.initOwner && block.timestamp < position.deadline, PermissionDenied());
 
         _transferIn(PT, msg.sender, positionShare);
         _mint(msg.sender, positionId, positionShare);
@@ -212,6 +212,7 @@ contract OutrunStakingPosition is
             _burn(msg.sender, positionId, positionShare);
             IPrincipalToken(PT).burn(address(this), positionShare);
         } else {
+            require(msg.sender == position.initOwner, PermissionDenied());
             IPrincipalToken(PT).burn(msg.sender, positionShare);
         }
         
