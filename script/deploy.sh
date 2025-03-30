@@ -7,12 +7,12 @@ source ../.env
 #     --broadcast --ffi -vvvv \
 #     --verify 
 
-forge script OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
-    --with-gas-price 100000000 \
-    --optimize --optimizer-runs 100000 \
-    --via-ir \
-    --broadcast --ffi -vvvv \
-    --verify 
+# forge script OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
+#     --with-gas-price 100000000 \
+#     --optimize --optimizer-runs 100000 \
+#     --via-ir \
+#     --broadcast --ffi -vvvv \
+#     --verify 
 
 # forge script OutstakeScript.s.sol:OutstakeScript --rpc-url arbitrum_sepolia \
 #     --with-gas-price 100000000 \
@@ -64,12 +64,12 @@ forge script OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
 #     --verify --verifier sourcify \
 #     --verifier-url 'https://sourcify-api-monad.blockvision.org'
 
-# forge script OutstakeScript.s.sol:OutstakeScript --rpc-url linea_sepolia \
-#     --priority-gas-price 49000000 --with-gas-price 50000000 \
-#     --optimize --optimizer-runs 100000 \
-#     --via-ir \
-#     --broadcast --ffi -vvvv \
-#     --verify
+forge script OutstakeScript.s.sol:OutstakeScript --rpc-url linea_sepolia \
+    --priority-gas-price 49000000 --with-gas-price 50000000 \
+    --optimize --optimizer-runs 100000 \
+    --via-ir \
+    --broadcast --ffi -vvvv \
+    --verify
 
 # forge script OutstakeScript.s.sol:OutstakeScript --rpc-url optimistic_sepolia \
 #     --with-gas-price 1100000 \

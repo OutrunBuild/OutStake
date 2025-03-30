@@ -50,9 +50,9 @@ contract OutstakeScript is BaseScript {
 
         _chainsInit();
 
-        // _deployTPT();
-        _crossChainOFT();
-        // _deployUETH(0);
+        _deployTPT();
+        // _crossChainOFT();
+        // _deployUETH(1);
         // _deployOutStakeRouter(4);
 
         // _supportSlisBNB();
@@ -358,9 +358,9 @@ contract OutstakeScript is BaseScript {
         bytes memory receiveOptions = OptionsBuilder.newOptions()
             .addExecutorLzReceiveOption(85000, 0);
         SendParam memory sendUPTParam = SendParam({
-                dstEid: uint32(vm.envUint("SCROLL_SEPOLIA_EID")),
+                dstEid: uint32(vm.envUint("ARBITRUM_SEPOLIA_EID")),
                 to: bytes32(uint256(uint160(owner))),
-                amountLD: 500000 * 1e18,
+                amountLD: 2000 * 1e18,
                 minAmountLD: 0,
                 extraOptions: receiveOptions,
                 composeMsg: abi.encode(),
