@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
@@ -149,8 +149,8 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * NOTE: This function is not virtual, {_update} should be overridden instead.
      */
     function _transfer(address from, address to, uint256 value) internal {
-        require(from != address(0), ERC20InvalidSender(address(0)));
-        require(to != address(0), ERC20InvalidReceiver(address(0)));
+        require(from != address(0), "ERC20InvalidSender");
+        require(to != address(0), "ERC20InvalidReceiver");
 
         _update(from, to, value);
     }
@@ -170,7 +170,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
             _totalSupply += value;
         } else {
             uint256 fromBalance = _balances[from];
-            require(fromBalance >= value, ERC20InsufficientBalance(from, fromBalance, value));
+            require(fromBalance >= value, "ERC20InsufficientBalance");
             unchecked {
                 // Overflow not possible: value <= fromBalance <= totalSupply.
                 _balances[from] = fromBalance - value;
@@ -203,7 +203,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * NOTE: This function is not virtual, {_update} should be overridden instead.
      */
     function _mint(address account, uint256 value) internal {
-        require(account != address(0), ERC20InvalidReceiver(address(0)));
+        require(account != address(0), "ERC20InvalidReceiver");
 
         _update(address(0), account, value);
     }
@@ -217,7 +217,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * NOTE: This function is not virtual, {_update} should be overridden instead
      */
     function _burn(address account, uint256 value) internal {
-        require(account != address(0), ERC20InvalidSender(address(0)));
+        require(account != address(0), "ERC20InvalidSender");
 
         _update(account, address(0), value);
     }
@@ -259,8 +259,8 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * Requirements are the same as {_approve}.
      */
     function _approve(address owner, address spender, uint256 value, bool emitEvent) internal {
-        require(owner != address(0), ERC20InvalidApprover(address(0)));
-        require(spender != address(0), ERC20InvalidSpender(address(0)));
+        require(owner != address(0), "ERC20InvalidApprover");
+        require(spender != address(0), "ERC20InvalidSpender");
 
         _allowances[owner][spender] = value;
         if (emitEvent) {
@@ -279,7 +279,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
     function _spendAllowance(address owner, address spender, uint256 value) internal {
         uint256 currentAllowance = allowance(owner, spender);
         if (currentAllowance != type(uint256).max) {
-            require(currentAllowance >= value, ERC20InsufficientAllowance(spender, currentAllowance, value));
+            require(currentAllowance >= value, "ERC20InsufficientAllowance");
 
             unchecked {
                 _approve(owner, spender, currentAllowance - value, false);

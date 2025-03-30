@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -23,7 +23,7 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT, T
     ) OutrunOFT(name_, symbol_, decimals_, _lzEndpoint, _delegate) Ownable(_delegate) {}
 
     modifier onlyAuthorizedPT(address PT) {
-        require(authorizedPTs[PT], PermissionDenied());
+        require(authorizedPTs[PT], "PermissionDenied");
         _;
     }
 

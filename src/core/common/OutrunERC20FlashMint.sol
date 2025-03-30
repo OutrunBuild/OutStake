@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { OutrunERC20 } from "./OutrunERC20.sol";
 import { IERC3156FlashLender } from "@openzeppelin/contracts/interfaces/IERC3156FlashLender.sol";
@@ -67,13 +67,13 @@ abstract contract OutrunERC20FlashMint is OutrunERC20, IERC3156FlashLender {
         bytes calldata data
     ) public virtual returns (bool) {
         uint256 maxLoan = maxFlashLoan(token);
-        require(value <= maxLoan, ERC3156ExceededMaxLoan(maxLoan));
+        require(value <= maxLoan, "ERC3156ExceededMaxLoan");
 
         uint256 fee = flashFee(token, value);
         _mint(address(receiver), value);
         require(
             receiver.onFlashLoan(msg.sender, token, value, fee, data) == RETURN_VALUE, 
-            ERC3156InvalidReceiver(address(receiver))
+            "ERC3156InvalidReceiver"
         );
         
         _burn(address(receiver), value + fee);

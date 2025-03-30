@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -22,7 +22,7 @@ contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20FlashMint, OutrunER
     ) OutrunERC20(name_, symbol_, decimals_) Ownable(owner_) {}
 
     modifier onlyAuthorized() {
-        require(msg.sender == POT || (msg.sender == UPT && UPTConvertiblestatus), PermissionDenied());
+        require(msg.sender == POT || (msg.sender == UPT && UPTConvertiblestatus), "PermissionDenied");
         _;
     }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -22,7 +22,7 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper
         address _yieldBearingToken,
         address _owner
     ) OutrunERC20(name_, symbol_, IERC20Metadata(_yieldBearingToken).decimals()) Ownable(_owner) {
-        require(_yieldBearingToken != address(0), SYZeroAddress());
+        require(_yieldBearingToken != address(0), "SYZeroAddress");
         
         yieldBearingToken = _yieldBearingToken;
     }
@@ -42,13 +42,13 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper
         uint256 amountTokenToDeposit,
         uint256 minSharesOut
     ) external payable nonReentrant whenNotPaused returns (uint256 amountSharesOut) {
-        require(isValidTokenIn(tokenIn), SYInvalidTokenIn(tokenIn));
-        require(amountTokenToDeposit != 0, SYZeroDeposit());
+        require(isValidTokenIn(tokenIn), "SYInvalidTokenIn");
+        require(amountTokenToDeposit != 0, "SYZeroDeposit");
 
         _transferIn(tokenIn, msg.sender, amountTokenToDeposit);
 
         amountSharesOut = _deposit(tokenIn, amountTokenToDeposit);
-        require(amountSharesOut >= minSharesOut, SYInsufficientSharesOut(amountSharesOut, minSharesOut));
+        require(amountSharesOut >= minSharesOut, "SYInsufficientSharesOut");
 
         _mint(receiver, amountSharesOut);
         emit Deposit(msg.sender, receiver, tokenIn, amountTokenToDeposit, amountSharesOut);
@@ -64,8 +64,8 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper
         uint256 minTokenOut,
         bool burnFromInternalBalance
     ) external nonReentrant whenNotPaused returns (uint256 amountTokenOut) {
-        require(isValidTokenOut(tokenOut), SYInvalidTokenOut(tokenOut));
-        require(amountSharesToRedeem != 0, SYZeroRedeem());
+        require(isValidTokenOut(tokenOut), "SYInvalidTokenOut");
+        require(amountSharesToRedeem != 0, "SYZeroRedeem");
         amountTokenOut = _redeem(receiver, tokenOut, amountSharesToRedeem);
 
         if (burnFromInternalBalance) {
@@ -74,7 +74,7 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper
             _burn(msg.sender, amountSharesToRedeem);
         }
         
-        require(amountTokenOut >= minTokenOut, SYInsufficientTokenOut(amountTokenOut, minTokenOut));
+        require(amountTokenOut >= minTokenOut, "SYInsufficientTokenOut");
 
         emit Redeem(msg.sender, receiver, tokenOut, amountSharesToRedeem, amountTokenOut);
     }
@@ -149,7 +149,7 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper
         address tokenIn,
         uint256 amountTokenToDeposit
     ) external view virtual returns (uint256 amountSharesOut) {
-        require(isValidTokenIn(tokenIn), SYInvalidTokenIn(tokenIn));
+        require(isValidTokenIn(tokenIn), "SYInvalidTokenIn");
         return _previewDeposit(tokenIn, amountTokenToDeposit);
     }
 
@@ -157,7 +157,7 @@ abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper
         address tokenOut,
         uint256 amountSharesToRedeem
     ) external view virtual returns (uint256 amountTokenOut) {
-        require(isValidTokenOut(tokenOut), SYInvalidTokenOut(tokenOut));
+        require(isValidTokenOut(tokenOut), "SYInvalidTokenOut");
         return _previewRedeem(tokenOut, amountSharesToRedeem);
     }
 

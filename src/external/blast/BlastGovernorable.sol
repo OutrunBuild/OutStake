@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { IBlast } from "./IBlast.sol";
 import { BlastModeEnum } from "./BlastModeEnum.sol";
@@ -28,13 +28,13 @@ abstract contract BlastGovernorable is IBlastGovernorable {
     event BlastGovernorTransferred(address indexed previousBlastGovernor, address indexed newBlastGovernor);
 
     constructor(address initialBlastGovernor) {
-        require(initialBlastGovernor != address(0), BlastZeroAddress());
+        require(initialBlastGovernor != address(0), "BlastZeroAddress");
         blastGovernor = initialBlastGovernor;
     }
 
     modifier onlyBlastGovernor() {
         address msgSender = msg.sender;
-        require(blastGovernor == msgSender, UnauthorizedAccount(msgSender));
+        require(blastGovernor == msgSender, "UnauthorizedAccount");
         _;
     }
 
@@ -55,14 +55,14 @@ abstract contract BlastGovernorable is IBlastGovernorable {
      * @param recipient - Address of receive gas
      */
     function claimMaxGas(address recipient) external override onlyBlastGovernor returns (uint256 gasAmount) {
-        require(recipient != address(0), BlastZeroAddress());
+        require(recipient != address(0), "BlastZeroAddress");
 
         gasAmount = BLAST.claimMaxGas(address(this), recipient);
         emit ClaimMaxGas(recipient, gasAmount);
     }
 
     function transferGasManager(address newBlastGovernor) external override onlyBlastGovernor {
-        require(newBlastGovernor != address(0), BlastZeroAddress());
+        require(newBlastGovernor != address(0), "BlastZeroAddress");
 
         _transferBlastGovernor(newBlastGovernor);
     }

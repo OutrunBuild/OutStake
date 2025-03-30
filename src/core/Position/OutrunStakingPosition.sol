@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -68,7 +68,7 @@ contract OutrunStakingPosition is
     }
 
     modifier onlyYT() {
-        require(msg.sender == YT, PermissionDenied());
+        require(msg.sender == YT, "PermissionDenied");
         _;
     }
 
@@ -141,7 +141,7 @@ contract OutrunStakingPosition is
         address YTRecipient,
         address positionOwner
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 PTGenerated, uint256 YTGenerated) {
-        require(PTRecipient != address(0) && YTRecipient != address(0) && positionOwner != address(0), ZeroInput());
+        require(PTRecipient != address(0) && YTRecipient != address(0) && positionOwner != address(0), "ZeroInput");
 
         _stakeParamValidate(amountInSY, lockupDays);
         _transferIn(SY, msg.sender, amountInSY);
@@ -173,14 +173,14 @@ contract OutrunStakingPosition is
      * @notice User must have approved this contract to spend PT
      */
     function mintSP(uint256 positionId, uint256 positionShare) external override whenNotPaused {
-        require(positionShare != 0, ZeroInput());
+        require(positionShare != 0, "ZeroInput");
         Position storage position = positions[positionId];
         uint256 PTRedeemable = position.PTRedeemable;
         uint256 SPShareMinted = position.SPShareMinted;
         uint256 SPMintable = PTRedeemable - SPShareMinted;
 
-        require(positionShare <= SPMintable, InsufficientSPMintable(SPMintable));
-        require(msg.sender == position.initOwner && block.timestamp < position.deadline, PermissionDenied());
+        require(positionShare <= SPMintable, "InsufficientSPMintable");
+        require(msg.sender == position.initOwner && block.timestamp < position.deadline, "PermissionDenied");
 
         _transferIn(PT, msg.sender, positionShare);
         _mint(msg.sender, positionId, positionShare);
@@ -203,16 +203,16 @@ contract OutrunStakingPosition is
         uint256 positionShare,
         bool useSP
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 redeemedSyAmount) {
-        require(positionShare != 0, ZeroInput());
+        require(positionShare != 0, "ZeroInput");
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
-        require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
+        require(block.timestamp >= deadline, "LockTimeNotExpired");
 
         if (useSP) {
             _burn(msg.sender, positionId, positionShare);
             IPrincipalToken(PT).burn(address(this), positionShare);
         } else {
-            require(msg.sender == position.initOwner, PermissionDenied());
+            require(msg.sender == position.initOwner, "PermissionDenied");
             IPrincipalToken(PT).burn(msg.sender, positionShare);
         }
         
@@ -241,7 +241,7 @@ contract OutrunStakingPosition is
     function redeemReward(uint256 positionId) external whenNotPaused override {
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
-        require(deadline <= block.timestamp, LockTimeNotExpired(deadline));
+        require(deadline <= block.timestamp, "LockTimeNotExpired");
 
         _redeemRewards(position.initOwner, positionId, position.SYRedeemable);
     }
@@ -252,7 +252,7 @@ contract OutrunStakingPosition is
      * @param syAmount - Amount of protocol fee
      */
     function transferYields(address receiver, uint256 syAmount) external whenNotPaused override onlyYT {
-        require(msg.sender == YT, PermissionDenied());
+        require(msg.sender == YT, "PermissionDenied");
         _transferSY(receiver, syAmount);
     }
 
@@ -273,7 +273,7 @@ contract OutrunStakingPosition is
             _minLockupDays != 0 && 
             _maxLockupDays != 0 && 
             _minLockupDays < _maxLockupDays, 
-            ErrorInput()
+            "ErrorInput"
         );
 
         lockupDuration.minLockupDays = _minLockupDays;
@@ -291,12 +291,12 @@ contract OutrunStakingPosition is
     }
 
     function _stakeParamValidate(uint256 amountInSY, uint256 lockupDays) internal view {
-        require(amountInSY >= minStake, MinStakeInsufficient(minStake));
+        require(amountInSY >= minStake, "MinStakeInsufficient");
         uint256 _minLockupDays = lockupDuration.minLockupDays;
         uint256 _maxLockupDays = lockupDuration.maxLockupDays;
         require(
             lockupDays >= _minLockupDays && lockupDays <= _maxLockupDays, 
-            InvalidLockupDays(_minLockupDays, _maxLockupDays)
+            "InvalidLockupDays"
         );
     }
 

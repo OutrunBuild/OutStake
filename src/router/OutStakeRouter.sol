@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { IOutStakeRouter } from "./interfaces/IOutStakeRouter.sol";
 import { TokenHelper, IERC20, IERC6909 } from "../core/libraries/TokenHelper.sol";
@@ -129,6 +129,6 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         if (UPT != address(0)) IUniversalPrincipalToken(UPT).mintUPTFromPT(mintUPTParam.PT, msg.sender, PTGenerated);
 
         uint256 minPTGenerated = stakeParam.minPTGenerated;
-        require(PTGenerated >= minPTGenerated, InsufficientPTGenerated(PTGenerated, minPTGenerated));
+        require(PTGenerated >= minPTGenerated, "InsufficientPTGenerated");
     }
 }

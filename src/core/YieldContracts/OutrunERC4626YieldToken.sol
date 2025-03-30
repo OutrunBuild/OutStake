@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -92,7 +92,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
      */
     function previewWithdrawYields(uint256 amountInBurnedYT) public view override returns (uint256 amountYieldsOut) {
         uint256 _totalSupply = totalSupply();
-        require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, InvalidInput());
+        require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, "InvalidInput");
         amountYieldsOut = amountInBurnedYT * totalRedeemableYields() / _totalSupply;
     }
     /**
@@ -136,9 +136,9 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
      * @param amountInBurnedYT - The amount of burned YT
      */
     function withdrawYields(uint256 amountInBurnedYT) external override nonReentrant whenNotPaused returns (uint256 amountYieldsOut) {
-        require(amountInBurnedYT != 0, ZeroInput());
+        require(amountInBurnedYT != 0, "ZeroInput");
         uint256 _totalSupply = totalSupply();
-        require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, InvalidInput());
+        require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, "InvalidInput");
         accumulateYields();
 
         unchecked {
@@ -158,7 +158,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
      * @param _revenuePool - Address of revenue pool
      */
     function setRevenuePool(address _revenuePool) public override onlyOwner {
-        require(_revenuePool != address(0), ZeroInput());
+        require(_revenuePool != address(0), "ZeroInput");
 
         revenuePool = _revenuePool;
         emit SetRevenuePool(_revenuePool);
@@ -168,7 +168,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
      * @param _protocolFeeRate - Protocol fee rate
      */
     function setProtocolFeeRate(uint256 _protocolFeeRate) public override onlyOwner {
-        require(_protocolFeeRate <= 1e18, FeeRateOverflow());
+        require(_protocolFeeRate <= 1e18, "FeeRateOverflow");
 
         protocolFeeRate = _protocolFeeRate;
         emit SetProtocolFeeRate(_protocolFeeRate);

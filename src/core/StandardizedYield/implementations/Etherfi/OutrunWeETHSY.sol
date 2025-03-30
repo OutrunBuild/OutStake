@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { SYBase, ArrayLib } from "../../SYBase.sol";
 import { IWeETH } from "../../../../external/etherfi/IWeETH.sol";
@@ -15,10 +15,12 @@ contract OutrunWeETHSY is SYBase {
         address _owner,
         address _eETH,
         address _weETH,
-        address _depositAdapter
+        address _depositAdapter,
+        address _liquidityPool
     ) SYBase("SY Etherfi weETH", "SY-weETH", _weETH, _owner) {
         EETH = _eETH;
         DEPOSIT_ADAPTER = _depositAdapter;
+        LIQUIDITY_POOL = _liquidityPool;
     }
 
     function _deposit(

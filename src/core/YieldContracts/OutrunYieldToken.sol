@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -20,7 +20,7 @@ abstract contract OutrunYieldToken is IYieldToken, OutrunERC20Pausable, Initiali
     }
 
     modifier onlyPositionOptionContract() {
-        require(msg.sender == POT, PermissionDenied());
+        require(msg.sender == POT, "PermissionDenied");
         _;
     }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 import { SYBase, IERC20Metadata } from "./SYBase.sol";
 import { RewardManager } from "../RewardManager/RewardManager.sol";

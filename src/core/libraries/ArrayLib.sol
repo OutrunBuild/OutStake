@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 library ArrayLib {
     function sum(uint256[] memory input) internal pure returns (uint256) {

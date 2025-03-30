@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.18;
 
 interface ILiquidityPool {
     function sharesForAmount(uint256 _amount) external view returns (uint256);
