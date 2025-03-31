@@ -13,7 +13,9 @@ interface IOutStakeRouter {
         uint256 minPTGenerated;
         address PTRecipient;
         address YTRecipient;
+        address PYTRecipient;
         address positionOwner;
+        bool outputUPT;
     }
 
     struct RedeemParam {
@@ -21,12 +23,6 @@ interface IOutStakeRouter {
         uint256 positionShare;
         uint256 minRedeemedSyAmount;
     }
-
-    struct MintUPTParam {
-        address PT;
-        address UPT;
-    }
-    
 
     /** MINT/REDEEM SY **/
     function mintSYFromToken(
@@ -54,16 +50,14 @@ interface IOutStakeRouter {
         address SP,
         address tokenIn,
         uint256 tokenAmount,
-        StakeParam calldata stakeParam,
-        MintUPTParam calldata mintUPTParam
+        StakeParam calldata stakeParam
     ) external payable returns (uint256 PTGenerated, uint256 YTGenerated);
 
     function mintPYFromSY(
         address SY,
         address SP,
         uint256 amountInSY,
-        StakeParam calldata stakeParam,
-        MintUPTParam calldata mintUPTParam
+        StakeParam calldata stakeParam
     ) external returns (uint256 PTGenerated, uint256 YTGenerated);
 
     error InsufficientPTGenerated(uint256 PTGenerated, uint256 minPTGenerated);

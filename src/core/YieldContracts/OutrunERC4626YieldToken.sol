@@ -7,7 +7,6 @@ import { Math } from "../libraries/Math.sol";
 import { SYUtils } from "../libraries/SYUtils.sol";
 import { OutrunYieldToken } from "./OutrunYieldToken.sol";
 import { IYieldManager } from "./interfaces/IYieldManager.sol";
-import { OutrunPrincipalToken } from "./OutrunPrincipalToken.sol";
 import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
 import { IOutrunStakeManager } from "../Position/interfaces/IOutrunStakeManager.sol";
@@ -42,7 +41,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
     }
 
     function _realTimeYieldInfo() internal view returns (uint256 realTimeYield, uint256 increasedYield) {
-        IOutrunStakeManager syStakeManager = IOutrunStakeManager(POT);
+        IOutrunStakeManager syStakeManager = IOutrunStakeManager(SP);
         uint256 exchangeRate = IStandardizedYield(SY).exchangeRate();
         uint256 totalCurrentAssetValue = SYUtils.syToAsset(exchangeRate, syStakeManager.syTotalStaking());
         uint256 totalPrincipalValue = syStakeManager.totalPrincipalValue();
@@ -125,7 +124,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
                 }
             }
 
-            IOutrunStakeManager(POT).transferYields(revenuePool, protocolFee);
+            IOutrunStakeManager(SP).transferYields(revenuePool, protocolFee);
 
             emit AccumulateYields(increasedYield, protocolFee);
         }
@@ -149,7 +148,7 @@ contract OutrunERC4626YieldToken is IYieldManager, OutrunYieldToken, ReentrancyG
 
         address msgSender = msg.sender;
         _burn(msgSender, amountInBurnedYT);
-        IOutrunStakeManager(POT).transferYields(msgSender, amountYieldsOut);
+        IOutrunStakeManager(SP).transferYields(msgSender, amountYieldsOut);
 
         emit WithdrawYields(msgSender, amountYieldsOut);
     }

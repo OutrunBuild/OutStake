@@ -64,9 +64,9 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         amountInRedeemed = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, doPull);
     }
 
-    /** MINT PT(UPT), YT **/
+    /** MINT PT(UPT), YT, PYT **/
     /**
-     * @dev Mint PT(UPT), YT from yield-Bearing token
+     * @dev Mint PT(UPT), YT, PYT from yield-Bearing token
      * @notice When minting UPT is not required, mintUPTParam can be empty
      */
     function mintPYFromToken(
@@ -74,8 +74,7 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         address SP,
         address tokenIn,
         uint256 tokenAmount,
-        StakeParam calldata stakeParam,
-        MintUPTParam calldata mintUPTParam
+        StakeParam calldata stakeParam
     ) external payable returns (uint256 PTGenerated, uint256 YTGenerated) {
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, 0, true);
 
@@ -83,8 +82,7 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         (PTGenerated, YTGenerated) = _mintPYFromSY(
             SP,
             amountInSY, 
-            stakeParam,
-            mintUPTParam
+            stakeParam
         );
     }
 
@@ -96,8 +94,7 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         address SY,
         address SP,
         uint256 amountInSY,
-        StakeParam calldata stakeParam,
-        MintUPTParam calldata mintUPTParam
+        StakeParam calldata stakeParam
     ) external returns (uint256 PTGenerated, uint256 YTGenerated) {
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
 
@@ -105,28 +102,24 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         (PTGenerated, YTGenerated) = _mintPYFromSY(
             SP,
             amountInSY, 
-            stakeParam,
-            mintUPTParam
+            stakeParam
         );
     }
 
     function _mintPYFromSY(
         address SP,
         uint256 amountInSY,
-        StakeParam calldata stakeParam,
-        MintUPTParam calldata mintUPTParam
+        StakeParam calldata stakeParam
     ) internal returns (uint256 PTGenerated, uint256 YTGenerated) {
-        address UPT = mintUPTParam.UPT;
-
         (PTGenerated, YTGenerated) = IOutrunStakeManager(SP).stake(
             amountInSY, 
             stakeParam.lockupDays,
-            UPT == address(0) ? stakeParam.PTRecipient : address(this),
+            stakeParam.PTRecipient,
             stakeParam.YTRecipient, 
-            stakeParam.positionOwner
+            stakeParam.PYTRecipient,
+            stakeParam.positionOwner,
+            stakeParam.outputUPT
         );
-
-        if (UPT != address(0)) IUniversalPrincipalToken(UPT).mintUPTFromPT(mintUPTParam.PT, msg.sender, PTGenerated);
 
         uint256 minPTGenerated = stakeParam.minPTGenerated;
         require(PTGenerated >= minPTGenerated, InsufficientPTGenerated(PTGenerated, minPTGenerated));

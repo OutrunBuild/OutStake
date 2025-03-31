@@ -6,16 +6,19 @@ import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { SYUtils } from "../libraries/SYUtils.sol";
+import { IBurnable } from "../libraries/IBurnable.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { OutrunERC6909 } from "../common/OutrunERC6909.sol";
 import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { AutoIncrementId } from "../libraries/AutoIncrementId.sol";
 import { IOutrunStakeManager } from "./interfaces/IOutrunStakeManager.sol";
-import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
-import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
 import { IYieldToken } from "../YieldContracts/interfaces/IYieldToken.sol";
 import { IYieldManager } from "../YieldContracts/interfaces/IYieldManager.sol";
+import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
+import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
 import { IPrincipalToken } from "../YieldContracts/interfaces/IPrincipalToken.sol";
+import { IOutrunPointsYieldToken } from "../YieldContracts/interfaces/IOutrunPointsYieldToken.sol";
+import { IUniversalPrincipalToken } from "../YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
 /**
  * @title Outrun Staking Position
@@ -36,6 +39,8 @@ contract OutrunStakingPosition is
     address public immutable SY;
     address public immutable PT;
     address public immutable YT;
+    address public immutable PYT;
+    address public immutable UPT;
 
     uint256 public minStake;
     uint256 public syTotalStaking;
@@ -57,11 +62,15 @@ contract OutrunStakingPosition is
         address revenuePool_,
         address _SY,
         address _PT,
-        address _YT
+        address _YT,
+        address _PYT,
+        address _UPT
     ) OutrunERC6909(name_, symbol_, decimals_) Ownable(owner_) {
         SY = _SY;
         PT = _PT;
         YT = _YT;
+        PYT = _PYT;
+        UPT = _UPT;
         minStake = minStake_;
         revenuePool = revenuePool_;
         protocolFeeRate = protocolFeeRate_;
@@ -139,9 +148,11 @@ contract OutrunStakingPosition is
         uint256 lockupDays,
         address PTRecipient, 
         address YTRecipient,
-        address positionOwner
+        address PYTRecipient,
+        address positionOwner,
+        bool outputUPT
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 PTGenerated, uint256 YTGenerated) {
-        require(PTRecipient != address(0) && YTRecipient != address(0) && positionOwner != address(0), ZeroInput());
+        require(PTRecipient != address(0) && YTRecipient != address(0) && PYTRecipient != address(0) && positionOwner != address(0), ZeroInput());
 
         _stakeParamValidate(amountInSY, lockupDays);
         _transferIn(SY, msg.sender, amountInSY);
@@ -152,18 +163,24 @@ contract OutrunStakingPosition is
             syTotalStaking += amountInSY;
             totalPrincipalValue += principalValue;
             deadline = block.timestamp + lockupDays * DAY;
-            YTGenerated = principalValue * lockupDays;
+            YTGenerated = amountInSY * lockupDays;
         }
 
         uint256 positionId = _nextId();
         PTGenerated = calcPTAmount(principalValue, YTGenerated);
-        positions[positionId] = Position(amountInSY, PTGenerated, principalValue, 0, deadline, positionOwner);
         IYieldToken(YT).mint(YTRecipient, YTGenerated);
-        IPrincipalToken(PT).mint(PTRecipient, PTGenerated);
+        
+        // If UPT is minted after staking, the Points yields will be forfeited.
+        if (outputUPT) {
+            IUniversalPrincipalToken(UPT).mint(PTRecipient, PTGenerated);
+        } else {
+            IPrincipalToken(PT).mint(PTRecipient, PTGenerated);
+            IOutrunPointsYieldToken(PYT).mint(PYTRecipient, positionId, PTGenerated);
+        }
 
         _storeRewardIndexes(positionId);
 
-        emit Stake(positionId, amountInSY, principalValue, PTGenerated, YTGenerated, deadline);
+        emit Stake(positionId, amountInSY, principalValue, PTGenerated, YTGenerated, deadline, outputUPT);
     }
 
     /**
@@ -172,7 +189,7 @@ contract OutrunStakingPosition is
      * @param positionShare - Share of the position
      * @notice User must have approved this contract to spend PT
      */
-    function mintSP(uint256 positionId, uint256 positionShare) external override whenNotPaused {
+    function mintSP(uint256 positionId, uint256 positionShare) external override accumulateYields whenNotPaused {
         require(positionShare != 0, ZeroInput());
         Position storage position = positions[positionId];
         uint256 PTRedeemable = position.PTRedeemable;
@@ -182,12 +199,13 @@ contract OutrunStakingPosition is
         require(positionShare <= SPMintable, InsufficientSPMintable(SPMintable));
         require(msg.sender == position.initOwner && block.timestamp < position.deadline, PermissionDenied());
 
-        _transferIn(PT, msg.sender, positionShare);
-        _mint(msg.sender, positionId, positionShare);
-
         unchecked {
             position.SPShareMinted += positionShare;
         }
+
+        address input = position.outputUPT ? UPT : PT;
+        _transferIn(input, msg.sender, positionShare);
+        _mint(msg.sender, positionId, positionShare);
 
         emit MintSP(positionId, positionShare);
     }
@@ -197,6 +215,7 @@ contract OutrunStakingPosition is
      * @param positionId - Position Id
      * @param positionShare - Share of the position
      * @param useSP - Burning SP at the same time
+     * @notice User must have approved this contract to spend PT or UPT
      */
     function redeem(
         uint256 positionId, 
@@ -207,13 +226,14 @@ contract OutrunStakingPosition is
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
         require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
+        address input = position.outputUPT ? UPT : PT;
 
         if (useSP) {
             _burn(msg.sender, positionId, positionShare);
-            IPrincipalToken(PT).burn(address(this), positionShare);
+            IBurnable(input).burn(address(this), positionShare);
         } else {
             require(msg.sender == position.initOwner, PermissionDenied());
-            IPrincipalToken(PT).burn(msg.sender, positionShare);
+            IBurnable(input).burn(msg.sender, positionShare);
         }
         
         _redeemRewards(position.initOwner, positionId, position.SYRedeemable);

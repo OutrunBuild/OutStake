@@ -10,40 +10,26 @@ import { Initializable } from "../libraries/Initializable.sol";
 import { IPrincipalToken } from "./interfaces/IPrincipalToken.sol";
 
 contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20FlashMint, OutrunERC20Pausable, Initializable {
-    address public POT;
-    address public UPT;
-    bool public UPTConvertiblestatus;
+    address public SP;
 
     constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_,
-        address owner_
-    ) OutrunERC20(name_, symbol_, decimals_) Ownable(owner_) {}
+        string memory _name,
+        string memory _symbol,
+        uint8 _decimals,
+        address _owner
+    ) OutrunERC20(_name, _symbol, _decimals) Ownable(_owner) {}
 
-    modifier onlyAuthorized() {
-        require(msg.sender == POT || (msg.sender == UPT && UPTConvertiblestatus), PermissionDenied());
+    modifier onlySP() {
+        require(msg.sender == SP, PermissionDenied());
         _;
     }
 
     /**
      * @dev Initializer
-     * @param _POT - Address of positionOptionContract
+     * @param _SP - Address of Staking Position contract
      */
-    function initialize(address _POT) external virtual override onlyOwner initializer {
-        POT = _POT;
-    }
-
-    /**
-     * @dev Update UPT convertible status
-     * @param _UPT - Address of UPT
-     * @param _status - UPT convertible status
-     */
-    function updateConvertibleStatus(address _UPT, bool _status) external override onlyOwner {
-        UPT = _UPT;
-        UPTConvertiblestatus = _status;
-
-        emit UpdateConvertibleStatus(_UPT, _status);
+    function initialize(address _SP) external override onlyOwner initializer {
+        SP = _SP;
     }
 
     /**
@@ -51,16 +37,16 @@ contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20FlashMint, OutrunER
      * @param account - Address who receive PT 
      * @param amount - The amount of minted PT
      */
-    function mint(address account, uint256 amount) external override onlyAuthorized whenNotPaused {
+    function mint(address account, uint256 amount) external override onlySP whenNotPaused {
         _mint(account, amount);
     }
 
     /**
      * @dev Only authorized contract can burn
-     * @param account - The address of the account that owns the PT that have been burned
-     * @param amount - The amount of burned PT
+     * @param account - The address of the account
+     * @param amount - The amount of the PT to burn
      */
-    function burn(address account, uint256 amount) external override onlyAuthorized {
+    function burn(address account, uint256 amount) external override onlySP {
         _burn(account, amount);
     }
 

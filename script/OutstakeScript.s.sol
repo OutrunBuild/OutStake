@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-import "./BaseScript.s.sol";
+import { IOAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
+import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import { IOFT, SendParam, MessagingFee } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 
+import "./BaseScript.s.sol";
 import { OutStakeRouter } from "../src/router/OutStakeRouter.sol";
 import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
 import { OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
@@ -14,9 +17,7 @@ import { OutrunStakingPosition } from "../src/core/Position/OutrunStakingPositio
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
 import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
 import { OutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
-import { IOAppCore } from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
-import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
-import { IOFT, SendParam, MessagingFee } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
+import { IOutrunPointsYieldToken, OutrunPointsYieldToken } from "../src/core/YieldContracts/OutrunPointsYieldToken.sol";
 
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
 import { OutrunSlisUSDSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisUSDSY.sol";
@@ -25,6 +26,10 @@ import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/
 
 contract OutstakeScript is BaseScript {
     using OptionsBuilder for bytes;
+
+    address internal ueth;
+    address internal uusd;
+    address internal ubnb;
 
     address internal owner;
     address internal blastGovernor;
@@ -38,6 +43,9 @@ contract OutstakeScript is BaseScript {
     mapping(uint32 chainId => uint32) public endpointIds;
 
     function run() public broadcaster {
+        ueth = vm.envAddress("UETH");
+        uusd = vm.envAddress("UUSD");
+        ubnb = vm.envAddress("UBNB");
         owner = vm.envAddress("OWNER");
         slisBNB = vm.envAddress("TESTNET_SLISBNB");
         revenuePool = vm.envAddress("REVENUE_POOL");
@@ -186,7 +194,16 @@ contract OutstakeScript is BaseScript {
         );
         address slisBNBYTAddress = address(YT_SLISBNB);
 
-        // POT
+        // PYT
+        OutrunPointsYieldToken PYT_SLISBNB = new OutrunPointsYieldToken(
+            "Outrun slisBNB Points Yield Token",
+            "PYT-SLISBNB",
+            18,
+            owner
+        );
+        address slisBNBPYTAddress = address(PYT_SLISBNB);
+
+        // SP
         OutrunStakingPosition SP_SLISBNB = new OutrunStakingPosition(
             owner,
             "Outrun SlisBNB Staking Position",
@@ -197,17 +214,21 @@ contract OutstakeScript is BaseScript {
             revenuePool,
             slisBNBSYAddress,
             slisBNBPTAddress,
-            slisBNBYTAddress
+            slisBNBYTAddress,
+            slisBNBPYTAddress,
+            ubnb
         );
         SP_SLISBNB.setLockupDuration(1, 365);
         address slisBNBSPAddress = address(SP_SLISBNB);
 
-        IPrincipalToken(slisBNBPTAddress).initialize(slisBNBSPAddress);
-        IYieldToken(slisBNBYTAddress).initialize(slisBNBSYAddress, slisBNBSPAddress);
+        PT_SLISBNB.initialize(slisBNBSPAddress);
+        YT_SLISBNB.initialize(slisBNBSYAddress, slisBNBSPAddress);
+        PYT_SLISBNB.initialize(slisBNBSPAddress);
 
         console.log("SY_SLISBNB deployed on %s", slisBNBSYAddress);
         console.log("PT_SLISBNB deployed on %s", slisBNBPTAddress);
         console.log("YT_SLISBNB deployed on %s", slisBNBYTAddress);
+        console.log("PYT_SLISBNB deployed on %s", slisBNBPYTAddress);
         console.log("SP_SLISBNB deployed on %s", slisBNBSPAddress);
     }
 
@@ -247,7 +268,16 @@ contract OutstakeScript is BaseScript {
         );
         address BETHYTAddress = address(YT_BETH);
 
-        // POT
+        // PYT
+        OutrunPointsYieldToken PYT_BETH = new OutrunPointsYieldToken(
+            "Outrun Blast ETH Points Yield Token",
+            "PYT-BETH",
+            18,
+            owner
+        );
+        address BETHPYTAddress = address(PYT_BETH);
+
+        // SP
         OutrunStakingPosition SP_BETH = new OutrunStakingPosition(
             owner,
             "Blast ETH Staking Position",
@@ -258,13 +288,16 @@ contract OutstakeScript is BaseScript {
             revenuePool,
             BETHSYAddress,
             BETHPTAddress,
-            BETHYTAddress
+            BETHYTAddress,
+            BETHPYTAddress,
+            ueth
         );
         SP_BETH.setLockupDuration(1, 365);
         address BETHSPAddress = address(SP_BETH);
 
-        IPrincipalToken(PT_BETH).initialize(BETHSPAddress);
+        PT_BETH.initialize(BETHSPAddress);
         YT_BETH.initialize(BETHSYAddress, BETHSPAddress);
+        PYT_BETH.initialize(BETHSPAddress);
 
         // After deploy, configure the yield and gas mode
         // IBlastGovernorable(SY_BETH).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
@@ -272,6 +305,7 @@ contract OutstakeScript is BaseScript {
         console.log("SY_BETH deployed on %s", BETHSYAddress);
         console.log("PT_BETH deployed on %s", BETHPTAddress);
         console.log("YT_BETH deployed on %s", BETHYTAddress);
+        console.log("PYT_BETH deployed on %s", BETHPYTAddress);
         console.log("SP_BETH deployed on %s", BETHSPAddress);
     }
 
@@ -311,7 +345,16 @@ contract OutstakeScript is BaseScript {
         );
         address USDBYTAddress = address(YT_USDB);
 
-        // POT
+        // PYT
+        OutrunPointsYieldToken PYT_USDB = new OutrunPointsYieldToken(
+            "Outrun Blast USD Points Yield Token",
+            "PYT-USDB",
+            18,
+            owner
+        );
+        address USDBPYTAddress = address(PYT_USDB);
+
+        // SP
         OutrunStakingPosition SP_USDB = new OutrunStakingPosition(
             owner,
             "Blast USD Staking Position",
@@ -322,13 +365,16 @@ contract OutstakeScript is BaseScript {
             revenuePool,
             USDBSYAddress,
             USDBPTAddress,
-            USDBYTAddress
+            USDBYTAddress,
+            USDBPYTAddress,
+            uusd
         );
         SP_USDB.setLockupDuration(1, 365);
         address USDBSPAddress = address(SP_USDB);
 
-        IPrincipalToken(PT_USDB).initialize(USDBSPAddress);
+        PT_USDB.initialize(USDBSPAddress);
         YT_USDB.initialize(USDBSYAddress, USDBSPAddress);
+        PYT_USDB.initialize(USDBSPAddress);
 
         // After deploy, configure the yield and gas mode
         // IBlastGovernorable(SY_USDB).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
@@ -336,9 +382,9 @@ contract OutstakeScript is BaseScript {
         console.log("SY_USDB deployed on %s", USDBSYAddress);
         console.log("PT_USDB deployed on %s", USDBPTAddress);
         console.log("YT_USDB deployed on %s", USDBYTAddress);
+        console.log("PYT_USDB deployed on %s", USDBPYTAddress);
         console.log("SP_USDB deployed on %s", USDBSPAddress);
     }
-
 
     // Test
     function _deployTPT() internal {
@@ -354,7 +400,6 @@ contract OutstakeScript is BaseScript {
     }
 
     function _crossChainOFT() internal {
-        address UETH = vm.envAddress("UETH");
         bytes memory receiveOptions = OptionsBuilder.newOptions()
             .addExecutorLzReceiveOption(85000, 0);
         SendParam memory sendUPTParam = SendParam({
@@ -366,7 +411,7 @@ contract OutstakeScript is BaseScript {
                 composeMsg: abi.encode(),
                 oftCmd: abi.encode()
             });
-        MessagingFee memory messagingFee = IOFT(UETH).quoteSend(sendUPTParam, false);
-        IOFT(UETH).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
+        MessagingFee memory messagingFee = IOFT(ueth).quoteSend(sendUPTParam, false);
+        IOFT(ueth).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
     }
 }

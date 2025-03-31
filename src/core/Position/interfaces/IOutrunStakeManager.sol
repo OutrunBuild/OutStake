@@ -12,6 +12,7 @@ interface IOutrunStakeManager {
         uint256 SPShareMinted;          // Amount of SP Minted
         uint256 deadline;               // Position unlock time
         address initOwner;              // Address of init staker(For redeem reward)
+        bool outputUPT;                 // Is UPT being minted?
     }
 
     struct LockupDuration {
@@ -58,7 +59,9 @@ interface IOutrunStakeManager {
         uint256 lockupDays,
         address PTRecipient, 
         address YTRecipient,
-        address positionOwner
+        address PYTRecipient,
+        address positionOwner,
+        bool outputUPT
     ) external returns (uint256 PTGenerated, uint256 YTGenerated);
 
     function mintSP(uint256 positionId, uint256 positionShare) external;
@@ -80,7 +83,8 @@ interface IOutrunStakeManager {
         uint256 principalValue,
         uint256 PTGenerated,
         uint256 YTGenerated,
-        uint256 indexed deadline
+        uint256 indexed deadline,
+        bool indexed outputUPT
     );
 
     event MintSP(uint256 indexed positionId, uint256 positionShare);

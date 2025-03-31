@@ -5,32 +5,27 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 import { OutrunERC20 } from "../common/OutrunERC20.sol";
 import { OutrunERC20Pausable } from "../common/OutrunERC20Pausable.sol";
-import { Initializable } from "../libraries/Initializable.sol";
 import { IYieldToken } from "./interfaces/IYieldToken.sol";
+import { Initializable } from "../libraries/Initializable.sol";
 
 abstract contract OutrunYieldToken is IYieldToken, OutrunERC20Pausable, Initializable {
     address public SY;
-    address public POT;
+    address public SP;
 
     constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
-    ) OutrunERC20(name_, symbol_, decimals_) {
-    }
+        string memory _name,
+        string memory _symbol,
+        uint8 _decimals
+    ) OutrunERC20(_name, _symbol, _decimals) {}
 
-    modifier onlyPositionOptionContract() {
-        require(msg.sender == POT, PermissionDenied());
+    modifier onlySP() {
+        require(msg.sender == SP, PermissionDenied());
         _;
     }
 
-    /**
-     * @dev Initializer
-     * @param _POT - Address of positionOptionContract
-     */
-    function initialize(address _SY, address _POT) external virtual override onlyOwner initializer {
+    function initialize(address _SY, address _SP) external override onlyOwner initializer {
         SY = _SY;
-        POT = _POT;
+        SP = _SP;
     }
 
     /**
@@ -38,7 +33,7 @@ abstract contract OutrunYieldToken is IYieldToken, OutrunERC20Pausable, Initiali
      * @param account - Address who receive YT 
      * @param amount - The amount of minted YT
      */
-    function mint(address account, uint256 amount) external override whenNotPaused onlyPositionOptionContract {
+    function mint(address account, uint256 amount) external override whenNotPaused onlySP {
         _mint(account, amount);
     }
 }
