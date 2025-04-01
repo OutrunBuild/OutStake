@@ -27,6 +27,8 @@ interface IOutrunStakeManager {
 
     error PermissionDenied();
 
+    error UPTCannotBeMinted();
+
     error LockTimeNotExpired(uint256 deadLine);
 
     error MinStakeInsufficient(uint256 minStake);
@@ -75,6 +77,8 @@ interface IOutrunStakeManager {
     function transferYields(address receiver, uint256 syAmount) external;
 
     function setLockupDuration(uint128 minLockupDays, uint128 maxLockupDays) external;
+
+    function setUPT(address UPT) external;
 
 
     event Stake(

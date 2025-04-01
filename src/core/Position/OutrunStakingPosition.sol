@@ -40,13 +40,13 @@ contract OutrunStakingPosition is
     address public immutable PT;
     address public immutable YT;
     address public immutable PYT;
-    address public immutable UPT;
-
+    
     uint256 public minStake;
     uint256 public syTotalStaking;
     uint256 public totalPrincipalValue;
     LockupDuration public lockupDuration;
 
+    address public UPT;
     address public revenuePool;
     uint256 public protocolFeeRate;
 
@@ -168,10 +168,12 @@ contract OutrunStakingPosition is
 
         uint256 positionId = _nextId();
         PTGenerated = calcPTAmount(principalValue, YTGenerated);
+        positions[positionId] = Position(amountInSY, PTGenerated, principalValue, 0, deadline, positionOwner, outputUPT);
         IYieldToken(YT).mint(YTRecipient, YTGenerated);
         
         // If UPT is minted after staking, the Points yields will be forfeited.
         if (outputUPT) {
+            require(UPT != address(0), UPTCannotBeMinted());
             IUniversalPrincipalToken(UPT).mint(PTRecipient, PTGenerated);
         } else {
             IPrincipalToken(PT).mint(PTRecipient, PTGenerated);
@@ -300,6 +302,10 @@ contract OutrunStakingPosition is
         lockupDuration.maxLockupDays = _maxLockupDays;
 
         emit SetLockupDuration(_minLockupDays, _maxLockupDays);
+    }
+
+    function setUPT(address _UPT) external override onlyOwner {
+        UPT = _UPT;
     }
 
     function _transferSY(address receiver, uint256 syAmount) internal {
