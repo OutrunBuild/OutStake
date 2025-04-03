@@ -80,19 +80,19 @@ contract OutrunWeETHSY is SYBase {
     }
 
     function getTokensIn() public view override returns (address[] memory res) {
-        return ArrayLib.create(yieldBearingToken, NATIVE);
+        return ArrayLib.create(NATIVE, EETH, yieldBearingToken);
     }
 
     function getTokensOut() public view override returns (address[] memory res) {
-        return ArrayLib.create(yieldBearingToken, EETH);
+        return ArrayLib.create(EETH, yieldBearingToken);
     }
 
     function isValidTokenIn(address token) public view override returns (bool) {
-        return token == yieldBearingToken || token == NATIVE;
+        return token == NATIVE || token == EETH || token == yieldBearingToken;
     }
 
     function isValidTokenOut(address token) public view override returns (bool) {
-        return token == yieldBearingToken || token == EETH;
+        return token == EETH || token == yieldBearingToken;
     }
 
     function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
