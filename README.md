@@ -4,13 +4,13 @@ OutStake is a protocol built entirely around yield-bearing tokens, introducing a
 
 For more details, please refer to the product documentation : [Outrun Official Doc](https://outrun.gitbook.io/doc "Outrun Official Doc")
 
-## OutStake Contract
+## Contract
 
-### OutrunDeployer
+### OutrunDeployer(Omnichain)
 
 0xCf8ddAb7A0ee83131a015b32A2bbA922b7a428FA  
 
-### OutStakeRouter
+### OutStakeRouter(Omnichain)
 
 0xe91C3D7243083AF14F529ABEf030c7ecC33b513F  
 
@@ -18,7 +18,7 @@ For more details, please refer to the product documentation : [Outrun Official D
 
 **UETH** (Omnichain): 0x5EbBeD1aec7056D5Bc27E0FD627D58eabcb06E50  
 
-### Mock
+### Mock(Omnichain)
 
 Faucet: 0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF  
 MockETH: 0xE526729603199a6391D209021BdC96aD33C770cb  
