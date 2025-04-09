@@ -24,7 +24,7 @@ import { OutrunSlisUSDSY } from "../src/core/StandardizedYield/implementations/L
 import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastUSDSY.sol";
 import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastETHSY.sol";
 
-import { Faucet } from "../test/Faucet.sol";
+import { Faucet, IFaucet } from "../test/Faucet.sol";
 import { MockETH } from "../test/MockETH.sol";
 import { MockWeETH } from "../test/MockWeETH.sol";
 import { MockWstETH } from "../test/MockWstETH.sol";
@@ -63,15 +63,17 @@ contract OutstakeScript is BaseScript {
 
         // _deployOutrunDeployer(0);
 
-        _chainsInit();
+        // _chainsInit();
+
+        _addToken();
 
         // _deployTPT();
         // _crossChainOFT();
         // _deployUETH(2);
         // _deployOutStakeRouter(2);
         // _deployMockERC20(3);
-        _supportMockWeETH(2);
-        _supportMockWstETH(2);
+        // _supportMockWeETH(2);
+        // _supportMockWstETH(2);
 
         // _supportSlisBNB();
         // _supportSlisUSD();
@@ -161,6 +163,12 @@ contract OutstakeScript is BaseScript {
         }
 
         console.log("UETH deployed on %s", UETH);
+    }
+
+    function _addToken() internal {
+        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xE526729603199a6391D209021BdC96aD33C770cb, 1000);
+        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xD4580c49078ff6A90f919c82DcDcd6e4c024cC75, 1000);
+        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0x816bE61D956fEbFe50644a74193b120783D30479, 1000);
     }
 
     function _deployMockERC20(uint256 nonce) internal {

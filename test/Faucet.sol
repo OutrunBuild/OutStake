@@ -6,6 +6,10 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { IMintable } from "./MockETH.sol";
 
+interface IFaucet {
+    function addToken(address token, uint256 dailyLimit) external;
+}
+
 contract Faucet is Ownable {
     struct TokenInfo {
         uint256 dailyLimit;
