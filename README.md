@@ -10,7 +10,7 @@ For more details, please refer to the product documentation : [Outrun Official D
 
 0xCf8ddAb7A0ee83131a015b32A2bbA922b7a428FA  
 
-### OutStakeRouter(Omnichain)
+### OutrunRouter(Omnichain)
 
 0xEd087568AAA8b3b2915aF26fb41B9388a62e9F81  
 
