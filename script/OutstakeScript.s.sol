@@ -6,7 +6,7 @@ import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/Opti
 import { IOFT, SendParam, MessagingFee } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 
 import "./BaseScript.s.sol";
-import { OutStakeRouter } from "../src/router/OutStakeRouter.sol";
+import { OutrunRouter } from "../src/router/OutrunRouter.sol";
 import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
 import { OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { ISlisBNBProvider } from "../src/external/lista/ISlisBNBProvider.sol";
@@ -44,6 +44,7 @@ contract OutstakeScript is BaseScript {
     address internal revenuePool;
     address internal listaBNBStakeManager;
     address internal outrunDeployer;
+    address internal memeverseLauncher;
     uint256 internal protocolFeeRate;
 
     mapping(uint32 chainId => address) public endpoints;
@@ -60,17 +61,17 @@ contract OutstakeScript is BaseScript {
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
+        memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
 
         // _deployOutrunDeployer(0);
 
         // _chainsInit();
 
-        _addToken();
+        // _addToken();
 
-        // _deployTPT();
         // _crossChainOFT();
         // _deployUETH(2);
-        // _deployOutStakeRouter(2);
+        _deployOutrunRouter(1);
         // _deployMockERC20(3);
         // _supportMockWeETH(2);
         // _supportMockWstETH(2);
@@ -166,9 +167,9 @@ contract OutstakeScript is BaseScript {
     }
 
     function _addToken() internal {
-        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xE526729603199a6391D209021BdC96aD33C770cb, 1000);
-        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xD4580c49078ff6A90f919c82DcDcd6e4c024cC75, 1000);
-        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0x816bE61D956fEbFe50644a74193b120783D30479, 1000);
+        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xE526729603199a6391D209021BdC96aD33C770cb, 1000*1e18);
+        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xD4580c49078ff6A90f919c82DcDcd6e4c024cC75, 1000*1e18);
+        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0x816bE61D956fEbFe50644a74193b120783D30479, 1000*1e18);
     }
 
     function _deployMockERC20(uint256 nonce) internal {
@@ -403,12 +404,15 @@ contract OutstakeScript is BaseScript {
         console.log("SP_WSTETH deployed on %s", wstETHSPAddress);
     }
 
-    function _deployOutStakeRouter(uint256 nonce) internal {
-        bytes32 salt = keccak256(abi.encodePacked("OutStakeRouter", nonce));
-        bytes memory creationCode = abi.encodePacked(type(OutStakeRouter).creationCode);
-        address outStakeRouterAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+    function _deployOutrunRouter(uint256 nonce) internal {
+        bytes32 salt = keccak256(abi.encodePacked("OutrunRouter", nonce));
+        bytes memory creationCode = abi.encodePacked(
+            type(OutrunRouter).creationCode,
+            abi.encode(owner, memeverseLauncher)
+        );
+        address outrunRouterAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        console.log("OutStakeRouter deployed on %s", outStakeRouterAddr);
+        console.log("OutrunRouter deployed on %s", outrunRouterAddr);
     }
 
     /**
