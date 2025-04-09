@@ -16,7 +16,7 @@ import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/Outrun
 import { IOutrunStakeManager, OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
 import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
-import { OutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
+import { OutrunUniversalPrincipalToken, IOutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 import { IOutrunPointsYieldToken, OutrunPointsYieldToken } from "../src/core/YieldContracts/OutrunPointsYieldToken.sol";
 
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
@@ -301,7 +301,8 @@ contract OutstakeScript is BaseScript {
             )
         );
         address weETHSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-
+        
+        IOutrunUniversalPrincipalToken(ueth).setAuthorized(weETHSPAddress, true);
         IOutrunStakeManager(weETHSPAddress).setLockupDuration(1, 365);
         IPrincipalToken(weETHPTAddress).initialize(weETHSPAddress);
         IYieldToken(weETHYTAddress).initialize(weETHSYAddress, weETHSPAddress);
@@ -392,6 +393,7 @@ contract OutstakeScript is BaseScript {
         );
         address wstETHSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
+        IOutrunUniversalPrincipalToken(ueth).setAuthorized(weETHSPAddress, true);
         IOutrunStakeManager(wstETHSPAddress).setLockupDuration(1, 365);
         IPrincipalToken(wstETHPTAddress).initialize(wstETHSPAddress);
         IYieldToken(wstETHYTAddress).initialize(wstETHSYAddress, wstETHSPAddress);
