@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-interface IOutStakeRouter {
+interface IOutrunRouter {
     struct TokenInput {
         address tokenIn;
         uint256 amount;
@@ -59,6 +59,28 @@ interface IOutStakeRouter {
         uint256 amountInSY,
         StakeParam calldata stakeParam
     ) external returns (uint256 PTGenerated, uint256 YTGenerated);
+
+    /** Memeverse Genesis **/
+    function genesisByToken(
+        address SY,
+        address SP,
+        address UPT,
+        address tokenIn,
+        uint256 tokenAmount,
+        uint256 verseId,
+        address genesisUser,
+        StakeParam calldata stakeParam
+    ) external payable;
+
+    function genesisBySY(
+        address SY,
+        address SP,
+        address UPT,
+        uint256 amountInSY,
+        uint256 verseId,
+        address genesisUser,
+        StakeParam calldata stakeParam
+    ) external;
 
     error InsufficientPTGenerated(uint256 PTGenerated, uint256 minPTGenerated);
 }

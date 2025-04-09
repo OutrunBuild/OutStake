@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { IOutStakeRouter } from "./interfaces/IOutStakeRouter.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+import { IOutrunRouter } from "./interfaces/IOutrunRouter.sol";
+import { IMemeverseLauncher } from "./interfaces/IMemeverseLauncher.sol";
 import { TokenHelper, IERC20, IERC6909 } from "../core/libraries/TokenHelper.sol";
 import { IStandardizedYield } from "../core/StandardizedYield/IStandardizedYield.sol";
 import { IOutrunStakeManager } from "../core/Position/interfaces/IOutrunStakeManager.sol";
 import { IUniversalPrincipalToken } from "../core/YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
-contract OutStakeRouter is IOutStakeRouter, TokenHelper {
+contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
+    address public memeverseLauncher;
+
+    constructor(address _owner, address _memeverseLauncher) Ownable(_owner) {
+        memeverseLauncher = _memeverseLauncher;
+    }
+
     /** MINT/REDEEM SY **/
     function mintSYFromToken(
         address SY,
@@ -75,7 +84,7 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) external payable returns (uint256 PTGenerated, uint256 YTGenerated) {
+    ) public payable returns (uint256 PTGenerated, uint256 YTGenerated) {
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, 0, true);
 
         _safeApproveInf(SY, SP);
@@ -95,7 +104,7 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) external returns (uint256 PTGenerated, uint256 YTGenerated) {
+    ) public returns (uint256 PTGenerated, uint256 YTGenerated) {
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
 
         _safeApproveInf(SY, SP);
@@ -123,5 +132,36 @@ contract OutStakeRouter is IOutStakeRouter, TokenHelper {
 
         uint256 minPTGenerated = stakeParam.minPTGenerated;
         require(PTGenerated >= minPTGenerated, InsufficientPTGenerated(PTGenerated, minPTGenerated));
+    }
+
+    /** Memeverse Genesis **/
+    function genesisByToken(
+        address SY,
+        address SP,
+        address UPT,
+        address tokenIn,
+        uint256 tokenAmount,
+        uint256 verseId,
+        address genesisUser,
+        StakeParam calldata stakeParam
+    ) external payable {
+        (uint256 amountInUPT, ) = mintPYFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
+        _safeApproveInf(UPT, memeverseLauncher);
+        IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
+
+    }
+
+    function genesisBySY(
+        address SY,
+        address SP,
+        address UPT,
+        uint256 amountInSY,
+        uint256 verseId,
+        address genesisUser,
+        StakeParam calldata stakeParam
+    ) external {
+        (uint256 amountInUPT,) = mintPYFromSY(SY, SP, amountInSY, stakeParam);
+        _safeApproveInf(UPT, memeverseLauncher);
+        IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
 }
