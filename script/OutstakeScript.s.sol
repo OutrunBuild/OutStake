@@ -16,7 +16,7 @@ import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/Outrun
 import { IOutrunStakeManager, OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
 import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
-import { OutrunUniversalPrincipalToken, IOutrunUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
+import { OutrunUniversalPrincipalToken, IUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 import { IOutrunPointsYieldToken, OutrunPointsYieldToken } from "../src/core/YieldContracts/OutrunPointsYieldToken.sol";
 
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
@@ -67,11 +67,9 @@ contract OutstakeScript is BaseScript {
 
         // _chainsInit();
 
-        // _addToken();
-
         // _crossChainOFT();
         // _deployUETH(2);
-        _deployOutrunRouter(1);
+        _deployOutrunRouter(2);
         // _deployMockERC20(3);
         // _supportMockWeETH(2);
         // _supportMockWstETH(2);
@@ -166,12 +164,6 @@ contract OutstakeScript is BaseScript {
         console.log("UETH deployed on %s", UETH);
     }
 
-    function _addToken() internal {
-        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xE526729603199a6391D209021BdC96aD33C770cb, 1000*1e18);
-        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0xD4580c49078ff6A90f919c82DcDcd6e4c024cC75, 1000*1e18);
-        IFaucet(0xea16E1FdE6E5275B1Fc46E7b3A73BCAcCf1593fF).addToken(0x816bE61D956fEbFe50644a74193b120783D30479, 1000*1e18);
-    }
-
     function _deployMockERC20(uint256 nonce) internal {
         bytes32 salt = keccak256(abi.encodePacked("Faucet", nonce));
         bytes memory creationCode = abi.encodePacked(
@@ -217,6 +209,10 @@ contract OutstakeScript is BaseScript {
             )
         );
         address mockWstETHAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+
+        IFaucet(faucetAddr).addToken(mockETHAddr, 1000 * 1e18);
+        IFaucet(faucetAddr).addToken(mockWeETHAddr, 1000 * 1e18);
+        IFaucet(faucetAddr).addToken(mockWstETHAddr, 1000 * 1e18);
 
         console.log("Faucet deployed on %s", faucetAddr);
         console.log("MockETH deployed on %s", mockETHAddr);
@@ -301,8 +297,8 @@ contract OutstakeScript is BaseScript {
             )
         );
         address weETHSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        
-        IOutrunUniversalPrincipalToken(ueth).setAuthorized(weETHSPAddress, true);
+
+        IUniversalPrincipalToken(ueth).setAuthorized(weETHSPAddress, true);
         IOutrunStakeManager(weETHSPAddress).setLockupDuration(1, 365);
         IPrincipalToken(weETHPTAddress).initialize(weETHSPAddress);
         IYieldToken(weETHYTAddress).initialize(weETHSYAddress, weETHSPAddress);
@@ -393,7 +389,7 @@ contract OutstakeScript is BaseScript {
         );
         address wstETHSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        IOutrunUniversalPrincipalToken(ueth).setAuthorized(weETHSPAddress, true);
+        IUniversalPrincipalToken(ueth).setAuthorized(wstETHSPAddress, true);
         IOutrunStakeManager(wstETHSPAddress).setLockupDuration(1, 365);
         IPrincipalToken(wstETHPTAddress).initialize(wstETHSPAddress);
         IYieldToken(wstETHYTAddress).initialize(wstETHSYAddress, wstETHSPAddress);
