@@ -82,5 +82,7 @@ interface IOutrunRouter {
         StakeParam calldata stakeParam
     ) external;
 
+    function setMemeverseLauncher(address memeverseLauncher) external;
+
     error InsufficientPTGenerated(uint256 PTGenerated, uint256 minPTGenerated);
 }

@@ -164,4 +164,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
+
+    function setMemeverseLauncher(address _memeverseLauncher) external override onlyOwner {
+        memeverseLauncher = _memeverseLauncher;
+    }
 }
