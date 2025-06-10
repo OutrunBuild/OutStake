@@ -7,33 +7,40 @@ pragma solidity ^0.8.28;
 interface IOutrunStakeManager {
     struct Position {
         uint256 SYRedeemable;           // Amount of SY redeemable
-        uint256 PTRedeemable;           // Amount of PT redeemable
         uint256 principalRedeemable;    // The principal value redeemable
-        uint256 SPShareMinted;          // Amount of SP Minted
+        uint256 PTMinted;               // Amount of PT minted
+        uint256 SPMinted;               // Amount of SP minted
         uint256 deadline;               // Position unlock time
         address initOwner;              // Address of init staker(For redeem reward)
-        bool outputUPT;                 // Is UPT being minted?
+        bool isTypeUPT;                 // Is the PT type UPT?
     }
 
     struct LockupDuration {
         uint128 minLockupDays;      // Position min lockup days
         uint128 maxLockupDays;      // Position max lockup days
     }
-    
 
     error ZeroInput();
 
     error ErrorInput();
 
+    error UPTNotSupported();
+
+    error PositionMatured();
+
     error PermissionDenied();
 
     error UPTCannotBeMinted();
+
+    error InsufficientSPBalance();
 
     error LockTimeNotExpired(uint256 deadLine);
 
     error MinStakeInsufficient(uint256 minStake);
 
     error InsufficientSPMintable(uint256 SPMintable);
+
+    error InsufficientPTMintable(uint256 PTMintable);
 
     error InvalidLockupDays(uint256 minLockupDays, uint256 maxLockupDays);
 
@@ -44,35 +51,33 @@ interface IOutrunStakeManager {
 
     function averageStakingDays() external view returns (uint256);
 
-    function calcPTAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256);
+    function calcSPAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 amount);
 
     function previewStake(
         uint256 amountInSY, 
-        uint256 lockupDays
-    ) external view returns (uint256 PTGenerated, uint256 YTGenerated);
+        uint256 lockupDays,
+        bool isTypeUPT
+    ) external view returns (uint256 PTMintable, uint256 YTMintable);
     
     function previewRedeem(
         uint256 positionId, 
-        uint256 positionShare
+        uint256 SPAmount
     ) external view returns (uint256 redeemableSyAmount);
 
     function stake(
         uint256 amountInSY,
         uint256 lockupDays,
-        address PTRecipient, 
         address YTRecipient,
         address PYTRecipient,
-        address positionOwner,
-        bool outputUPT
-    ) external returns (uint256 PTGenerated, uint256 YTGenerated);
+        address initOwner,
+        bool isTypeUPT
+    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
 
-    function mintSP(uint256 positionId, uint256 positionShare) external;
+    function separatePT(address receiver, uint256 positionId, uint256 PTAmount) external;
 
-    function redeem(
-        uint256 positionId, 
-        uint256 positionShare,
-        bool useSP
-    ) external returns (uint256 redeemedSyAmount);
+    function encapsulatePT(address sender, uint256 positionId, uint256 PTAmount) external;
+
+    function redeem(uint256 positionId, uint256 SPAmount) external returns (uint256 redeemedSyAmount);
 
     function transferYields(address receiver, uint256 syAmount) external;
 
@@ -85,11 +90,16 @@ interface IOutrunStakeManager {
         uint256 indexed positionId,
         uint256 amountInSY,
         uint256 principalValue,
-        uint256 PTGenerated,
-        uint256 YTGenerated,
-        uint256 indexed deadline,
-        bool indexed outputUPT
+        uint256 SPMinted,
+        uint256 YTMinted,
+        uint256 deadline,
+        address indexed initOwner,
+        bool indexed isTypeUPT
     );
+
+    event SeparatePT(address indexed receiver, uint256 indexed positionId, uint256 PTAmount);
+
+    event EncapsulatePT(address indexed sender, uint256 indexed positionId, uint256 PTAmount);
 
     event MintSP(uint256 indexed positionId, uint256 positionShare);
 

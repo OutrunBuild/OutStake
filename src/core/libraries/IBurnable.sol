@@ -6,10 +6,15 @@ pragma solidity ^0.8.28;
   */
 interface IBurnable {
     /**
-     * @notice Burn the token.
+     * @notice Burn the token by self.
+     * @param amount - The amount of the token to burn
+     */
+	  function burn(uint256 amount) external;
+
+    /**
+     * @notice Burn the token by others.
      * @param account - The address of account
      * @param amount - The amount of the token to burn
-     * @notice Permission control must be set
      */
 	  function burn(address account, uint256 amount) external;
 }

@@ -15,6 +15,8 @@ interface IERC6909 is IERC165 {
 
     function balanceOf(address account, uint256 id) external view returns (uint256);
 
+    function nonTransferableBalanceOf(address account, uint256 id) external view returns (uint256);
+
     function allowance(address owner, address spender, uint256 id) external view returns (uint256);
 
 
@@ -38,4 +40,6 @@ interface IERC6909 is IERC165 {
     ) external returns (bool);
 
     function setOperator(address operator, bool approved) external returns (bool);
+
+    error InsufficientBalance();
 }

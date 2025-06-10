@@ -42,6 +42,14 @@ contract OutrunPrincipalToken is IPrincipalToken, OutrunERC20FlashMint, OutrunER
     }
 
     /**
+     * @notice Burn the PT by self
+     * @param amount - The amount of the PT to burn
+     */
+    function burn(uint256 amount) external override {
+        _burn(msg.sender, amount);
+    }
+
+    /**
      * @dev Only authorized contract can burn
      * @param account - The address of the account
      * @param amount - The amount of the PT to burn

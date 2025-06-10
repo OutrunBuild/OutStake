@@ -7,6 +7,8 @@ import { IBurnable } from "../../libraries/IBurnable.sol";
   * @title Outrun omnichain universal principal token interface
   */
 interface IUniversalPrincipalToken is IBurnable {
+	function isAuthorized(address SP) external view returns (bool);
+
 	function setAuthorized(address SP, bool authorized) external;
 
 	function mint(address receiver, uint256 amount) external;

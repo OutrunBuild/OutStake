@@ -10,12 +10,13 @@ interface IOutrunRouter {
 
     struct StakeParam {
         uint256 lockupDays;
-        uint256 minPTGenerated;
+        uint256 minSPMinted;
+        address SPRecipient;
         address PTRecipient;
         address YTRecipient;
         address PYTRecipient;
-        address positionOwner;
-        bool outputUPT;
+        address initOwner;
+        bool isTypeUPT;
     }
 
     struct RedeemParam {
@@ -44,21 +45,21 @@ interface IOutrunRouter {
     ) external returns (uint256 amountInTokenOut);
 
 
-    /** MINT PT(UPT), YT, POT Tokens **/
-    function mintPYFromToken(
+    /** Mint yield tokens(SP, (U)PT, YT, PYT) **/
+    function mintYieldTokensFromToken(
         address SY,
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) external payable returns (uint256 PTGenerated, uint256 YTGenerated);
+    ) external payable returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
 
-    function mintPYFromSY(
+    function mintYieldTokensFromSY(
         address SY,
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) external returns (uint256 PTGenerated, uint256 YTGenerated);
+    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
 
     /** Memeverse Genesis **/
     function genesisByToken(
@@ -84,5 +85,5 @@ interface IOutrunRouter {
 
     function setMemeverseLauncher(address memeverseLauncher) external;
 
-    error InsufficientPTGenerated(uint256 PTGenerated, uint256 minPTGenerated);
+    error InsufficientSPMinted(uint256 SPMinted, uint256 minMinted);
 }

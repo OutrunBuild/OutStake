@@ -17,6 +17,8 @@ contract OutrunERC6909 is IERC6909 {
 
     mapping(address => mapping(uint256 => uint256)) public balanceOf;
 
+    mapping(address => mapping(uint256 => uint256)) public nonTransferableBalanceOf;
+
     mapping(address => mapping(address => mapping(uint256 => uint256))) public allowance;
 
     constructor(string memory _name, string memory _symbol, uint8 _decimals) {
@@ -28,12 +30,17 @@ contract OutrunERC6909 is IERC6909 {
     /*//////////////////////////////////////////////////////////////
                               ERC6909 LOGIC
     //////////////////////////////////////////////////////////////*/
+    function transferableBalanceOf(address account, uint256 id) public view returns(uint256) {
+        return balanceOf[account][id] - nonTransferableBalanceOf[account][id];
+    }
 
     function transfer(
         address receiver,
         uint256 id,
         uint256 amount
-    ) external returns (bool) {
+    ) public returns (bool) {
+        require(transferableBalanceOf(msg.sender, id) >= amount, InsufficientBalance());
+
         balanceOf[msg.sender][id] -= amount;
 
         balanceOf[receiver][id] += amount;
@@ -48,11 +55,10 @@ contract OutrunERC6909 is IERC6909 {
         address receiver,
         uint256 id,
         uint256 amount
-    ) external returns (bool) {
-        if (msg.sender != sender && !isOperator[sender][msg.sender]) {
-            uint256 allowed = allowance[sender][msg.sender][id];
-            if (allowed != type(uint256).max) allowance[sender][msg.sender][id] = allowed - amount;
-        }
+    ) public returns (bool) {
+        _spendAllowance(sender, id, amount);
+
+        require(transferableBalanceOf(sender, id) >= amount, InsufficientBalance());
 
         balanceOf[sender][id] -= amount;
 
@@ -94,8 +100,14 @@ contract OutrunERC6909 is IERC6909 {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        INTERNAL MINT/BURN LOGIC
+                        INTERNAL LOGIC
     //////////////////////////////////////////////////////////////*/
+    function _spendAllowance(address sender, uint256 id, uint256 amount) internal {
+        if (msg.sender != sender && !isOperator[sender][msg.sender]) {
+            uint256 allowed = allowance[sender][msg.sender][id];
+            if (allowed != type(uint256).max) allowance[sender][msg.sender][id] = allowed - amount;
+        }
+    }
 
     function _mint(
         address receiver,

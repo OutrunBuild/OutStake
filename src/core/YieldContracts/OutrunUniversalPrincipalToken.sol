@@ -20,12 +20,6 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
         address _owner
     ) OutrunOFT(_name, _symbol, _decimals, _lzEndpoint, _owner) Ownable(_owner) {}
 
-    
-    modifier onlyAuthorized() {
-        require(isAuthorized[msg.sender], PermissionDenied());
-        _;
-    }
-
     /**
      * @param SP - Address of SP
      * @param authorized - Authorization status
@@ -39,18 +33,30 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
      * @param receiver - Address of UPT receiver
      * @param amount - Amount of UPT
      */
-    function mint(address receiver, uint256 amount) external override onlyAuthorized whenNotPaused {
+    function mint(address receiver, uint256 amount) external override whenNotPaused {
+        require(isAuthorized[msg.sender], PermissionDenied());
+
         _mint(receiver, amount);
 
         emit MintUPT(msg.sender, receiver, amount);
     }
 
     /**
-     * @dev Only authorized contract can burn
-     * @param account - The address of the account
+     * @notice Burn the UPT by self
      * @param amount - The amount of the UPT to burn
      */
-    function burn(address account, uint256 amount) external override onlyAuthorized {
+    function burn(uint256 amount) external override {
+        _burn(msg.sender, amount);
+    }
+
+    /**
+     * @dev Burn the UPT by others
+     * @param account - The address of the account
+     * @param amount - The amount of the UPT to burn
+     * @notice User must have approved msg.sender to spend UPT
+     */
+    function burn(address account, uint256 amount) external override {
+        if(msg.sender != account) _spendAllowance(account, msg.sender, amount);
         _burn(account, amount);
     }
 }

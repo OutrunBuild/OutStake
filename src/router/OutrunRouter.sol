@@ -73,22 +73,21 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         amountInRedeemed = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, doPull);
     }
 
-    /** MINT PT(UPT), YT, PYT **/
+    /** MINT SP, (U)PT, YT, PYT **/
     /**
-     * @dev Mint PT(UPT), YT, PYT from yield-Bearing token
-     * @notice When minting UPT is not required, mintUPTParam can be empty
+     * @dev Mint yield tokens(SP, (U)PT, YT, PYT) from yield-Bearing token
      */
-    function mintPYFromToken(
+    function mintYieldTokensFromToken(
         address SY,
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) public payable returns (uint256 PTGenerated, uint256 YTGenerated) {
+    ) public payable override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, 0, true);
 
         _safeApproveInf(SY, SP);
-        (PTGenerated, YTGenerated) = _mintPYFromSY(
+        (positionId, SPMinted, YTMinted) = _mintYieldTokensFromSY(
             SP,
             amountInSY, 
             stakeParam
@@ -96,42 +95,42 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     }
 
     /**
-     * @dev Mint PT(UPT), YT by staking SY
-     * @notice When minting UPT is not required, mintUPTParam can be empty
+     * @dev Mint yield tokens(SP, (U)PT, YT, PYT) by staking SY
      */
-    function mintPYFromSY(
+    function mintYieldTokensFromSY(
         address SY,
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) public returns (uint256 PTGenerated, uint256 YTGenerated) {
+    ) public override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
 
         _safeApproveInf(SY, SP);
-        (PTGenerated, YTGenerated) = _mintPYFromSY(
+        (positionId, SPMinted, YTMinted) = _mintYieldTokensFromSY(
             SP,
             amountInSY, 
             stakeParam
         );
     }
 
-    function _mintPYFromSY(
+    function _mintYieldTokensFromSY(
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) internal returns (uint256 PTGenerated, uint256 YTGenerated) {
-        (PTGenerated, YTGenerated) = IOutrunStakeManager(SP).stake(
+    ) internal returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
+        (positionId, SPMinted, YTMinted) = IOutrunStakeManager(SP).stake(
             amountInSY, 
             stakeParam.lockupDays,
-            stakeParam.PTRecipient,
             stakeParam.YTRecipient, 
             stakeParam.PYTRecipient,
-            stakeParam.positionOwner,
-            stakeParam.outputUPT
+            stakeParam.initOwner,
+            stakeParam.isTypeUPT
         );
 
-        uint256 minPTGenerated = stakeParam.minPTGenerated;
-        require(PTGenerated >= minPTGenerated, InsufficientPTGenerated(PTGenerated, minPTGenerated));
+        uint256 minSPMinted = stakeParam.minSPMinted;
+        require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
+
+        IOutrunStakeManager(SP).separatePT(stakeParam.PTRecipient, positionId, SPMinted);
     }
 
     /** Memeverse Genesis **/
@@ -145,7 +144,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address genesisUser,
         StakeParam calldata stakeParam
     ) external payable {
-        (uint256 amountInUPT, ) = mintPYFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
+        (, uint256 amountInUPT, ) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
 
@@ -160,7 +159,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address genesisUser,
         StakeParam calldata stakeParam
     ) external {
-        (uint256 amountInUPT,) = mintPYFromSY(SY, SP, amountInSY, stakeParam);
+        (, uint256 amountInUPT,) = mintYieldTokensFromSY(SY, SP, amountInSY, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
