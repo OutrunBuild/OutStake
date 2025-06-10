@@ -195,7 +195,7 @@ contract OutrunStakingPosition is
 
         require(block.timestamp < position.deadline, PositionMatured());
         require(PTAmount <= PTMintable, InsufficientPTMintable(PTMintable));
-        require(transferableBalanceOf(msg.sender, positionId) >= PTAmount, InsufficientSPBalance());
+        require(balanceOf(msg.sender, positionId) >= PTAmount, InsufficientSPBalance());
 
         if (msg.sender != receiver) transfer(receiver, positionId, PTAmount);
         unchecked {
@@ -246,7 +246,7 @@ contract OutrunStakingPosition is
         Position storage position = positions[positionId];
         uint256 deadline = position.deadline;
         require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
-        require(transferableBalanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
+        require(balanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
 
         _burn(msg.sender, positionId, SPAmount);
         

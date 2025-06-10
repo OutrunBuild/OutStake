@@ -15,7 +15,7 @@ contract OutrunERC6909 is IERC6909 {
 
     mapping(address => mapping(address => bool)) public isOperator;
 
-    mapping(address => mapping(uint256 => uint256)) public balanceOf;
+    mapping(address => mapping(uint256 => uint256)) public totalBalanceOf;
 
     mapping(address => mapping(uint256 => uint256)) public nonTransferableBalanceOf;
 
@@ -30,8 +30,8 @@ contract OutrunERC6909 is IERC6909 {
     /*//////////////////////////////////////////////////////////////
                               ERC6909 LOGIC
     //////////////////////////////////////////////////////////////*/
-    function transferableBalanceOf(address account, uint256 id) public view returns(uint256) {
-        return balanceOf[account][id] - nonTransferableBalanceOf[account][id];
+    function balanceOf(address account, uint256 id) public view returns(uint256) {
+        return totalBalanceOf[account][id] - nonTransferableBalanceOf[account][id];
     }
 
     function transfer(
@@ -39,11 +39,11 @@ contract OutrunERC6909 is IERC6909 {
         uint256 id,
         uint256 amount
     ) public returns (bool) {
-        require(transferableBalanceOf(msg.sender, id) >= amount, InsufficientBalance());
+        require(balanceOf(msg.sender, id) >= amount, InsufficientBalance());
 
-        balanceOf[msg.sender][id] -= amount;
+        totalBalanceOf[msg.sender][id] -= amount;
 
-        balanceOf[receiver][id] += amount;
+        totalBalanceOf[receiver][id] += amount;
 
         emit Transfer(msg.sender, msg.sender, receiver, id, amount);
 
@@ -58,11 +58,11 @@ contract OutrunERC6909 is IERC6909 {
     ) public returns (bool) {
         _spendAllowance(sender, id, amount);
 
-        require(transferableBalanceOf(sender, id) >= amount, InsufficientBalance());
+        require(balanceOf(sender, id) >= amount, InsufficientBalance());
 
-        balanceOf[sender][id] -= amount;
+        totalBalanceOf[sender][id] -= amount;
 
-        balanceOf[receiver][id] += amount;
+        totalBalanceOf[receiver][id] += amount;
 
         emit Transfer(msg.sender, sender, receiver, id, amount);
 
@@ -114,7 +114,7 @@ contract OutrunERC6909 is IERC6909 {
         uint256 id,
         uint256 amount
     ) internal {
-        balanceOf[receiver][id] += amount;
+        totalBalanceOf[receiver][id] += amount;
 
         emit Transfer(msg.sender, address(0), receiver, id, amount);
     }
@@ -124,7 +124,7 @@ contract OutrunERC6909 is IERC6909 {
         uint256 id,
         uint256 amount
     ) internal {
-        balanceOf[sender][id] -= amount;
+        totalBalanceOf[sender][id] -= amount;
 
         emit Transfer(msg.sender, sender, address(0), id, amount);
     }
