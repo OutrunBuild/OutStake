@@ -77,7 +77,7 @@ interface IOutrunStakeManager {
 
     function encapsulatePT(address sender, uint256 positionId, uint256 PTAmount) external;
 
-    function redeem(uint256 positionId, uint256 SPAmount) external returns (uint256 redeemedSyAmount);
+    function redeemPrincipal(address receiver, uint256 positionId, uint256 SPAmount) external returns (uint256 redeemedSyAmount);
 
     function transferYields(address receiver, uint256 syAmount) external;
 
@@ -103,7 +103,7 @@ interface IOutrunStakeManager {
 
     event MintSP(uint256 indexed positionId, uint256 positionShare);
 
-    event Redeem(
+    event RedeemPrincipal(
         uint256 indexed positionId, 
         address indexed account,
         uint256 redeemedSyAmount, 

@@ -19,12 +19,6 @@ interface IOutrunRouter {
         bool isTypeUPT;
     }
 
-    struct RedeemParam {
-        uint256 positionId; 
-        uint256 positionShare;
-        uint256 minRedeemedSyAmount;
-    }
-
     /** MINT/REDEEM SY **/
     function mintSYFromToken(
         address SY,
@@ -60,6 +54,21 @@ interface IOutrunRouter {
         uint256 amountInSY,
         StakeParam calldata stakeParam
     ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
+
+    /** Redeem Principal **/
+    function redeemPrincipalFromPT(
+        address SP, 
+        address sender, 
+        uint256 positionId, 
+        uint256 PTAmount
+    ) external returns (uint256 redeemedSyAmount);
+
+    function redeemPrincipalFromSP(
+        address SP, 
+        address sender, 
+        uint256 positionId, 
+        uint256 PTAmount
+    ) external returns (uint256 redeemedSyAmount);
 
     /** Memeverse Genesis **/
     function genesisByToken(

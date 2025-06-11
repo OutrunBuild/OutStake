@@ -235,11 +235,12 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Allows user to unstake SY by burning transferableSP.
+     * @dev Allows user to redeem principal by burning transferableSP.
+     * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
      * @param SPAmount - Amount of SP burned
      */
-    function redeem(uint256 positionId, uint256 SPAmount) 
+    function redeemPrincipal(address receiver, uint256 positionId, uint256 SPAmount) 
     external override accumulateYields nonReentrant whenNotPaused 
     returns (uint256 redeemedSyAmount) {
         require(SPAmount != 0, ZeroInput());
@@ -264,9 +265,9 @@ contract OutrunStakingPosition is
             position.principalRedeemable = principalRedeemable - redeemedPrincipalValue;
         }
 
-        _transferSY(msg.sender, redeemedSyAmount);
+        _transferSY(receiver, redeemedSyAmount);
         
-        emit Redeem(positionId, msg.sender, redeemedSyAmount, SPAmount);
+        emit RedeemPrincipal(positionId, msg.sender, redeemedSyAmount, SPAmount);
     }
 
     /**

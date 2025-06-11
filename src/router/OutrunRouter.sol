@@ -3,6 +3,8 @@ pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
+
+import { IERC6909 } from "../core/common/IERC6909.sol";
 import { IOutrunRouter } from "./interfaces/IOutrunRouter.sol";
 import { IMemeverseLauncher } from "./interfaces/IMemeverseLauncher.sol";
 import { TokenHelper, IERC20, IERC6909 } from "../core/libraries/TokenHelper.sol";
@@ -131,6 +133,46 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
 
         IOutrunStakeManager(SP).separatePT(stakeParam.PTRecipient, positionId, SPMinted);
+    }
+
+    /** Redeem Principal **/
+    /**
+     * @dev Redeem principal from (U)PT
+     * @notice If position.isTypeUPT == true, Must have approved SP contract to spend sender's PT.
+               Must have approved this contract to spend sender's "2 × PTAmount" SP.
+     */
+    function redeemPrincipalFromPT(
+        address SP, 
+        address sender, 
+        uint256 positionId, 
+        uint256 PTAmount
+    ) external override returns (uint256 redeemedSyAmount) {
+        IOutrunStakeManager(SP).encapsulatePT(sender, positionId, PTAmount);
+        
+        redeemedSyAmount = _redeemPrincipalFromSP(SP, sender, positionId, PTAmount);
+    }
+
+    /**
+     * @dev Redeem principal from SP
+     * @notice Must have approved this contract to spend sender's "PTAmount" SP.
+     */
+    function redeemPrincipalFromSP(
+        address SP, 
+        address sender, 
+        uint256 positionId, 
+        uint256 PTAmount
+    ) external override returns (uint256 redeemedSyAmount) {
+        redeemedSyAmount = _redeemPrincipalFromSP(SP, sender, positionId, PTAmount);
+    }
+
+    function _redeemPrincipalFromSP(
+        address SP, 
+        address sender, 
+        uint256 positionId, 
+        uint256 PTAmount
+    ) internal returns (uint256 redeemedSyAmount) {
+        IERC6909(SP).transferFrom(sender, address(this), positionId, PTAmount);
+        redeemedSyAmount = IOutrunStakeManager(SP).redeemPrincipal(msg.sender, positionId, PTAmount);
     }
 
     /** Memeverse Genesis **/
