@@ -98,9 +98,13 @@ contract OutrunStakingPosition is
      * @dev Calculate SP amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
      */
     function calcSPAmount(uint256 principalValue, uint256 amountInYT) public view override returns (uint256 amount) {
-        uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
-        uint256 yieldTokenValue = amountInYT * IYieldManager(YT).totalRedeemableYields() / newYTSupply;
-        amount = principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0;
+        if (amountInYT == 0) {
+            amount = principalValue;
+        } else {
+            uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
+            uint256 yieldTokenValue = amountInYT * IYieldManager(YT).totalRedeemableYields() / newYTSupply;
+            amount = SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), (principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0));
+        }
     }
 
     /**
@@ -169,9 +173,9 @@ contract OutrunStakingPosition is
         positionId = _nextId();
         SPMinted = isTypeUPT ? principalValue : calcSPAmount(principalValue, YTMinted);
         positions[positionId] = Position(amountInSY, principalValue, 0, SPMinted, deadline, initOwner, isTypeUPT);
-        IYieldToken(YT).mint(YTRecipient, YTMinted);
+        if (lockupDays != 0) IYieldToken(YT).mint(YTRecipient, YTMinted);
         // Positions of the UPT type will forgo Points yields.
-        if(!isTypeUPT) IOutrunPointsYieldToken(PYT).mint(PYTRecipient, positionId, SPMinted);
+        if(!isTypeUPT && lockupDays != 0) IOutrunPointsYieldToken(PYT).mint(PYTRecipient, positionId, SPMinted);
         _mint(msg.sender, positionId, SPMinted);
 
         _storeRewardIndexes(positionId);
