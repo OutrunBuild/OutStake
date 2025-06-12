@@ -308,12 +308,7 @@ contract OutrunStakingPosition is
      * @param _maxLockupDays - Max lockup days
      */
     function setLockupDuration(uint128 _minLockupDays, uint128 _maxLockupDays) external override onlyOwner {
-        require(
-            _minLockupDays != 0 && 
-            _maxLockupDays != 0 && 
-            _minLockupDays < _maxLockupDays, 
-            ErrorInput()
-        );
+        require(_maxLockupDays != 0 && _minLockupDays < _maxLockupDays, ErrorInput());
 
         lockupDuration.minLockupDays = _minLockupDays;
         lockupDuration.maxLockupDays = _maxLockupDays;
