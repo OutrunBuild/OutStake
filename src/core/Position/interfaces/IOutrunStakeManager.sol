@@ -6,7 +6,7 @@ pragma solidity ^0.8.28;
  */
 interface IOutrunStakeManager {
     struct Position {
-        uint256 SYRedeemable;           // Amount of SY redeemable
+        uint256 SYStaked;               // Amount of SY staked
         uint256 principalRedeemable;    // The principal value redeemable
         uint256 PTMinted;               // Amount of PT minted
         uint256 SPMinted;               // Amount of SP minted

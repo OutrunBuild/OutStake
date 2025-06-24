@@ -7,9 +7,35 @@ pragma solidity ^0.8.28;
 interface IYieldToken {
 	error ZeroInput();
 
+	error InvalidInput();
+
+	error FeeRateOverflow();
+
 	error PermissionDenied();
 
-	function initialize(address _SY, address _POT) external;
+
+	function initialize(address SY, address POT) external;
+
+	function totalRedeemableYields() external view returns (uint256);
+
+	function previewWithdrawYields(uint256 amountInBurnedYT) external view returns (uint256 amountYieldsOut);
+
+	function accumulateYields() external returns (uint256 increasedYield);
+
+	function withdrawYields(uint256 amountInBurnedYT) external returns (uint256 amountYieldsOut);
 	
-	function mint(address _account, uint256 _amount) external;
+	function mint(address account, uint256 amount, bool transferable) external;
+
+	function setRevenuePool(address revenuePool) external;
+
+    function setProtocolFeeRate(uint256 protocolFeeRate) external;
+
+
+	event SetRevenuePool(address revenuePool);
+	
+    event SetProtocolFeeRate(uint256 protocolFeeRate);
+
+	event AccumulateYields(uint256 amountInYields, uint256 protocolFee);
+
+	event WithdrawYields(address indexed account, uint256 amountYieldsOut);
 }

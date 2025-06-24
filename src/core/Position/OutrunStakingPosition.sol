@@ -13,10 +13,9 @@ import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { AutoIncrementId } from "../libraries/AutoIncrementId.sol";
 import { IOutrunStakeManager } from "./interfaces/IOutrunStakeManager.sol";
 import { IYieldToken } from "../YieldContracts/interfaces/IYieldToken.sol";
-import { IYieldManager } from "../YieldContracts/interfaces/IYieldManager.sol";
 import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
-import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
 import { IPrincipalToken } from "../YieldContracts/interfaces/IPrincipalToken.sol";
+import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
 import { IOutrunPointsYieldToken } from "../YieldContracts/interfaces/IOutrunPointsYieldToken.sol";
 import { IUniversalPrincipalToken } from "../YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
@@ -82,7 +81,7 @@ contract OutrunStakingPosition is
     }
 
     modifier accumulateYields() {
-        IYieldManager(YT).accumulateYields();
+        IYieldToken(YT).accumulateYields();
         _;
     }
     
@@ -102,7 +101,7 @@ contract OutrunStakingPosition is
             amount = principalValue;
         } else {
             uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
-            uint256 yieldTokenValue = amountInYT * IYieldManager(YT).totalRedeemableYields() / newYTSupply;
+            uint256 yieldTokenValue = amountInYT * IYieldToken(YT).totalRedeemableYields() / newYTSupply;
             amount = SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), (principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0));
         }
     }
@@ -173,7 +172,7 @@ contract OutrunStakingPosition is
         positionId = _nextId();
         SPMinted = isTypeUPT ? principalValue : calcSPAmount(principalValue, YTMinted);
         positions[positionId] = Position(amountInSY, principalValue, 0, SPMinted, deadline, initOwner, isTypeUPT);
-        if (lockupDays != 0) IYieldToken(YT).mint(YTRecipient, YTMinted);
+        if (lockupDays != 0) IYieldToken(YT).mint(YTRecipient, YTMinted, !isTypeUPT);
         // Positions of the UPT type will forgo Points yields.
         if(!isTypeUPT && lockupDays != 0) IOutrunPointsYieldToken(PYT).mint(PYTRecipient, positionId, SPMinted);
         _mint(msg.sender, positionId, SPMinted);
@@ -255,8 +254,8 @@ contract OutrunStakingPosition is
 
         _burn(msg.sender, positionId, SPAmount);
         
-        uint256 SYRedeemable = position.SYRedeemable;
-        _redeemRewards(position.initOwner, positionId, SYRedeemable);
+        uint256 SYStaked = position.SYStaked;
+        _redeemRewards(position.initOwner, positionId, SYStaked);
         uint256 SPMinted = position.SPMinted;
         uint256 principalRedeemable = position.principalRedeemable;
         uint256 redeemedPrincipalValue = principalRedeemable * SPAmount / SPMinted;
@@ -264,7 +263,7 @@ contract OutrunStakingPosition is
         
         unchecked {
             totalPrincipalValue -= redeemedPrincipalValue;
-            position.SYRedeemable = SYRedeemable - redeemedSyAmount;
+            position.SYStaked = SYStaked - redeemedSyAmount;
             position.SPMinted = SPMinted - SPAmount;
             position.principalRedeemable = principalRedeemable - redeemedPrincipalValue;
         }
@@ -283,7 +282,7 @@ contract OutrunStakingPosition is
         uint256 deadline = position.deadline;
         require(deadline <= block.timestamp, LockTimeNotExpired(deadline));
 
-        _redeemRewards(position.initOwner, positionId, position.SYRedeemable);
+        _redeemRewards(position.initOwner, positionId, position.SYStaked);
     }
 
     /**
@@ -366,9 +365,9 @@ contract OutrunStakingPosition is
     function _redeemRewards(
         address initOwner,
         uint256 positionId, 
-        uint256 SYRedeemable
+        uint256 SYStaked
     ) internal returns (uint256[] memory rewardsOut) {
-        _updatePositionRewards(positionId, SYRedeemable);
+        _updatePositionRewards(positionId, SYStaked);
         rewardsOut = _doTransferOutRewards(initOwner, positionId);
         if (rewardsOut.length != 0) emit RedeemRewards(positionId, initOwner, rewardsOut);
     }
