@@ -5,7 +5,7 @@ import { SafeERC20, IERC20 } from "@openzeppelin/contracts/token/ERC20/utils/Saf
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import { IWETH } from "../../external/IWETH.sol";
-import { IERC6909 } from "../common/IERC6909.sol";
+import { IOutrunERC6909 } from "../common/IOutrunERC6909.sol";
 
 abstract contract TokenHelper {
     using SafeERC20 for IERC20;
@@ -22,7 +22,7 @@ abstract contract TokenHelper {
         if (amount != 0) token.safeTransferFrom(from, to, amount);
     }
 
-    function _transferFrom(IERC6909 token, address from, address to, uint256 id, uint256 amount) internal {
+    function _transferFrom(IOutrunERC6909 token, address from, address to, uint256 id, uint256 amount) internal {
         if (amount != 0) token.transferFrom(from, to, id, amount);
     }
 

@@ -25,7 +25,7 @@ contract OutrunSlisBNBSY is SYBase {
     }
 
     function updateDelegateTo(address _delegateTo) external onlyOwner {
-        uint256 _totalSupply = totalSupply();
+        uint256 _totalSupply = totalSupply;
         slisBNBProvider.release(address(this), _totalSupply);
         slisBNBProvider.provide(_totalSupply, _delegateTo);
 

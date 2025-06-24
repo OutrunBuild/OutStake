@@ -71,7 +71,7 @@ abstract contract SYBaseWithRewards is SYBase, RewardManager {
      * @dev this is simply the total supply of shares, as rewards shares are equivalent to SY shares
      */
     function _rewardSharesTotal() internal view virtual override returns (uint256) {
-        return totalSupply();
+        return totalSupply;
     }
 
     /**

@@ -3,12 +3,10 @@ pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-
-import { IERC6909 } from "../core/common/IERC6909.sol";
 import { IOutrunRouter } from "./interfaces/IOutrunRouter.sol";
 import { IMemeverseLauncher } from "./interfaces/IMemeverseLauncher.sol";
-import { TokenHelper, IERC20, IERC6909 } from "../core/libraries/TokenHelper.sol";
 import { IStandardizedYield } from "../core/StandardizedYield/IStandardizedYield.sol";
+import { TokenHelper, IERC20, IOutrunERC6909 } from "../core/libraries/TokenHelper.sol";
 import { IOutrunStakeManager } from "../core/Position/interfaces/IOutrunStakeManager.sol";
 import { IUniversalPrincipalToken } from "../core/YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
@@ -171,7 +169,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 positionId, 
         uint256 PTAmount
     ) internal returns (uint256 redeemedSyAmount) {
-        IERC6909(SP).transferFrom(sender, address(this), positionId, PTAmount);
+        IOutrunERC6909(SP).transferFrom(sender, address(this), positionId, PTAmount);
         redeemedSyAmount = IOutrunStakeManager(SP).redeemPrincipal(msg.sender, positionId, PTAmount);
     }
 

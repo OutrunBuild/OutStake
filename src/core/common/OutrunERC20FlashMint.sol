@@ -34,7 +34,7 @@ abstract contract OutrunERC20FlashMint is OutrunERC20, IERC3156FlashLender {
      * @return The amount of token that can be loaned.
      */
     function maxFlashLoan(address token) public view virtual returns (uint256) {
-        return token == address(this) ? type(uint256).max - totalSupply() : 0;
+        return token == address(this) ? type(uint256).max - totalSupply : 0;
     }
 
     /**

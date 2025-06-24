@@ -46,7 +46,7 @@ contract OutrunBlastETHSY is SYBase, BlastGovernorable {
         }
 
         _totalAssets = _totalAssets == 0 ? 1 : _totalAssets;
-        uint256 totalShares = totalSupply();
+        uint256 totalShares = totalSupply;
         totalShares = totalShares == 0 ? 1 : totalShares; 
 
         unchecked {
@@ -62,7 +62,7 @@ contract OutrunBlastETHSY is SYBase, BlastGovernorable {
         uint256 _totalAssets = totalAssets + IERC20Rebasing(WETH).getClaimableAmount(address(this));
         _totalAssets = _totalAssets == 0 ? 1 : _totalAssets; 
 
-        uint256 totalShares = totalSupply();
+        uint256 totalShares = totalSupply;
         totalShares = totalShares == 0 ? 1 : totalShares;
  
         res = (1e18 * _totalAssets) / totalShares;
