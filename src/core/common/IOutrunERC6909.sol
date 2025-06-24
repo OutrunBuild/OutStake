@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-interface IERC6909 is IERC165 {
+interface IOutrunERC6909 is IERC165 {
     event OperatorSet(address indexed owner, address indexed operator, bool approved);
 
     event Approval(address indexed owner, address indexed spender, uint256 indexed id, uint256 amount);
@@ -14,6 +14,8 @@ interface IERC6909 is IERC165 {
     function isOperator(address owner, address operator) external view returns (bool);
 
     function balanceOf(address account, uint256 id) external view returns (uint256);
+
+    function totalBalanceOf(address account, uint256 id) external view returns (uint256);
 
     function nonTransferableBalanceOf(address account, uint256 id) external view returns (uint256);
 

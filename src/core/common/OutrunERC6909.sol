@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { IERC6909 } from "./IERC6909.sol";
+import { IOutrunERC6909 } from "./IOutrunERC6909.sol";
 
 /**
  * @dev Outrun's ERC6909 implementation, modified from @solmate implementation
  */
-contract OutrunERC6909 is IERC6909 {
+contract OutrunERC6909 is IOutrunERC6909 {
     string public name;
 
     string public symbol;
