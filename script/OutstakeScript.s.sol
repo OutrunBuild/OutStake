@@ -72,15 +72,13 @@ contract OutstakeScript is BaseScript {
 
         // _crossChainOFT();
         // _deployUETH(3);
-        // _deployOutrunRouter(3);
+        _deployOutrunRouter(4);
         // _updateRouterLauncher();
         // _deployMockERC20(3);
         // _deployMockERC20SY(2)
         // _supportMockWeETH(5);
-        _supportMockWstETH(5);
+        // _supportMockWstETH(5);
 
-        // address ad = 0xEee9cCcE897bC0aEDD870c2723ff00920DF1b650;
-        // console.log(ad.code.length);
         // _supportSlisBNB();
         // _supportSlisUSD();
         // _supportBlastETH();
