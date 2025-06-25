@@ -72,12 +72,12 @@ contract OutstakeScript is BaseScript {
 
         // _crossChainOFT();
         // _deployUETH(3);
-        _deployOutrunRouter(4);
+        // _deployOutrunRouter(4);
         // _updateRouterLauncher();
         // _deployMockERC20(3);
         // _deployMockERC20SY(2)
-        // _supportMockWeETH(5);
-        // _supportMockWstETH(5);
+        // _supportMockWeETH(6);
+        _supportMockWstETH(6);
 
         // _supportSlisBNB();
         // _supportSlisUSD();
@@ -342,8 +342,8 @@ contract OutstakeScript is BaseScript {
                 owner
             )
         );
-        // address wstETHPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        address wstETHPTAddress = 0x1D1165687a15B4C0b70d9080BFd92Dc2668BE39e;
+        address wstETHPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+
         // YT
         salt = keccak256(abi.encodePacked("Mock-YT-wstETH", nonce));
         creationCode = abi.encodePacked(
