@@ -184,11 +184,12 @@ contract OutrunStakingPosition is
 
     /**
      * @dev Allow the separation of PT from SP
-     * @param receiver - Receiver of nonTransferableSP and PT
      * @param positionId - Position Id
      * @param PTAmount - Amount of PT minted
+     * @param SPRecipient - Receiver of nonTransferableSP
+     * @param PTRecipient - Receiver of PT
      */
-    function separatePT(address receiver, uint256 positionId, uint256 PTAmount) external override whenNotPaused {
+    function separatePT(uint256 positionId, uint256 PTAmount, address SPRecipient, address PTRecipient) external override whenNotPaused {
         require(PTAmount != 0, ZeroInput());
 
         Position storage position = positions[positionId];
@@ -200,15 +201,16 @@ contract OutrunStakingPosition is
         require(PTAmount <= PTMintable, InsufficientPTMintable(PTMintable));
         require(balanceOf(msg.sender, positionId) >= PTAmount, InsufficientSPBalance());
 
-        if (msg.sender != receiver) transfer(receiver, positionId, PTAmount);
+        if (msg.sender != SPRecipient) transfer(SPRecipient, positionId, PTAmount);
+
         unchecked {
             position.PTMinted += PTAmount;
-            nonTransferableBalanceOf[receiver][positionId] += PTAmount;
+            nonTransferableBalanceOf[SPRecipient][positionId] += PTAmount;
         }
 
-        _mintPT(position.isTypeUPT, PTAmount, receiver);
+        _mintPT(position.isTypeUPT, PTAmount, PTRecipient);
 
-        emit SeparatePT(receiver, positionId, PTAmount);
+        emit SeparatePT(positionId, PTAmount, SPRecipient, PTRecipient);
     }
 
     /**

@@ -73,7 +73,7 @@ interface IOutrunStakeManager {
         bool isTypeUPT
     ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
 
-    function separatePT(address receiver, uint256 positionId, uint256 PTAmount) external;
+    function separatePT(uint256 positionId, uint256 PTAmount, address SPRecipient, address PTRecipient) external;
 
     function encapsulatePT(address sender, uint256 positionId, uint256 PTAmount) external;
 
@@ -97,7 +97,7 @@ interface IOutrunStakeManager {
         bool indexed isTypeUPT
     );
 
-    event SeparatePT(address indexed receiver, uint256 indexed positionId, uint256 PTAmount);
+    event SeparatePT(uint256 indexed positionId, uint256 PTAmount, address indexed SPRecipient, address indexed PTRecipient);
 
     event EncapsulatePT(address indexed sender, uint256 indexed positionId, uint256 PTAmount);
 
