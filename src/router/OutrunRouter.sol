@@ -130,7 +130,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 minSPMinted = stakeParam.minSPMinted;
         require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
 
-        IOutrunStakeManager(SP).separatePT(stakeParam.PTRecipient, positionId, SPMinted);
+        IOutrunStakeManager(SP).separatePT(positionId, SPMinted, stakeParam.SPRecipient, stakeParam.PTRecipient);
     }
 
     /** Redeem Principal **/
@@ -187,7 +187,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         (, uint256 amountInUPT, ) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
-
     }
 
     function genesisBySY(
