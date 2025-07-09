@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { Math, ArrayLib, RewardManagerAbstract } from "./RewardManagerAbstract.sol";
+import { OutrunMath, ArrayLib, RewardManagerAbstract } from "./RewardManagerAbstract.sol";
 
 /**
  * @notice RewardManager must not have duplicated rewardTokens
  */
 abstract contract RewardManager is RewardManagerAbstract {
-    using Math for uint256;
+    using OutrunMath for uint256;
     using ArrayLib for uint256[];
 
     uint256 public lastRewardBlock;

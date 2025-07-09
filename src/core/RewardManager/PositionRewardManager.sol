@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { Math } from "../libraries/Math.sol";
+import { OutrunMath } from "../libraries/OutrunMath.sol";
 import { IPositionRewardManager } from "./interfaces/IPositionRewardManager.sol";
 
 /**
  * @notice PositionRewardManager must not have duplicated rewardTokens
  */
 abstract contract PositionRewardManager is IPositionRewardManager {
-    using Math for uint256;
+    using OutrunMath for uint256;
 
     uint256 internal constant INITIAL_REWARD_INDEX = 1;
 

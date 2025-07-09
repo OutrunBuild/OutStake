@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.28;
 
-library Math {
+library OutrunMath {
     uint256 internal constant ONE = 1e18; // 18 decimal places
     int256 internal constant IONE = 1e18; // 18 decimal places
 

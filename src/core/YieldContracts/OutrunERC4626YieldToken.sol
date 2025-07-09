@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-import { Math } from "../libraries/Math.sol";
+import { OutrunMath } from "../libraries/OutrunMath.sol";
 import { SYUtils } from "../libraries/SYUtils.sol";
 import { OutrunYieldToken, IOutrunStakeManager } from "./OutrunYieldToken.sol";
 import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
@@ -13,7 +13,7 @@ import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol"
  * should be based on the amount of SYs that their YT currently represent
  */
 contract OutrunERC4626YieldToken is OutrunYieldToken {
-    using Math for uint256;
+    using OutrunMath for uint256;
     constructor(
         string memory name_,
         string memory symbol_,

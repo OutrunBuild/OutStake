@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import { IRewardManager } from "./interfaces/IRewardManager.sol";
-import { Math } from "../libraries/Math.sol";
+import { OutrunMath } from "../libraries/OutrunMath.sol";
 import { ArrayLib } from "../libraries/ArrayLib.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 
@@ -10,7 +10,7 @@ import { TokenHelper } from "../libraries/TokenHelper.sol";
  * @notice RewardManager must not have duplicated rewardTokens
  */
 abstract contract RewardManagerAbstract is IRewardManager, TokenHelper {
-    using Math for uint256;
+    using OutrunMath for uint256;
 
     uint256 internal constant INITIAL_REWARD_INDEX = 1;
 
