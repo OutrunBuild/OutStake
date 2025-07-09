@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { SYUtils } from "../libraries/SYUtils.sol";
@@ -15,7 +16,7 @@ import { IOutrunStakeManager } from "./interfaces/IOutrunStakeManager.sol";
 import { IYieldToken } from "../YieldContracts/interfaces/IYieldToken.sol";
 import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
 import { IPrincipalToken } from "../YieldContracts/interfaces/IPrincipalToken.sol";
-import { PositionRewardManager, Math } from "../RewardManager/PositionRewardManager.sol";
+import { PositionRewardManager, OutrunMath } from "../RewardManager/PositionRewardManager.sol";
 import { IOutrunPointsYieldToken } from "../YieldContracts/interfaces/IOutrunPointsYieldToken.sol";
 import { IUniversalPrincipalToken } from "../YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
@@ -32,8 +33,6 @@ contract OutrunStakingPosition is
     Pausable, 
     Ownable
 {
-    using Math for uint256;
-
     uint256 public constant DAY = 24 * 3600;
     address public immutable SY;
     address public immutable PT;
@@ -94,14 +93,14 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Calculate SP amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
+     * @dev Calculate PT amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
      */
-    function calcSPAmount(uint256 principalValue, uint256 amountInYT) public view override returns (uint256 amount) {
-        if (amountInYT == 0) {
+    function calcPTAmount(uint256 principalValue, uint256 amountInYT, bool isTypeUPT) public view override returns (uint256 amount) {
+        if (amountInYT == 0 || !isTypeUPT) {
             amount = principalValue;
         } else {
             uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
-            uint256 yieldTokenValue = amountInYT * IYieldToken(YT).totalRedeemableYields() / newYTSupply;
+            uint256 yieldTokenValue = Math.mulDiv(amountInYT, IYieldToken(YT).totalRedeemableYields(), newYTSupply, Math.Rounding.Ceil);
             amount = SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), (principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0));
         }
     }
@@ -115,12 +114,14 @@ contract OutrunStakingPosition is
         uint256 amountInSY, 
         uint256 lockupDays,
         bool isTypeUPT
-    ) external view override returns (uint256 PTMintable, uint256 YTMintable) {
+    ) external view override returns (uint256 SPMintable,uint256 initPTMintable, uint256 YTMintable, uint256 PYTMintable) {
         _stakeParamValidate(amountInSY, lockupDays);
 
         YTMintable = amountInSY * lockupDays;
-        uint256 principalValue = SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), amountInSY);
-        PTMintable = isTypeUPT ? calcSPAmount(principalValue, YTMintable) : principalValue;
+        SPMintable = SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), amountInSY);
+        initPTMintable = calcPTAmount(SPMintable, YTMintable, isTypeUPT);
+
+        if(!isTypeUPT && lockupDays != 0) PYTMintable = amountInSY;
     }
 
     /**
@@ -133,7 +134,7 @@ contract OutrunStakingPosition is
         uint256 SPAmount
     ) external view override returns (uint256 redeemableSyAmount) {
         Position memory position = positions[positionId];
-        uint256 redeemedPrincipalValue = position.principalRedeemable * SPAmount / position.SPMinted;
+        uint256 redeemedPrincipalValue = Math.mulDiv(position.initPrincipal, SPAmount, position.SPMinted);
         redeemableSyAmount = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemedPrincipalValue);
     }
 
@@ -170,11 +171,12 @@ contract OutrunStakingPosition is
         }
 
         positionId = _nextId();
-        SPMinted = isTypeUPT ? principalValue : calcSPAmount(principalValue, YTMinted);
-        positions[positionId] = Position(amountInSY, principalValue, 0, SPMinted, deadline, initOwner, isTypeUPT);
+        SPMinted = principalValue;
+        uint256 initPTMintable = calcPTAmount(principalValue, YTMinted, isTypeUPT);
+        positions[positionId] = Position(amountInSY, principalValue, initPTMintable, 0, SPMinted, deadline, initOwner, isTypeUPT);
         if (lockupDays != 0) IYieldToken(YT).mint(YTRecipient, YTMinted, !isTypeUPT);
         // Positions of the UPT type will forgo Points yields.
-        if(!isTypeUPT && lockupDays != 0) IOutrunPointsYieldToken(PYT).mint(PYTRecipient, positionId, SPMinted);
+        if(!isTypeUPT && lockupDays != 0) IOutrunPointsYieldToken(PYT).mint(PYTRecipient, positionId, amountInSY);
         _mint(msg.sender, positionId, SPMinted);
 
         _storeRewardIndexes(positionId);
@@ -193,24 +195,25 @@ contract OutrunStakingPosition is
         require(PTAmount != 0, ZeroInput());
 
         Position storage position = positions[positionId];
-        uint256 PTMinted = position.PTMinted;
-        uint256 SPMinted = position.SPMinted;
-        uint256 PTMintable = SPMinted - PTMinted;
-
         require(block.timestamp < position.deadline, PositionMatured());
-        require(PTAmount <= PTMintable, InsufficientPTMintable(PTMintable));
-        require(balanceOf(msg.sender, positionId) >= PTAmount, InsufficientSPBalance());
 
-        if (msg.sender != SPRecipient) transfer(SPRecipient, positionId, PTAmount);
+        uint256 initPTMintable = position.initPTMintable;
+        uint256 PTMintable = initPTMintable - position.PTMinted;
+        require(PTAmount <= PTMintable, InsufficientPTMintable(PTMintable));
+
+        uint256 SPBalanceNeed = position.isTypeUPT ? Math.mulDiv(PTAmount, position.SPMinted, initPTMintable, Math.Rounding.Ceil) : PTAmount;
+        require(balanceOf(msg.sender, positionId) >= SPBalanceNeed, InsufficientSPBalance());
+
+        if (msg.sender != SPRecipient) transfer(SPRecipient, positionId, SPBalanceNeed);
 
         unchecked {
             position.PTMinted += PTAmount;
-            nonTransferableBalanceOf[SPRecipient][positionId] += PTAmount;
+            nonTransferableBalanceOf[SPRecipient][positionId] += SPBalanceNeed;
         }
 
         _mintPT(position.isTypeUPT, PTAmount, PTRecipient);
 
-        emit SeparatePT(positionId, PTAmount, SPRecipient, PTRecipient);
+        emit SeparatePT(positionId, PTAmount, SPBalanceNeed, SPRecipient, PTRecipient);
     }
 
     /**
@@ -226,17 +229,19 @@ contract OutrunStakingPosition is
         _spendAllowance(sender, positionId, PTAmount);
 
         Position storage position = positions[positionId];
-        require(nonTransferableBalanceOf[sender][positionId] >= PTAmount, InsufficientSPBalance());
+        uint256 nonTransferableBalance = nonTransferableBalanceOf[sender][positionId];
+        uint256 SPBalanceNeed = position.isTypeUPT ? Math.mulDiv(PTAmount, position.SPMinted, position.initPTMintable, Math.Rounding.Ceil) : PTAmount;
+        require(nonTransferableBalance >= SPBalanceNeed, InsufficientSPBalance());
 
         unchecked {
             position.PTMinted -= PTAmount;
-            nonTransferableBalanceOf[sender][positionId] -= PTAmount;
+            nonTransferableBalanceOf[sender][positionId] = nonTransferableBalance - SPBalanceNeed;
         }
 
         address input = position.isTypeUPT ? UPT : PT;
         IBurnable(input).burn(sender, PTAmount);  
 
-        emit EncapsulatePT(sender, positionId, PTAmount);
+        emit EncapsulatePT(sender, positionId, PTAmount, SPBalanceNeed);
     }
 
     /**
@@ -259,15 +264,13 @@ contract OutrunStakingPosition is
         uint256 SYStaked = position.SYStaked;
         _redeemRewards(position.initOwner, positionId, SYStaked);
         uint256 SPMinted = position.SPMinted;
-        uint256 principalRedeemable = position.principalRedeemable;
-        uint256 redeemedPrincipalValue = principalRedeemable * SPAmount / SPMinted;
+        uint256 initPrincipal = position.initPrincipal;
+        uint256 redeemedPrincipalValue = Math.mulDiv(initPrincipal, SPAmount, SPMinted);
         redeemedSyAmount = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemedPrincipalValue);
         
         unchecked {
             totalPrincipalValue -= redeemedPrincipalValue;
             position.SYStaked = SYStaked - redeemedSyAmount;
-            position.SPMinted = SPMinted - SPAmount;
-            position.principalRedeemable = principalRedeemable - redeemedPrincipalValue;
         }
 
         _transferSY(receiver, redeemedSyAmount);
@@ -360,7 +363,7 @@ contract OutrunStakingPosition is
         if (tokens.length == 0) return;
 
         for (uint256 i = 0; i < tokens.length; ++i) {
-            positionReward[tokens[i]][positionId] = PositionReward(indexes[i].Uint128(), 0, false);
+            positionReward[tokens[i]][positionId] = PositionReward(uint128(indexes[i]), 0, false);
         }
     }
 
@@ -395,8 +398,8 @@ contract OutrunStakingPosition is
 
             uint256 revenue;
             if (!rewardOfPosition.ownerCollected) {
-                revenue = uint256(totalRewards).mulDown(protocolFeeRate);
-                totalRewards -= revenue.Uint128();
+                revenue = OutrunMath.mulDown(uint256(totalRewards), protocolFeeRate);
+                totalRewards -= uint128(revenue);
                 rewardAmounts[i] = totalRewards;
                 positionReward[token][positionId].accrued = 0;
 

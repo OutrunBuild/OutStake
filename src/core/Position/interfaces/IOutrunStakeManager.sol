@@ -7,7 +7,8 @@ pragma solidity ^0.8.28;
 interface IOutrunStakeManager {
     struct Position {
         uint256 SYStaked;               // Amount of SY staked
-        uint256 principalRedeemable;    // The principal value redeemable
+        uint256 initPrincipal;          // The initial principal value
+        uint256 initPTMintable;         // Amount of PT initial mintable
         uint256 PTMinted;               // Amount of PT minted
         uint256 SPMinted;               // Amount of SP minted
         uint256 deadline;               // Position unlock time
@@ -51,13 +52,13 @@ interface IOutrunStakeManager {
 
     function averageStakingDays() external view returns (uint256);
 
-    function calcSPAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 amount);
+    function calcPTAmount(uint256 principalValue, uint256 amountInYT, bool isTypeUPT) external view returns (uint256 amount);
 
     function previewStake(
         uint256 amountInSY, 
         uint256 lockupDays,
         bool isTypeUPT
-    ) external view returns (uint256 PTMintable, uint256 YTMintable);
+    ) external view returns (uint256 SPMintable,uint256 initPTMintable, uint256 YTMintable, uint256 PYTMintable);
     
     function previewRedeem(
         uint256 positionId, 
@@ -97,11 +98,20 @@ interface IOutrunStakeManager {
         bool indexed isTypeUPT
     );
 
-    event SeparatePT(uint256 indexed positionId, uint256 PTAmount, address indexed SPRecipient, address indexed PTRecipient);
+    event SeparatePT(
+        uint256 indexed positionId, 
+        uint256 PTAmount, 
+        uint256 transferableSPAmount,
+        address indexed SPRecipient, 
+        address indexed PTRecipient
+    );
 
-    event EncapsulatePT(address indexed sender, uint256 indexed positionId, uint256 PTAmount);
-
-    event MintSP(uint256 indexed positionId, uint256 positionShare);
+    event EncapsulatePT(
+        address indexed sender, 
+        uint256 indexed positionId, 
+        uint256 PTAmount,
+        uint256 nonTransferableSPAmount
+    );
 
     event RedeemPrincipal(
         uint256 indexed positionId, 
