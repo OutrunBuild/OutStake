@@ -124,6 +124,8 @@ contract OutrunERC6909 is IOutrunERC6909 {
         uint256 id,
         uint256 amount
     ) internal {
+        require(balanceOf(sender, id) >= amount, InsufficientBalance());
+        
         totalBalanceOf[sender][id] -= amount;
 
         emit Transfer(msg.sender, sender, address(0), id, amount);
