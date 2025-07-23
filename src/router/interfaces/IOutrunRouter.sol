@@ -11,11 +11,8 @@ interface IOutrunRouter {
     struct StakeParam {
         uint256 lockupDays;
         uint256 minSPMinted;
-        address SPRecipient;
-        address PTRecipient;
-        address YTRecipient;
-        address PYTRecipient;
         address initOwner;
+        bool isSPSeparated;
         bool isTypeUPT;
     }
 
@@ -54,21 +51,6 @@ interface IOutrunRouter {
         uint256 amountInSY,
         StakeParam calldata stakeParam
     ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
-
-    /** Redeem Principal **/
-    function redeemPrincipalFromPT(
-        address SP, 
-        address sender, 
-        uint256 positionId, 
-        uint256 PTAmount
-    ) external returns (uint256 redeemedSyAmount);
-
-    function redeemPrincipalFromSP(
-        address SP, 
-        address sender, 
-        uint256 positionId, 
-        uint256 PTAmount
-    ) external returns (uint256 redeemedSyAmount);
 
     /** Memeverse Genesis **/
     function genesisByToken(

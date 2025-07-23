@@ -121,8 +121,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         (positionId, SPMinted, YTMinted) = IOutrunStakeManager(SP).stake(
             amountInSY, 
             stakeParam.lockupDays,
-            stakeParam.YTRecipient, 
-            stakeParam.PYTRecipient,
+            address(this), 
             stakeParam.initOwner,
             stakeParam.isTypeUPT
         );
@@ -130,47 +129,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 minSPMinted = stakeParam.minSPMinted;
         require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
 
-        IOutrunStakeManager(SP).separatePT(positionId, SPMinted, stakeParam.SPRecipient, stakeParam.PTRecipient);
-    }
-
-    /** Redeem Principal **/
-    /**
-     * @dev Redeem principal from (U)PT
-     * @notice If position.isTypeUPT == true, Must have approved SP contract to spend sender's PT.
-               Must have approved this contract to spend sender's "2 × PTAmount" SP.
-     */
-    function redeemPrincipalFromPT(
-        address SP, 
-        address sender, 
-        uint256 positionId, 
-        uint256 PTAmount
-    ) external override returns (uint256 redeemedSyAmount) {
-        IOutrunStakeManager(SP).encapsulatePT(sender, positionId, PTAmount);
-        
-        redeemedSyAmount = _redeemPrincipalFromSP(SP, sender, positionId, PTAmount);
-    }
-
-    /**
-     * @dev Redeem principal from SP
-     * @notice Must have approved this contract to spend sender's "PTAmount" SP.
-     */
-    function redeemPrincipalFromSP(
-        address SP, 
-        address sender, 
-        uint256 positionId, 
-        uint256 PTAmount
-    ) external override returns (uint256 redeemedSyAmount) {
-        redeemedSyAmount = _redeemPrincipalFromSP(SP, sender, positionId, PTAmount);
-    }
-
-    function _redeemPrincipalFromSP(
-        address SP, 
-        address sender, 
-        uint256 positionId, 
-        uint256 PTAmount
-    ) internal returns (uint256 redeemedSyAmount) {
-        IOutrunERC6909(SP).transferFrom(sender, address(this), positionId, PTAmount);
-        redeemedSyAmount = IOutrunStakeManager(SP).redeemPrincipal(msg.sender, positionId, PTAmount);
+        if(stakeParam.isSPSeparated) {
+            IOutrunStakeManager(SP).separatePT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
+        } else {
+            IOutrunERC6909(SP).transfer(stakeParam.initOwner, positionId, SPMinted);
+        }
     }
 
     /** Memeverse Genesis **/

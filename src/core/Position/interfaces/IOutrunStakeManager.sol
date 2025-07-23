@@ -25,23 +25,21 @@ interface IOutrunStakeManager {
 
     error ErrorInput();
 
+    error NotUPTPosition();
+
+    error FeeRateOverflow();
+
     error UPTNotSupported();
 
     error PositionMatured();
 
     error PermissionDenied();
 
-    error UPTCannotBeMinted();
-
     error InsufficientSPBalance();
 
     error LockTimeNotExpired(uint256 deadLine);
 
     error MinStakeInsufficient(uint256 minStake);
-
-    error InsufficientSPMintable(uint256 SPMintable);
-
-    error InsufficientPTMintable(uint256 PTMintable);
 
     error InvalidLockupDays(uint256 minLockupDays, uint256 maxLockupDays);
 
@@ -68,23 +66,52 @@ interface IOutrunStakeManager {
     function stake(
         uint256 amountInSY,
         uint256 lockupDays,
-        address YTRecipient,
-        address PYTRecipient,
+        address SPRecipient,
         address initOwner,
         bool isTypeUPT
     ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
 
-    function separatePT(uint256 positionId, uint256 PTAmount, address SPRecipient, address PTRecipient) external;
+    function separatePT(
+        uint256 positionId, 
+        uint256 SPAmount, 
+        address SPRecipient, 
+        address PTRecipient
+    ) external returns (uint256 PTAmount);
 
-    function encapsulatePT(address sender, uint256 positionId, uint256 PTAmount) external;
+    function encapsulatePT(uint256 positionId, uint256 SPAmount) external returns (uint256 PTBurned);
 
-    function redeemPrincipal(address receiver, uint256 positionId, uint256 SPAmount) external returns (uint256 redeemedSyAmount);
+    function redeemPrincipalFromSP(
+        address receiver, 
+        uint256 positionId, 
+        uint256 SPBurned
+    ) external returns (uint256 redeemedPrincipal);
+
+    function redeemPrincipalFromNSPAndPT(
+        address receiver, 
+        uint256 positionId, 
+        uint256 SPBurned
+    ) external returns (uint256 PTBurned, uint256 redeemedPrincipal);
+
+    function redeemLiquidate(
+        address SPOwner,
+        address receiver, 
+        uint256 positionId, 
+        uint256 SPBurned
+    ) external;
 
     function transferYields(address receiver, uint256 syAmount) external;
 
     function setLockupDuration(uint128 minLockupDays, uint128 maxLockupDays) external;
 
+    function setMinStake(uint256 minStake) external;
+
     function setUPT(address UPT) external;
+
+    function setRevenuePool(address revenuePool) external;
+
+    function setLiquidator(address liquidator) external;
+
+    function setProtocolFeeRate(uint256 protocolFeeRate) external;
 
 
     event Stake(
@@ -100,8 +127,8 @@ interface IOutrunStakeManager {
 
     event SeparatePT(
         uint256 indexed positionId, 
-        uint256 PTAmount, 
         uint256 transferableSPAmount,
+        uint256 PTAmount,
         address indexed SPRecipient, 
         address indexed PTRecipient
     );
@@ -109,16 +136,42 @@ interface IOutrunStakeManager {
     event EncapsulatePT(
         address indexed sender, 
         uint256 indexed positionId, 
-        uint256 PTAmount,
-        uint256 nonTransferableSPAmount
+        uint256 nonTransferableSPAmount,
+        uint256 PTBurned
     );
 
-    event RedeemPrincipal(
+    event RedeemPrincipalFromSP(
         uint256 indexed positionId, 
         address indexed account,
-        uint256 redeemedSyAmount, 
-        uint256 positionShare
+        uint256 redeemedPrincipal, 
+        uint256 SPBurned
+    );
+
+    event RedeemPrincipalFromNSPAndPT(
+        uint256 indexed positionId, 
+        address indexed account, 
+        uint256 SPBurned, 
+        uint256 PTBurned, 
+        uint256 redeemedPrincipal
+    );
+
+    event RedeemLiquidate(
+        uint256 indexed positionId, 
+        address indexed SPOwner, 
+        uint256 SPBurned, 
+        uint256 redeemedPrincipal, 
+        uint256 liquidatorPrincipal
     );
 
     event SetLockupDuration(uint128 minLockupDays, uint128 maxLockupDays);
+
+    event SetMinStake(uint256 minStake);
+
+    event SetUPT(address UPT);
+
+    event SetRevenuePool(address revenuePool);
+
+    event SetLiquidator(address liquidator);
+
+    event SetProtocolFeeRate(uint256 protocolFeeRate);
 }
