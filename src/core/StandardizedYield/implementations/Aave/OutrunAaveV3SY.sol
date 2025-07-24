@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { SYUtils } from "../../../../libraries/SYUtils.sol";
-import { SYBase, IERC20Metadata } from "../../../SYBase.sol";
-import { ArrayLib } from "../../../../libraries/ArrayLib.sol";
-import { IAToken } from "../../../../../external/aave/IAToken.sol";
-import { IAaveV3Pool } from "../../../../../external/aave/IAaveV3Pool.sol";
-import { AaveAdapterLib } from "../../../../../external/aave/libraries/AaveAdapterLib.sol";
+import { SYUtils } from "../../../libraries/SYUtils.sol";
+import { SYBase, IERC20Metadata } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
+import { IAToken } from "../../../../external/aave/IAToken.sol";
+import { IAaveV3Pool } from "../../../../external/aave/IAaveV3Pool.sol";
+import { AaveAdapterLib } from "../../../../external/aave/libraries/AaveAdapterLib.sol";
 
 contract OutrunAaveV3SY is SYBase {
     address public immutable underlying;
