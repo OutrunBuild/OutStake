@@ -11,7 +11,7 @@ contract OutrunSlisUSDSY is SYBase {
         address _owner,
         address _lisUSD,
         address _slisUSD
-    ) SYBase("SY Lista slisUSD", "SY-slisUSD", _slisUSD, _owner) {
+    ) SYBase("SY Lista slisUSD", "SY slisUSD", _slisUSD, _owner) {
         LISUSD = _lisUSD;
     }
 

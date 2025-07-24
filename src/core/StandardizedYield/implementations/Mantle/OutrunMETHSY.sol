@@ -8,7 +8,7 @@ contract OutrunMETHSY is SYBase {
     constructor(
         address _owner,
         address _meth
-    ) SYBase("SY Mantle mETH", "SY-mETH", _meth, _owner) {
+    ) SYBase("SY Mantle mETH", "SY mETH", _meth, _owner) {
     }
 
     function _deposit(

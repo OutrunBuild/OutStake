@@ -12,7 +12,7 @@ contract OutrunWstETHSY is SYBase {
         address _owner,
         address _stETH,
         address _wstETH
-    ) SYBase("SY Lido wstETH", "SY-wstETH", _wstETH, _owner) {
+    ) SYBase("SY Lido wstETH", "SY wstETH", _wstETH, _owner) {
         STETH = _stETH;
     }
 

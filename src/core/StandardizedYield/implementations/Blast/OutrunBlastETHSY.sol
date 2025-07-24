@@ -16,7 +16,7 @@ contract OutrunBlastETHSY is SYBase, BlastGovernorable {
         address _WETH,
         address _owner,
         address _blastGovernor
-    ) SYBase("SY Blast ETH", "SY-BETH", _WETH, _owner) BlastGovernorable(_blastGovernor) {
+    ) SYBase("SY Blast ETH", "SY BETH", _WETH, _owner) BlastGovernorable(_blastGovernor) {
         WETH = _WETH;
     }
 

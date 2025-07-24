@@ -12,7 +12,7 @@ contract OutrunStakedDaiSY is SYBase {
         address _owner,
         address _DAI,
         address _sDAI
-    ) SYBase("SY Sky Dai", "SY-sDAI", _sDAI, _owner) {
+    ) SYBase("SY Sky Dai", "SY sDAI", _sDAI, _owner) {
         DAI = _DAI;
     }
 

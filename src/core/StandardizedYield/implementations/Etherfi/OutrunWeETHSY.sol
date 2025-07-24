@@ -17,7 +17,7 @@ contract OutrunWeETHSY is SYBase {
         address _weETH,
         address _depositAdapter,
         address _liquidityPool
-    ) SYBase("SY Etherfi weETH", "SY-weETH", _weETH, _owner) {
+    ) SYBase("SY Etherfi weETH", "SY weETH", _weETH, _owner) {
         EETH = _eETH;
         DEPOSIT_ADAPTER = _depositAdapter;
         LIQUIDITY_POOL = _liquidityPool;

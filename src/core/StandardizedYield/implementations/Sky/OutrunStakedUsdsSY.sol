@@ -12,7 +12,7 @@ contract OutrunStakedUsdsSY is SYBase {
         address _owner,
         address _USDS,
         address _sUSDS
-    ) SYBase("SY Sky sUSDS", "SY-sUSDS", _sUSDS, _owner) {
+    ) SYBase("SY Sky sUSDS", "SY sUSDS", _sUSDS, _owner) {
         USDS = _USDS;
     }
 

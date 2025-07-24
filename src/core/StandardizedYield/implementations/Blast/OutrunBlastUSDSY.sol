@@ -15,7 +15,7 @@ contract OutrunBlastUSDSY is SYBase, BlastGovernorable {
         address _USDB,
         address _owner,
         address _blastGovernor
-    ) SYBase("SY Blast USD", "SY-USDB", _USDB, _owner) BlastGovernorable(_blastGovernor) {
+    ) SYBase("SY Blast USD", "SY USDB", _USDB, _owner) BlastGovernorable(_blastGovernor) {
         USDB = _USDB;
     }
 

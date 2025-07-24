@@ -18,7 +18,7 @@ contract OutrunSlisBNBSY is SYBase {
         address _delegateTo,
         IListaBNBStakeManager _stakeManager,
         ISlisBNBProvider _slisBNBProvider
-    ) SYBase("SY Lista slisBNB", "SY-slisBNB", _slisBNB, _owner) {
+    ) SYBase("SY Lista slisBNB", "SY slisBNB", _slisBNB, _owner) {
         delegateTo = _delegateTo;
         listaBNBStakeManager = _stakeManager;
         slisBNBProvider = _slisBNBProvider;

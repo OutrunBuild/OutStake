@@ -14,7 +14,7 @@ contract OutrunMethSY is SYBase {
         address _mETH,
         address _cmETH,
         address _vault
-    ) SYBase("SY Mantle cmETH", "SY-cmETH", _cmETH, _owner) {
+    ) SYBase("SY Mantle cmETH", "SY cmETH", _cmETH, _owner) {
         METH = _mETH;
         VAULT = _vault;
     }
