@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { SYBase, ArrayLib } from "../../SYBase.sol";
 import { IStETH } from "../../../../external/lido/IStETH.sol";
 import { IWstETH } from "../../../../external/lido/IWstETH.sol";
+import { SYBase, ArrayLib, IERC20Metadata } from "../../SYBase.sol";
 
 contract OutrunWstETHSY is SYBase {
     address public immutable STETH;
@@ -88,7 +88,7 @@ contract OutrunWstETHSY is SYBase {
         return token == yieldBearingToken || token == STETH;
     }
 
-    function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
-        return (AssetType.TOKEN, NATIVE, 18);
+    function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
+        return (AssetType.TOKEN, STETH, IERC20Metadata(STETH).decimals());
     }
 }
