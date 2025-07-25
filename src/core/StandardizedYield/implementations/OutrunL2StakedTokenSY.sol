@@ -5,7 +5,7 @@ import { SYBase, ArrayLib } from "../SYBase.sol";
 import { IExchangeRateOracle } from "../../../oracles/interfaces/IExchangeRateOracle.sol";
 
 contract OutrunL2StakedTokenSY is SYBase {
-    address public exchangeRateOracle;
+    address public immutable exchangeRateOracle;
     address internal immutable underlyingAssetOnEthAddr;
     uint8 internal immutable underlyingAssetOnEthDecimals;
 
@@ -21,10 +21,6 @@ contract OutrunL2StakedTokenSY is SYBase {
         exchangeRateOracle = _exchangeRateOracle;
         underlyingAssetOnEthAddr = _underlyingAssetOnEthAddr;
         underlyingAssetOnEthDecimals = _underlyingAssetOnEthDecimals;
-    }
-
-    function setExchangeRateOracle(address newOracle) external onlyOwner {
-        exchangeRateOracle = newOracle;
     }
 
     function _deposit(
