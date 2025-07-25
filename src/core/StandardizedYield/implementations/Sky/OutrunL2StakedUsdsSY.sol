@@ -19,10 +19,6 @@ contract OutrunL2StakedUsdsSY is SYBase {
         USDC = _USDC;
         USDS = _USDS;
         PSM3 = _PSM3;
-
-        _safeApproveInf(_USDC, _PSM3);
-        _safeApproveInf(_USDS, _PSM3);
-        _safeApproveInf(_sUSDS, _PSM3);
     }
 
     function _deposit(
@@ -32,6 +28,7 @@ contract OutrunL2StakedUsdsSY is SYBase {
         if (tokenIn == yieldBearingToken) {
             amountSharesOut = amountDeposited;
         } else {
+            _safeApproveInf(tokenIn, PSM3);
             amountSharesOut = IPSM3(PSM3).swapExactIn(tokenIn, yieldBearingToken, amountDeposited, 0, address(this), 0);
         }
     }
@@ -45,6 +42,7 @@ contract OutrunL2StakedUsdsSY is SYBase {
             _transferOut(yieldBearingToken, receiver, amountSharesToRedeem);
             amountTokenOut = amountSharesToRedeem;
         } else {
+            _safeApproveInf(yieldBearingToken, PSM3);
             amountTokenOut = IPSM3(PSM3).swapExactIn(yieldBearingToken, tokenOut, amountSharesToRedeem, 0, receiver, 0);
         }
     }
