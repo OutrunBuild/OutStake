@@ -21,6 +21,7 @@ contract OutrunStakedUsdsSY is SYBase {
         uint256 amountDeposited
     ) internal override returns (uint256 amountSharesOut) {
         if (tokenIn == USDS) {
+            _safeApproveInf(USDS, yieldBearingToken);
             amountSharesOut = IERC4626(yieldBearingToken).deposit(amountDeposited, address(this));
         } else {
             amountSharesOut = amountDeposited;

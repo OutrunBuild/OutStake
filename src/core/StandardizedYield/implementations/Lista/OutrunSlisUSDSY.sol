@@ -20,6 +20,7 @@ contract OutrunSlisUSDSY is SYBase {
         uint256 amountDeposited
     ) internal override returns (uint256 amountSharesOut) {
         if (tokenIn == LISUSD) {
+            _safeApproveInf(LISUSD, yieldBearingToken);
             ISlisUSD(yieldBearingToken).deposit(amountDeposited);
             amountSharesOut = ISlisUSD(yieldBearingToken).convertToShares(amountDeposited);
         } else {

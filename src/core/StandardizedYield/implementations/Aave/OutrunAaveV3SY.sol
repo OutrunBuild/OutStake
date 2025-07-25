@@ -2,9 +2,8 @@
 pragma solidity ^0.8.28;
 
 import { SYUtils } from "../../../libraries/SYUtils.sol";
-import { SYBase, IERC20Metadata } from "../../SYBase.sol";
-import { ArrayLib } from "../../../libraries/ArrayLib.sol";
 import { IAToken } from "../../../../external/aave/IAToken.sol";
+import { SYBase, ArrayLib, IERC20Metadata } from "../../SYBase.sol";
 import { IAaveV3Pool } from "../../../../external/aave/IAaveV3Pool.sol";
 import { AaveAdapterLib } from "../../../../external/aave/libraries/AaveAdapterLib.sol";
 
@@ -21,14 +20,16 @@ contract OutrunAaveV3SY is SYBase {
     ) SYBase(_name, _symbol, _aToken, _owner) {
         underlying = IAToken(_aToken).UNDERLYING_ASSET_ADDRESS();
         aavePool = _aavePool;
-        _safeApproveInf(underlying, aavePool);
     }
 
     function _deposit(
         address tokenIn,
         uint256 amountDeposited
     ) internal override returns (uint256 amountSharesOut) {
-        if (tokenIn == underlying) IAaveV3Pool(aavePool).supply(underlying, amountDeposited, address(this), 0);
+        if (tokenIn == underlying) {
+            _safeApproveInf(underlying, aavePool);
+            IAaveV3Pool(aavePool).supply(underlying, amountDeposited, address(this), 0);
+        }
         amountSharesOut = AaveAdapterLib.calcSharesFromAssetUp(amountDeposited, _getNormalizedIncome());
     }
 
