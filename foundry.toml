@@ -19,6 +19,7 @@ gas_reports = ["*"]
 bsc_testnet = "${BSC_TESTNET_RPC}"
 base_sepolia = "${BASE_SEPOLIA_RPC}"
 arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
+sepolia = "${ETHEREUM_SEPOLIA_RPC}"
 avalanche_fuji = "${AVALANCHE_FUJI_RPC}"
 polygon_amoy = "${POLYGON_AMOY_RPC}"
 sonic_blaze = "${SONIC_BLAZE_RPC}"
@@ -36,6 +37,7 @@ bsc_mainnet = "${BSC_MAINNET_RPC}"
 bsc_testnet = { key = "${BSCSCAN_API_KEY}", chain = "97", url = "${BSCSCAN_TESTNET_API_URL}" }
 base_sepolia = { key = "${BASESCAN_API_KEY}", chain = "84532", url = "${BASESCAN_API_URL}" }
 arbitrum_sepolia = { key = "${ARBITRUMSCAN_API_KEY}", chain = "421614", url = "${ARBITRUMSCAN_API_URL}" }
+sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155111", url = "${ETHEREUMSCAN_API_URL}" }
 avalanche_fuji = { key = "${SNOWSCAN_API_KEY}", chain = "43113", url = "${SNOWSCAN_API_URL}" }
 polygon_amoy = { key = "${POLYGONSCAN_API_KEY}", chain = "80002", url = "${POLYGONSCAN_API_URL}" }
 sonic_blaze = { key = "${SONICSCAN_API_KEY}", chain = "57054", url = "${SONICSCAN_API_URL}" }
