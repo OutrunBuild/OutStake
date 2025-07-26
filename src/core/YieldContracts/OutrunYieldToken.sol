@@ -128,5 +128,5 @@ abstract contract OutrunYieldToken is
     /**
      * @dev Accumulate yields
      */
-    function accumulateYields() public virtual override returns (uint256 increasedYield) {}
+    function accumulateYields() public virtual override returns (uint256 realTimeYield, int256 increasedYield) {}
 }

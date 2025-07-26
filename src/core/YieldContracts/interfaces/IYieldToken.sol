@@ -20,7 +20,7 @@ interface IYieldToken {
 
 	function previewWithdrawYields(uint256 amountInBurnedYT) external view returns (uint256 amountYieldsOut);
 
-	function accumulateYields() external returns (uint256 increasedYield);
+	function accumulateYields() external returns (uint256 realTimeYield, int256 increasedYield);
 
 	function withdrawYields(uint256 amountInBurnedYT) external returns (uint256 amountYieldsOut);
 	
@@ -35,7 +35,7 @@ interface IYieldToken {
 	
     event SetProtocolFeeRate(uint256 protocolFeeRate);
 
-	event AccumulateYields(uint256 amountInYields, uint256 protocolFee);
+	event AccumulateYields(uint256 totalYields, int256 increasedYields, uint256 protocolFee);
 
 	event WithdrawYields(address indexed account, uint256 amountYieldsOut);
 }

@@ -23,7 +23,7 @@ contract OutrunERC4626YieldToken is OutrunYieldToken {
         uint256 protocolFeeRate_
     ) OutrunYieldToken(name_, symbol_, decimals_, revenuePool_, protocolFeeRate_) Ownable(owner_) {}
 
-    function _realTimeYieldInfo() internal view returns (uint256 realTimeYield, uint256 increasedYield) {
+    function _realTimeYieldInfo() internal view returns (uint256 realTimeYield, int256 increasedYield) {
         IOutrunStakeManager syStakeManager = IOutrunStakeManager(SP);
         uint256 exchangeRate = IStandardizedYield(SY).exchangeRate();
         uint256 totalCurrentAssetValue = SYUtils.syToAsset(exchangeRate, syStakeManager.syTotalStaking());
@@ -33,9 +33,7 @@ contract OutrunERC4626YieldToken is OutrunYieldToken {
             uint256 yieldInAsset = totalCurrentAssetValue - totalPrincipalValue;
             // Real-time withdrawable yields
             realTimeYield = SYUtils.assetToSy(exchangeRate, yieldInAsset);
-            if (realTimeYield > yieldBalance) {
-                increasedYield = realTimeYield - yieldBalance;
-            }
+            increasedYield = int256(realTimeYield) - int256(yieldBalance);
         }
     }
 
@@ -43,10 +41,10 @@ contract OutrunERC4626YieldToken is OutrunYieldToken {
      * @dev Total redeemable yields
      */
     function totalRedeemableYields() public view override returns (uint256) {
-        (uint256 realTimeYield, uint256 increasedYield) = _realTimeYieldInfo();
+        (uint256 realTimeYield, int256 increasedYield) = _realTimeYieldInfo();
         if (increasedYield > 0) {
             unchecked {
-                uint256 protocolFee = increasedYield.mulDown(protocolFeeRate);
+                uint256 protocolFee = uint256(increasedYield).mulDown(protocolFeeRate);
                 realTimeYield -= protocolFee;
             }
         }
@@ -56,20 +54,20 @@ contract OutrunERC4626YieldToken is OutrunYieldToken {
     /**
      * @dev Accumulate yields
      */
-    function accumulateYields() public override returns (uint256 increasedYield) {
-        uint256 realTimeYield;
+    function accumulateYields() public override returns (uint256 realTimeYield, int256 increasedYield) {
         (realTimeYield, increasedYield) = _realTimeYieldInfo();
+        
+        uint256 protocolFee;
         if (increasedYield > 0) {
-            uint256 protocolFee;
             unchecked {
-                protocolFee = increasedYield.mulDown(protocolFeeRate);
+                protocolFee = uint256(increasedYield).mulDown(protocolFeeRate);
                 realTimeYield -= protocolFee;
             }
-            yieldBalance = realTimeYield;
-
             IOutrunStakeManager(SP).transferYields(revenuePool, protocolFee);
-
-            emit AccumulateYields(increasedYield, protocolFee);
         }
+        
+        yieldBalance = realTimeYield;
+
+        emit AccumulateYields(realTimeYield, increasedYield, protocolFee);
     }
 }
