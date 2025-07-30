@@ -112,21 +112,23 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Preview PT mintable amount and YT mintable amount before stake
+     * @dev Preview the token mintable amount before stake
      * @param amountInSY - Staked amount of SY
      * @param lockupDays - User can redeem after lockupDays
+     * @param isTypeUPT - Is the PT type UPT?
+     * @param isSPSeparated - Is SP separated?
      */
     function previewStake(
         uint256 amountInSY, 
         uint256 lockupDays,
-        bool isTypeUPT
-    ) external view override returns (uint256 SPMintable,uint256 initPTMintable, uint256 YTMintable, uint256 PYTMintable) {
+        bool isTypeUPT,
+        bool isSPSeparated
+    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable) {
         _stakeParamValidate(amountInSY, lockupDays);
 
         YTMintable = amountInSY * lockupDays;
         SPMintable = SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), amountInSY);
-        initPTMintable = calcPTAmount(SPMintable, YTMintable, isTypeUPT);
-
+        if (isSPSeparated) PTMintable = calcPTAmount(SPMintable, YTMintable, isTypeUPT);
         if(!isTypeUPT && lockupDays != 0) PYTMintable = amountInSY;
     }
 
@@ -159,7 +161,12 @@ contract OutrunStakingPosition is
         address SPRecipient,
         address initOwner,
         bool isTypeUPT
-    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
+    ) external override accumulateYields nonReentrant whenNotPaused returns (
+        uint256 positionId, 
+        uint256 SPMinted, 
+        uint256 YTMinted, 
+        uint256 PYTMintable
+    ) {
         require(initOwner != address(0), ZeroInput());
         if(isTypeUPT) require(IUniversalPrincipalToken(UPT).isAuthorized(address(this)), UPTNotSupported());
 
@@ -177,11 +184,15 @@ contract OutrunStakingPosition is
 
         positionId = _nextId();
         SPMinted = principalValue;
-        uint256 initPTMintable = calcPTAmount(principalValue, YTMinted, isTypeUPT);
-        positions[positionId] = Position(amountInSY, principalValue, initPTMintable, 0, SPMinted, deadline, initOwner, isTypeUPT);
+        uint256 PTMintable = calcPTAmount(principalValue, YTMinted, isTypeUPT);
+        positions[positionId] = Position(amountInSY, principalValue, PTMintable, 0, SPMinted, deadline, initOwner, isTypeUPT);
         if (lockupDays != 0) IYieldToken(YT).mint(initOwner, YTMinted, !isTypeUPT);
         // Positions of the UPT type will forgo Points yields.
-        if(!isTypeUPT && lockupDays != 0) IOutrunPointsYieldToken(PYT).mint(initOwner, positionId, amountInSY);
+        if(!isTypeUPT && lockupDays != 0) {
+            IOutrunPointsYieldToken(PYT).mint(initOwner, positionId, amountInSY);
+            PYTMintable = amountInSY;
+        }
+
         _mint(SPRecipient, positionId, SPMinted);
 
         _storeRewardIndexes(positionId);
@@ -204,14 +215,15 @@ contract OutrunStakingPosition is
         address PTRecipient
     ) external override whenNotPaused returns (uint256 PTAmount) {
         require(positionId != 0 && SPAmount != 0 && SPRecipient != address(0) && PTRecipient != address(0), ZeroInput());
+        require(balanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
 
         Position storage position = positions[positionId];
         require(block.timestamp < position.deadline, PositionMatured());
 
         if (SPRecipient != msg.sender) transfer(SPRecipient, positionId, SPAmount);
 
-        uint256 initPTMintable = position.initPTMintable;
-        PTAmount = position.isTypeUPT ? Math.mulDiv(initPTMintable, SPAmount, position.SPMinted) : SPAmount;
+        uint256 PTMintable = position.PTMintable;
+        PTAmount = position.isTypeUPT ? Math.mulDiv(PTMintable, SPAmount, position.SPMinted) : SPAmount;
 
         unchecked {
             position.PTMinted += PTAmount;
@@ -300,7 +312,7 @@ contract OutrunStakingPosition is
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[SPOwner][positionId];
         require(nonTransferableSPBalance >= SPBurned, InsufficientSPBalance());
 
-        uint256 PTBurned = Math.mulDiv(position.initPTMintable, SPBurned, position.SPMinted, Math.Rounding.Ceil);
+        uint256 PTBurned = Math.mulDiv(position.PTMintable, SPBurned, position.SPMinted, Math.Rounding.Ceil);
         IBurnable(UPT).burn(msg.sender, PTBurned);  
 
         unchecked {
@@ -432,7 +444,7 @@ contract OutrunStakingPosition is
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[msg.sender][positionId];
         require(nonTransferableSPBalance >= SPAmount, InsufficientSPBalance());
 
-        PTBurned = position.isTypeUPT ? Math.mulDiv(position.initPTMintable, SPAmount, position.SPMinted, Math.Rounding.Ceil) : SPAmount;
+        PTBurned = position.isTypeUPT ? Math.mulDiv(position.PTMintable, SPAmount, position.SPMinted, Math.Rounding.Ceil) : SPAmount;
         IBurnable(position.isTypeUPT ? UPT : PT).burn(msg.sender, PTBurned);  
 
         unchecked {

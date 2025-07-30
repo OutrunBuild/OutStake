@@ -8,7 +8,7 @@ interface IOutrunStakeManager {
     struct Position {
         uint256 SYStaked;               // Amount of SY staked
         uint256 initPrincipal;          // The initial principal value
-        uint256 initPTMintable;         // Amount of PT initial mintable
+        uint256 PTMintable;             // Amount of PT mintable
         uint256 PTMinted;               // Amount of PT minted
         uint256 SPMinted;               // Amount of SP minted
         uint256 deadline;               // Position unlock time
@@ -55,8 +55,9 @@ interface IOutrunStakeManager {
     function previewStake(
         uint256 amountInSY, 
         uint256 lockupDays,
-        bool isTypeUPT
-    ) external view returns (uint256 SPMintable,uint256 initPTMintable, uint256 YTMintable, uint256 PYTMintable);
+        bool isTypeUPT,
+        bool isSPSeparated
+    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable);
     
     function previewRedeem(
         uint256 positionId, 
@@ -69,7 +70,7 @@ interface IOutrunStakeManager {
         address SPRecipient,
         address initOwner,
         bool isTypeUPT
-    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
+    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PYTMintable);
 
     function separatePT(
         uint256 positionId, 
