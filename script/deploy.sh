@@ -1,5 +1,12 @@
 source ../.env
 
+forge script OutstakeScript.s.sol:OutstakeScript --rpc-url sepolia \
+    --priority-gas-price 500000000 --with-gas-price 1500000000 \
+    --optimize --optimizer-runs 100000 \
+    --via-ir \
+    --broadcast --ffi -vvvv \
+    --verify
+
 # forge script OutstakeScript.s.sol:OutstakeScript --rpc-url bsc_testnet \
 #     --with-gas-price 1000000000 \
 #     --optimize --optimizer-runs 100000 \
@@ -21,22 +28,15 @@ source ../.env
 #     --broadcast --ffi -vvvv \
 #     --verify
 
-forge script OutstakeScript.s.sol:OutstakeScript --rpc-url sepolia \
-    --priority-gas-price 500000000 --with-gas-price 1500000000 \
-    --optimize --optimizer-runs 100000 \
-    --via-ir \
-    --broadcast --ffi -vvvv \
-    --verify
-
 # forge script OutstakeScript.s.sol:OutstakeScript --rpc-url avalanche_fuji \
-#     --priority-gas-price 1000000001 --with-gas-price 1000000001 \
+#     --priority-gas-price 1 --with-gas-price 2 \
 #     --optimize --optimizer-runs 100000 \
 #     --via-ir \
 #     --broadcast --ffi -vvvv \
 #     --verify
 
 # forge script OutstakeScript.s.sol:OutstakeScript --rpc-url polygon_amoy \
-#     --priority-gas-price 140000000000 --with-gas-price 150000000000 \
+#     --priority-gas-price 55000000000 --with-gas-price 60000000000 \
 #     --optimize --optimizer-runs 100000 \
 #     --via-ir \
 #     --broadcast --ffi -vvvv \

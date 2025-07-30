@@ -22,11 +22,11 @@ import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/
 import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastETHSY.sol";
 
 import { Faucet, IFaucet } from "../test/Faucet.sol";
-import { MockETH } from "../test/MockETH.sol";
-import { MockWeETH } from "../test/MockWeETH.sol";
-import { MockWstETH } from "../test/MockWstETH.sol";
-import { MockOutrunWeETHSY } from "../test/MockOutrunWeETHSY.sol";
-import { MockOutrunWstETHSY } from "../test/MockOutrunWstETHSY.sol";
+import { MockUSDC } from "../test/MockUSDC.sol";
+import { MockAUSDC } from "../test/MockAUSDC.sol";
+import { MockSUSDS } from "../test/MockSUSDS.sol";
+import { MockOutrunAUSDCSY } from "../test/MockOutrunAUSDCSY.sol";
+import { MockOutrunSUSDSSY } from "../test/MockOutrunSUSDSSY.sol";
 
 contract OutstakeScript is BaseScript {
     using OptionsBuilder for bytes;
@@ -70,12 +70,12 @@ contract OutstakeScript is BaseScript {
         // _deployUETH(0);
         // _deployUUSD(0);
         // _deployUBNB(0);
-        // _deployOutrunRouter(0);
+        _deployOutrunRouter(1);
         // _updateRouterLauncher();
-        // _deployMockERC20(3);
-        // _deployMockERC20SY(2)
-        // _supportMockWeETH(7);
-        // _supportMockWstETH(7);
+        // _deployMockERC20(0);
+        // _deployMockERC20SY(0);
+        // _supportMockAUSDC(0);
+        // _supportMockSUSDS(0);
 
         // _supportBlastETH();
         // _supportBlastUSD();
@@ -272,235 +272,235 @@ contract OutstakeScript is BaseScript {
         );
         address faucetAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        salt = keccak256(abi.encodePacked("MockETH", nonce));
+        salt = keccak256(abi.encodePacked("MockUSDC", nonce));
         creationCode = abi.encodePacked(
-            type(MockETH).creationCode,
+            type(MockUSDC).creationCode,
             abi.encode(
-                "Mock ETH",
-                "ETH",
+                "Mock USDC",
+                "USDC",
                 18,
                 faucetAddr
             )
         );
-        address mockETHAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address mockUSDCAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
         
-        salt = keccak256(abi.encodePacked("MockWeETH", nonce));
+        salt = keccak256(abi.encodePacked("MockAUSDC", nonce));
         creationCode = abi.encodePacked(
-            type(MockWeETH).creationCode,
+            type(MockAUSDC).creationCode,
             abi.encode(
-                "Mock weETH",
-                "weETH",
+                "Mock aUSDC",
+                "aUSDC",
                 18,
-                mockETHAddr,
+                mockUSDCAddr,
                 faucetAddr
             )
         );
-        address mockWeETHAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address mockAUSDCAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        salt = keccak256(abi.encodePacked("MockWstETH", nonce));
+        salt = keccak256(abi.encodePacked("MockSUSDS", nonce));
         creationCode = abi.encodePacked(
-            type(MockWstETH).creationCode,
+            type(MockSUSDS).creationCode,
             abi.encode(
-                "Mock wstETH",
-                "wstETH",
+                "Mock sUSDS",
+                "sUSDS",
                 18,
-                mockETHAddr,
+                mockUSDCAddr,
                 faucetAddr
             )
         );
-        address mockWstETHAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address mockSUSDSAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        IFaucet(faucetAddr).addToken(mockETHAddr, 1000 * 1e18);
-        IFaucet(faucetAddr).addToken(mockWeETHAddr, 1000 * 1e18);
-        IFaucet(faucetAddr).addToken(mockWstETHAddr, 1000 * 1e18);
+        IFaucet(faucetAddr).addToken(mockUSDCAddr, 1000000 * 1e18);
+        IFaucet(faucetAddr).addToken(mockAUSDCAddr, 1000000 * 1e18);
+        IFaucet(faucetAddr).addToken(mockSUSDSAddr, 1000000 * 1e18);
 
         console.log("Faucet deployed on %s", faucetAddr);
-        console.log("MockETH deployed on %s", mockETHAddr);
-        console.log("MockWeETH deployed on %s", mockWeETHAddr);
-        console.log("MockWstETH deployed on %s", mockWstETHAddr);
+        console.log("MockUSDC deployed on %s", mockUSDCAddr);
+        console.log("MockAUSDC deployed on %s", mockAUSDCAddr);
+        console.log("MockSUSDS deployed on %s", mockSUSDSAddr);
     }
 
     function _deployMockERC20SY(uint256 nonce) internal {
-        bytes32 salt = keccak256(abi.encodePacked("MockOutrunWeETHSY", nonce));
+        bytes32 salt = keccak256(abi.encodePacked("MockOutrunAUSDCSY", nonce));
         bytes memory creationCode = abi.encodePacked(
-            type(MockOutrunWeETHSY).creationCode,
+            type(MockOutrunAUSDCSY).creationCode,
             abi.encode(
                 owner, 
-                vm.envAddress("MOCK_ETH"), 
-                vm.envAddress("MOCK_WEETH")
+                vm.envAddress("MOCK_USDC"), 
+                vm.envAddress("MOCK_AUSDC")
             )
         );
-        address weETHSYAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        console.log("SY_WEETH deployed on %s", weETHSYAddress);
+        address aUSDCSYAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        console.log("SY_AUSDC deployed on %s", aUSDCSYAddress);
 
-        salt = keccak256(abi.encodePacked("MockOutrunWstETHSY", nonce));
+        salt = keccak256(abi.encodePacked("MockOutrunSUSDSSY", nonce));
         creationCode = abi.encodePacked(
-            type(MockOutrunWstETHSY).creationCode,
+            type(MockOutrunSUSDSSY).creationCode,
             abi.encode(
                 owner, 
-                vm.envAddress("MOCK_ETH"), 
-                vm.envAddress("MOCK_WSTETH")
+                vm.envAddress("MOCK_USDC"), 
+                vm.envAddress("MOCK_SUSDS")
             )
         );
-        address wstETHSYAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        console.log("SY_WSTETH deployed on %s", wstETHSYAddress);
+        address sUSDSSYAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        console.log("SY_SUSDS deployed on %s", sUSDSSYAddress);
     }
 
-    // Mock Ether.Fi
-    function _supportMockWeETH(uint256 nonce) internal {
+    // Mock aUSDC
+    function _supportMockAUSDC(uint256 nonce) internal {
         // PT
-        bytes32 salt = keccak256(abi.encodePacked("Mock-PT-weETH", nonce));
+        bytes32 salt = keccak256(abi.encodePacked("Mock PT aUSDC", nonce));
         bytes memory creationCode = abi.encodePacked(
             type(OutrunPrincipalToken).creationCode,
             abi.encode(
-                "Outrun weETH Principal Token",
-                "PT weETH",
+                "Outrun aUSDC Principal Token",
+                "PT aUSDC",
                 18,
                 owner
             )
         );
-        address weETHPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address aUSDCPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
         
         // YT
-        salt = keccak256(abi.encodePacked("Mock-YT-weETH", nonce));
+        salt = keccak256(abi.encodePacked("Mock YT aUSDC", nonce));
         creationCode = abi.encodePacked(
             type(OutrunERC4626YieldToken).creationCode,
             abi.encode(
-                "Outrun weETH Yield Token",
-                "YT weETH",
+                "Outrun aUSDC Yield Token",
+                "YT aUSDC",
                 18,
                 owner, 
                 revenuePool, 
                 protocolFeeRate
             )
         );
-        address weETHYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address aUSDCYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
         
         // PYT
-        salt = keccak256(abi.encodePacked("Mock-PYT-weETH", nonce));
+        salt = keccak256(abi.encodePacked("Mock PYT aUSDC", nonce));
         creationCode = abi.encodePacked(
             type(OutrunPointsYieldToken).creationCode,
             abi.encode(
-                "Outrun weETH Points Yield Token",
-                "PYT weETH",
+                "Outrun aUSDC Points Yield Token",
+                "PYT aUSDC",
                 18,
                 owner, 
                 revenuePool, 
                 protocolFeeRate
             )
         );
-        address weETHPYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address aUSDCPYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         // SP
-        address weETHSYAddress = vm.envAddress("MOCK_WEETH_SY");
-        salt = keccak256(abi.encodePacked("Mock-SP-weETH", nonce));
+        address aUSDCSYAddress = vm.envAddress("MOCK_AUSDC_SY");
+        salt = keccak256(abi.encodePacked("Mock SP aUSDC", nonce));
         creationCode = abi.encodePacked(
             type(OutrunStakingPosition).creationCode,
             abi.encode(
                 owner,
-                "Outrun weETH Staking Position",
-                "SP weETH",
+                "Outrun aUSDC Staking Position",
+                "SP aUSDC",
                 18,
                 0,
                 protocolFeeRate,
                 revenuePool,
-                weETHSYAddress,
-                weETHPTAddress,
-                weETHYTAddress,
-                weETHPYTAddress,
-                ueth
+                aUSDCSYAddress,
+                aUSDCPTAddress,
+                aUSDCYTAddress,
+                aUSDCPYTAddress,
+                uusd
             )
         );
-        address weETHSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        IUniversalPrincipalToken(ueth).setAuthorized(weETHSPAddress, true);
-        IOutrunStakeManager(weETHSPAddress).setLockupDuration(0, 365);
-        IPrincipalToken(weETHPTAddress).initialize(weETHSPAddress);
-        IYieldToken(weETHYTAddress).initialize(weETHSYAddress, weETHSPAddress);
-        IOutrunPointsYieldToken(weETHPYTAddress).initialize(weETHSPAddress);
+        address aUSDCSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        IUniversalPrincipalToken(uusd).setAuthorized(aUSDCSPAddress, true);
+        IOutrunStakeManager(aUSDCSPAddress).setLockupDuration(0, 365);
+        IPrincipalToken(aUSDCPTAddress).initialize(aUSDCSPAddress);
+        IYieldToken(aUSDCYTAddress).initialize(aUSDCSYAddress, aUSDCSPAddress);
+        IOutrunPointsYieldToken(aUSDCPYTAddress).initialize(aUSDCSPAddress);
 
-        console.log("PT_WEETH deployed on %s", weETHPTAddress);
-        console.log("YT_WEETH deployed on %s", weETHYTAddress);
-        console.log("PYT_WEETH deployed on %s", weETHPYTAddress);
-        console.log("SP_WEETH deployed on %s", weETHSPAddress);
+        console.log("PT_AUSDC deployed on %s", aUSDCPTAddress);
+        console.log("YT_AUSDC deployed on %s", aUSDCYTAddress);
+        console.log("PYT_AUSDC deployed on %s", aUSDCPYTAddress);
+        console.log("SP_AUSDC deployed on %s", aUSDCSPAddress);
     }
 
-    // Mock Lido
-    function _supportMockWstETH(uint256 nonce) internal {
+    // Mock sUSDS
+    function _supportMockSUSDS(uint256 nonce) internal {
         // PT
-        bytes32 salt = keccak256(abi.encodePacked("Mock-PT-wstETH", nonce));
+        bytes32 salt = keccak256(abi.encodePacked("Mock PT sUSDS", nonce));
         bytes memory creationCode = abi.encodePacked(
             type(OutrunPrincipalToken).creationCode,
             abi.encode(
-                "Outrun wstETH Principal Token",
-                "PT wstETH",
+                "Outrun sUSDS Principal Token",
+                "PT sUSDS",
                 18,
                 owner
             )
         );
-        address wstETHPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address sUSDSPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         // YT
-        salt = keccak256(abi.encodePacked("Mock-YT-wstETH", nonce));
+        salt = keccak256(abi.encodePacked("Mock YT sUSDS", nonce));
         creationCode = abi.encodePacked(
             type(OutrunERC4626YieldToken).creationCode,
             abi.encode(
-                "Outrun wstETH Yield Token",
-                "YT wstETH",
+                "Outrun sUSDS Yield Token",
+                "YT sUSDS",
                 18,
                 owner, 
                 revenuePool, 
                 protocolFeeRate
             )
         );
-        address wstETHYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address sUSDSYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         // PYT
-        salt = keccak256(abi.encodePacked("Mock-PYT-wstETH", nonce));
+        salt = keccak256(abi.encodePacked("Mock PYT sUSDS", nonce));
         creationCode = abi.encodePacked(
             type(OutrunPointsYieldToken).creationCode,
             abi.encode(
-                "Outrun wstETH Points Yield Token",
-                "PYT wstETH",
+                "Outrun sUSDS Points Yield Token",
+                "PYT sUSDS",
                 18,
                 owner, 
                 revenuePool, 
                 protocolFeeRate
             )
         );
-        address wstETHPYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address sUSDSPYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         // SP
-        address wstETHSYAddress = vm.envAddress("MOCK_WSTETH_SY");
-        salt = keccak256(abi.encodePacked("Mock-SP-wstETH", nonce));
+        address sUSDSSYAddress = vm.envAddress("MOCK_SUSDS_SY");
+        salt = keccak256(abi.encodePacked("Mock SP sUSDS", nonce));
         creationCode = abi.encodePacked(
             type(OutrunStakingPosition).creationCode,
             abi.encode(
                 owner,
-                "Outrun wstETH Staking Position",
-                "SP wstETH",
+                "Outrun sUSDS Staking Position",
+                "SP sUSDS",
                 18,
                 0,
                 protocolFeeRate,
                 revenuePool,
-                wstETHSYAddress,
-                wstETHPTAddress,
-                wstETHYTAddress,
-                wstETHPYTAddress,
-                ueth
+                sUSDSSYAddress,
+                sUSDSPTAddress,
+                sUSDSYTAddress,
+                sUSDSPYTAddress,
+                uusd
             )
         );
-        address wstETHSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address sUSDSSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        IUniversalPrincipalToken(ueth).setAuthorized(wstETHSPAddress, true);
-        IOutrunStakeManager(wstETHSPAddress).setLockupDuration(0, 365);
-        IPrincipalToken(wstETHPTAddress).initialize(wstETHSPAddress);
-        IYieldToken(wstETHYTAddress).initialize(wstETHSYAddress, wstETHSPAddress);
-        IOutrunPointsYieldToken(wstETHPYTAddress).initialize(wstETHSPAddress);
+        IUniversalPrincipalToken(uusd).setAuthorized(sUSDSSPAddress, true);
+        IOutrunStakeManager(sUSDSSPAddress).setLockupDuration(0, 365);
+        IPrincipalToken(sUSDSPTAddress).initialize(sUSDSSPAddress);
+        IYieldToken(sUSDSYTAddress).initialize(sUSDSSYAddress, sUSDSSPAddress);
+        IOutrunPointsYieldToken(sUSDSPYTAddress).initialize(sUSDSSPAddress);
 
-        console.log("PT_WSTETH deployed on %s", wstETHPTAddress);
-        console.log("YT_WSTETH deployed on %s", wstETHYTAddress);
-        console.log("PYT_WSTETH deployed on %s", wstETHPYTAddress);
-        console.log("SP_WSTETH deployed on %s", wstETHSPAddress);
+        console.log("PT_SUSDS deployed on %s", sUSDSPTAddress);
+        console.log("YT_SUSDS deployed on %s", sUSDSYTAddress);
+        console.log("PYT_SUSDS deployed on %s", sUSDSPYTAddress);
+        console.log("SP_SUSDS deployed on %s", sUSDSSPAddress);
     }
 
     function _deployOutrunRouter(uint256 nonce) internal {
@@ -682,8 +682,8 @@ contract OutstakeScript is BaseScript {
                 composeMsg: abi.encode(),
                 oftCmd: abi.encode()
             });
-        MessagingFee memory messagingFee = IOFT(ueth).quoteSend(sendUPTParam, false);
-        IOFT(ueth).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
+        MessagingFee memory messagingFee = IOFT(uusd).quoteSend(sendUPTParam, false);
+        IOFT(uusd).send{value: messagingFee.nativeFee}(sendUPTParam, messagingFee, msg.sender);
     }
 
     function _updateRouterLauncher() internal {

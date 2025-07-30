@@ -1,5 +1,12 @@
 source ../.env
 
+# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url sepolia \
+#     --with-gas-price 100000000 \
+#     --optimize --optimizer-runs 100000 \
+#     --via-ir \
+#     --broadcast --ffi -vvvv \
+#     --verify
+
 forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url bsc_testnet \
     --with-gas-price 1000000000 \
     --optimize --optimizer-runs 100000 \
@@ -20,16 +27,9 @@ forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url bsc_testnet \
 #     --via-ir \
 #     --broadcast --ffi -vvvv \
 #     --verify
-
-# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url sepolia \
-#     --with-gas-price 100000000 \
-#     --optimize --optimizer-runs 100000 \
-#     --via-ir \
-#     --broadcast --ffi -vvvv \
-#     --verify
     
 # forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url avalanche_fuji \
-#     --priority-gas-price 1000000001 --with-gas-price 1000000001 \
+#     --priority-gas-price 1 --with-gas-price 2 \
 #     --optimize --optimizer-runs 100000 \
 #     --via-ir \
 #     --broadcast --ffi -vvvv \
