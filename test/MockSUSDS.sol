@@ -3,9 +3,9 @@ pragma solidity ^0.8.28;
 
 import { OutrunERC20 } from "../src/core/common/OutrunERC20.sol";
 import { TokenHelper } from "../src/core/libraries/TokenHelper.sol";
-import { IMintable } from "./MockETH.sol";
+import { IMintable } from "./MockUSDC.sol";
 
-interface IMockWstETH is IMintable {
+interface IMockSUSDS is IMintable {
     function wrap(uint256 amount) external returns (uint256);
 
     function unwrap(uint256 amount) external returns (uint256);
@@ -14,8 +14,8 @@ interface IMockWstETH is IMintable {
 /**
  * @dev Just For Memeverse Genesis Test
  */
-contract MockWstETH is IMockWstETH, OutrunERC20, TokenHelper {
-    address immutable MOCK_ETH;
+contract MockSUSDS is IMockSUSDS, OutrunERC20, TokenHelper {
+    address immutable MOCK_USDC;
 
     address public faucet;
 
@@ -23,10 +23,10 @@ contract MockWstETH is IMockWstETH, OutrunERC20, TokenHelper {
         string memory _name,
         string memory _symbol,
         uint8 _decimals,
-        address _mockETH,
+        address _mockUSDC,
         address _faucet
     ) OutrunERC20(_name, _symbol, _decimals) {
-        MOCK_ETH = _mockETH;
+        MOCK_USDC = _mockUSDC;
         faucet = _faucet;
     }
 
@@ -36,14 +36,14 @@ contract MockWstETH is IMockWstETH, OutrunERC20, TokenHelper {
     }
 
     function wrap(uint256 amount) external override returns (uint256) {
-        _transferIn(MOCK_ETH, msg.sender, amount);
+        _transferIn(MOCK_USDC, msg.sender, amount);
         _mint(msg.sender, amount);
         return amount;
     }
 
      function unwrap(uint256 amount) external override returns (uint256) {
         _burn(msg.sender, amount);
-        _transferOut(MOCK_ETH, msg.sender, amount);
+        _transferOut(MOCK_USDC, msg.sender, amount);
         return amount;
     }
 }

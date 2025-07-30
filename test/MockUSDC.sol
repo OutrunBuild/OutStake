@@ -10,7 +10,7 @@ interface IMintable {
 /**
  * @dev Just For Memeverse Genesis Test
  */
-contract MockETH is IMintable, OutrunERC20 {
+contract MockUSDC is IMintable, OutrunERC20 {
     address public faucet;
 
     constructor(
