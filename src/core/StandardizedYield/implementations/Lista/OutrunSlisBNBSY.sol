@@ -27,6 +27,7 @@ contract OutrunSlisBNBSY is SYBase {
     function updateDelegateTo(address _delegateTo) external onlyOwner {
         uint256 _totalSupply = totalSupply;
         slisBNBProvider.release(address(this), _totalSupply);
+        _safeApproveInf(yieldBearingToken, address(slisBNBProvider));
         slisBNBProvider.provide(_totalSupply, _delegateTo);
 
         address oldDelegateTo = delegateTo;
@@ -46,6 +47,7 @@ contract OutrunSlisBNBSY is SYBase {
             amountSharesOut = amountDeposited;
         }
 
+        _safeApproveInf(yieldBearingToken, address(slisBNBProvider));
         slisBNBProvider.provide(amountSharesOut, delegateTo);
     }
 
