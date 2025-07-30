@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
+// OutrunTODO Delete the Ownable when the mainnet goes live
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 import { IOutrunRouter } from "./interfaces/IOutrunRouter.sol";
@@ -8,7 +9,6 @@ import { IMemeverseLauncher } from "./interfaces/IMemeverseLauncher.sol";
 import { IStandardizedYield } from "../core/StandardizedYield/IStandardizedYield.sol";
 import { TokenHelper, IERC20, IOutrunERC6909 } from "../core/libraries/TokenHelper.sol";
 import { IOutrunStakeManager } from "../core/Position/interfaces/IOutrunStakeManager.sol";
-import { IUniversalPrincipalToken } from "../core/YieldContracts/interfaces/IUniversalPrincipalToken.sol";
 
 contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     address public memeverseLauncher;
@@ -73,6 +73,43 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         amountInRedeemed = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, doPull);
     }
 
+    /** Preview mint SP, (U)PT, YT, PYT **/
+    /**
+     * @dev Preview mint yield tokens(SP, (U)PT, YT, PYT) from yield-Bearing token
+     */
+    function previewMintYieldTokensFromToken(
+        address SY,
+        address SP,
+        address tokenIn,
+        uint256 tokenAmount,
+        StakeParam calldata stakeParam
+    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable) {
+        uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
+
+        (SPMintable, YTMintable, PTMintable, PYTMintable) = IOutrunStakeManager(SP).previewStake(
+            amountInSY, 
+            stakeParam.lockupDays,
+            stakeParam.isTypeUPT,
+            stakeParam.isSPSeparated
+        );
+    }
+
+    /**
+     * @dev Preview mint yield tokens(SP, (U)PT, YT, PYT) from SY
+     */
+    function previewMintYieldTokensFromSY(
+        address SP,
+        uint256 amountInSY,
+        StakeParam calldata stakeParam
+    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable) {
+        (SPMintable, YTMintable, PTMintable, PYTMintable) = IOutrunStakeManager(SP).previewStake(
+            amountInSY, 
+            stakeParam.lockupDays,
+            stakeParam.isTypeUPT,
+            stakeParam.isSPSeparated
+        );
+    }
+
     /** MINT SP, (U)PT, YT, PYT **/
     /**
      * @dev Mint yield tokens(SP, (U)PT, YT, PYT) from yield-Bearing token
@@ -83,11 +120,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) public payable override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
+    ) public payable override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted) {
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, 0, true);
 
         _safeApproveInf(SY, SP);
-        (positionId, SPMinted, YTMinted) = _mintYieldTokensFromSY(
+        (positionId, SPMinted, YTMinted, PTMinted, PYTMinted) = _mintYieldTokensFromSY(
             SP,
             amountInSY, 
             stakeParam
@@ -102,11 +139,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) public override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
+    ) public override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted) {
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
 
         _safeApproveInf(SY, SP);
-        (positionId, SPMinted, YTMinted) = _mintYieldTokensFromSY(
+        (positionId, SPMinted, YTMinted, PTMinted, PYTMinted) = _mintYieldTokensFromSY(
             SP,
             amountInSY, 
             stakeParam
@@ -117,8 +154,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) internal returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted) {
-        (positionId, SPMinted, YTMinted) = IOutrunStakeManager(SP).stake(
+    ) internal returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted) {
+        (positionId, SPMinted, YTMinted, PYTMinted) = IOutrunStakeManager(SP).stake(
             amountInSY, 
             stakeParam.lockupDays,
             address(this), 
@@ -130,7 +167,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
 
         if(stakeParam.isSPSeparated) {
-            IOutrunStakeManager(SP).separatePT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
+            PTMinted = IOutrunStakeManager(SP).separatePT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
         } else {
             IOutrunERC6909(SP).transfer(stakeParam.initOwner, positionId, SPMinted);
         }
@@ -147,7 +184,15 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address genesisUser,
         StakeParam calldata stakeParam
     ) external payable {
-        (, uint256 amountInUPT, ) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
+        require(
+            stakeParam.isSPSeparated && 
+            stakeParam.isTypeUPT &&
+            stakeParam.initOwner == msg.sender && 
+            stakeParam.lockupDays == 0,
+            InvalidParam()
+        );
+
+        (, , , uint256 amountInUPT, ) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
@@ -161,11 +206,20 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address genesisUser,
         StakeParam calldata stakeParam
     ) external {
-        (, uint256 amountInUPT,) = mintYieldTokensFromSY(SY, SP, amountInSY, stakeParam);
+        require(
+            stakeParam.isSPSeparated && 
+            stakeParam.isTypeUPT &&
+            stakeParam.initOwner == msg.sender && 
+            stakeParam.lockupDays == 0,
+            InvalidParam()
+        );
+
+        (, , , uint256 amountInUPT, ) = mintYieldTokensFromSY(SY, SP, amountInSY, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
 
+    // OutrunTODO Delete this function when the mainnet goes live
     function setMemeverseLauncher(address _memeverseLauncher) external override onlyOwner {
         memeverseLauncher = _memeverseLauncher;
     }

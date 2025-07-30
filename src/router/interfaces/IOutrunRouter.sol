@@ -35,6 +35,19 @@ interface IOutrunRouter {
         bool doPull
     ) external returns (uint256 amountInTokenOut);
 
+    function previewMintYieldTokensFromToken(
+        address SY,
+        address SP,
+        address tokenIn,
+        uint256 tokenAmount,
+        StakeParam calldata stakeParam
+    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable);
+
+    function previewMintYieldTokensFromSY(
+        address SP,
+        uint256 amountInSY,
+        StakeParam calldata stakeParam
+    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable);
 
     /** Mint yield tokens(SP, (U)PT, YT, PYT) **/
     function mintYieldTokensFromToken(
@@ -43,14 +56,14 @@ interface IOutrunRouter {
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) external payable returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
+    ) external payable returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted);
 
     function mintYieldTokensFromSY(
         address SY,
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted);
+    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted);
 
     /** Memeverse Genesis **/
     function genesisByToken(
@@ -75,6 +88,8 @@ interface IOutrunRouter {
     ) external;
 
     function setMemeverseLauncher(address memeverseLauncher) external;
+
+    error InvalidParam();
 
     error InsufficientSPMinted(uint256 SPMinted, uint256 minMinted);
 }
