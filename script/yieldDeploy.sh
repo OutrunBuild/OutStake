@@ -1,7 +1,7 @@
 source ../.env
 
 # forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url sepolia \
-#     --with-gas-price 100000000 \
+#     --priority-gas-price 20000000 --with-gas-price 2000000000 \
 #     --optimize --optimizer-runs 100000 \
 #     --via-ir \
 #     --broadcast --ffi -vvvv \

@@ -117,6 +117,8 @@ contract YieldDeployScript is BaseScript {
         YT_wstETH.initialize(wstETHSYAddress, wstETHSPAddress);
         PYT_wstETH.initialize(wstETHSPAddress);
 
+        IUniversalPrincipalToken(UETH).setAuthorized(wstETHSPAddress, true);
+
         console.log("SY_wstETH deployed on %s", wstETHSYAddress);
         console.log("SP_wstETH deployed on %s", wstETHSPAddress);
         console.log("PT_wstETH deployed on %s", wstETHPTAddress);
@@ -192,6 +194,8 @@ contract YieldDeployScript is BaseScript {
         PT_sUSDe.initialize(sUSDeSPAddress);
         YT_sUSDe.initialize(sUSDeSYAddress, sUSDeSPAddress);
         PYT_sUSDe.initialize(sUSDeSPAddress);
+
+        IUniversalPrincipalToken(UUSD).setAuthorized(sUSDeSPAddress, true);
 
         console.log("SY_sUSDe deployed on %s", sUSDeSYAddress);
         console.log("SP_sUSDe deployed on %s", sUSDeSPAddress);
@@ -278,6 +282,8 @@ contract YieldDeployScript is BaseScript {
         YT_aUSDC.initialize(aUSDCSYAddress, aUSDCSPAddress);
         PYT_aUSDC.initialize(aUSDCSPAddress);
 
+        IUniversalPrincipalToken(UUSD).setAuthorized(aUSDCSPAddress, true);
+
         console.log("SY_aUSDC deployed on %s", aUSDCSYAddress);
         console.log("SP_aUSDC deployed on %s", aUSDCSPAddress);
         console.log("PT_aUSDC deployed on %s", aUSDCPTAddress);
@@ -346,7 +352,7 @@ contract YieldDeployScript is BaseScript {
             slisBNBPTAddress,
             slisBNBYTAddress,
             slisBNBPYTAddress,
-            UUSD
+            UBNB
         );
         SP_slisBNB.setLockupDuration(1, 365);
         address slisBNBSPAddress = address(SP_slisBNB);
@@ -354,6 +360,8 @@ contract YieldDeployScript is BaseScript {
         PT_slisBNB.initialize(slisBNBSPAddress);
         YT_slisBNB.initialize(slisBNBSYAddress, slisBNBSPAddress);
         PYT_slisBNB.initialize(slisBNBSPAddress);
+
+        IUniversalPrincipalToken(UBNB).setAuthorized(slisBNBSPAddress, true);
 
         console.log("SY_slisBNB deployed on %s", slisBNBSYAddress);
         console.log("SP_slisBNB deployed on %s", slisBNBSPAddress);
