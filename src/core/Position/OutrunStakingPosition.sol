@@ -196,7 +196,7 @@ contract OutrunStakingPosition is
         uint256 PTMintable = calcPTAmount(principalValue, YTMinted, isTypeUPT);
         positions[positionId] = Position(amountInSY, principalValue, PTMintable, 0, SPMinted, deadline, initOwner, isTypeUPT);
         if (lockupDays != 0) IYieldToken(YT).mint(initOwner, YTMinted, !isTypeUPT);
-        // Positions of the UPT type will forgo Points yields.
+        // UPT-type positions do not mint PYT but directly distribute potential points
         if(!isTypeUPT && lockupDays != 0) {
             IOutrunPointsYieldToken(PYT).mint(initOwner, positionId, amountInSY);
             PYTMintable = amountInSY;
