@@ -13,14 +13,16 @@ interface IYieldToken {
 
 	error PermissionDenied();
 
+	error InsufficientYields();
+
 
 	function initialize(address SY, address POT) external;
 
-	function totalRedeemableYields() external view returns (uint256);
+	function totalRedeemableYields() external view returns (int256);
 
 	function previewWithdrawYields(uint256 amountInBurnedYT) external view returns (uint256 amountYieldsOut);
 
-	function accumulateYields() external returns (uint256 realTimeYield, int256 increasedYield);
+	function accumulateYields() external returns (int256 realTimeYield, int256 increasedYield);
 
 	function withdrawYields(uint256 amountInBurnedYT) external returns (uint256 amountYieldsOut);
 	
@@ -35,7 +37,7 @@ interface IYieldToken {
 	
     event SetProtocolFeeRate(uint256 protocolFeeRate);
 
-	event AccumulateYields(uint256 totalYields, int256 increasedYields, uint256 protocolFee);
+	event AccumulateYields(int256 totalYields, int256 increasedYields, uint256 protocolFee);
 
 	event WithdrawYields(address indexed account, uint256 amountYieldsOut);
 }

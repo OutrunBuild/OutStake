@@ -23,7 +23,7 @@ abstract contract OutrunYieldToken is
     address public revenuePool;
     uint256 public protocolFeeRate;
 
-    uint256 public yieldBalance;        // Withdrawable yields balance
+    int256 public yieldBalance;        // Withdrawable yields balance
     
     constructor(
         string memory _name,
@@ -52,8 +52,14 @@ abstract contract OutrunYieldToken is
      */
     function previewWithdrawYields(uint256 amountInBurnedYT) public view override returns (uint256 amountYieldsOut) {
         uint256 _totalSupply = totalSupply;
-        require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, InvalidInput());
-        amountYieldsOut = amountInBurnedYT * totalRedeemableYields() / _totalSupply;
+        int256 _totalRedeemableYields = totalRedeemableYields();
+        require(
+            _totalSupply > 0 && 
+            _totalRedeemableYields > 0 && 
+            amountInBurnedYT <= _totalSupply,
+            InvalidInput()
+        );
+        amountYieldsOut = amountInBurnedYT * uint256(_totalRedeemableYields) / _totalSupply;
     }
 
     /**
@@ -65,10 +71,11 @@ abstract contract OutrunYieldToken is
         uint256 _totalSupply = totalSupply;
         require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, InvalidInput());
         accumulateYields();
+        require(yieldBalance > 0, InsufficientYields());
 
         unchecked {
-            amountYieldsOut = yieldBalance * amountInBurnedYT / _totalSupply;
-            yieldBalance -= amountYieldsOut;
+            amountYieldsOut = uint256(yieldBalance) * amountInBurnedYT / _totalSupply;
+            yieldBalance -= int256(amountYieldsOut);
         }
 
         address msgSender = msg.sender;
@@ -122,11 +129,14 @@ abstract contract OutrunYieldToken is
 
     /**
      * @dev Total redeemable yields
+     * @return realTimeYield - The real-time accumulated yield
      */
-    function totalRedeemableYields() public view virtual override returns (uint256) {}
+    function totalRedeemableYields() public view virtual override returns (int256) {}
 
     /**
      * @dev Accumulate yields
+     * @return realTimeYield - The real-time accumulated yield
+     * @return increasedYield - The increased yield
      */
-    function accumulateYields() public virtual override returns (uint256 realTimeYield, int256 increasedYield) {}
+    function accumulateYields() public virtual override returns (int256 realTimeYield, int256 increasedYield) {}
 }

@@ -42,6 +42,7 @@ contract OutrunStakingPosition is
     uint256 public minStake;
     uint256 public syTotalStaking;
     uint256 public totalPrincipalValue;
+    uint256 public negativeYields;
     LockupDuration public lockupDuration;
 
     address public UPT;
@@ -96,6 +97,13 @@ contract OutrunStakingPosition is
     }
 
     /**
+     * @dev The total actual principal value
+     */
+    function totalActualPrincipal() external view override returns (uint256) {
+        return totalPrincipalValue - negativeYields;
+    }
+
+    /**
      * @dev Calculate PT amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
      */
     function calcPTAmount(uint256 principalValue, uint256 amountInYT, bool isTypeUPT) public view override returns (uint256 amount) {
@@ -103,9 +111,10 @@ contract OutrunStakingPosition is
             amount = principalValue;
         } else {
             uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
+            int256 totalRedeemableYields = IYieldToken(YT).totalRedeemableYields();
             uint256 yieldTokenValue = SYUtils.syToAsset(
                 IStandardizedYield(SY).exchangeRate(), 
-                Math.mulDiv(amountInYT, IYieldToken(YT).totalRedeemableYields(), newYTSupply, Math.Rounding.Ceil)
+                Math.mulDiv(amountInYT, totalRedeemableYields > 0 ? uint256(totalRedeemableYields) : 0, newYTSupply, Math.Rounding.Ceil)
             );
             amount = principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0;
         }
@@ -326,12 +335,20 @@ contract OutrunStakingPosition is
 
         _burn(SPOwner, positionId, SPBurned);
 
-        uint256 redeemedPrincipalValue = Math.mulDiv(position.initPrincipal, SPBurned, position.SPMinted);
+        uint256 _totalPrincipalValue = totalPrincipalValue;
+        uint256 redeemablePrincipalValue = _calcRedeemablePrincipalValue(
+            negativeYields, 
+            _totalPrincipalValue, 
+            position.initPrincipal, 
+            SPBurned, 
+            position.SPMinted
+        );
+
         uint256 exchangeRate = IStandardizedYield(SY).exchangeRate();
-        uint256 redeemedPrincipal = SYUtils.assetToSy(exchangeRate, redeemedPrincipalValue);
+        uint256 redeemedPrincipal = SYUtils.assetToSy(exchangeRate, redeemablePrincipalValue);
         
         unchecked {
-            totalPrincipalValue -= redeemedPrincipalValue;
+            totalPrincipalValue -= redeemablePrincipalValue;
             position.SYStaked = SYStaked - redeemedPrincipal;
         }
 
@@ -360,9 +377,19 @@ contract OutrunStakingPosition is
      * @param syAmount - Amount of protocol fee
      */
     function transferYields(address receiver, uint256 syAmount) external whenNotPaused override onlyYT {
-        require(msg.sender == YT, PermissionDenied());
         _transferSY(receiver, syAmount);
     }
+
+    /**
+     * @dev Update the negative yields, only when the total yields is negative (triggered only in extreme cases)
+     * @param _negativeYields - negativeYields
+     */
+    function updateNegativeYields(uint256 _negativeYields) external whenNotPaused override onlyYT {
+        negativeYields = _negativeYields;
+
+        emit UpdateNegativeYields(_negativeYields);
+    }
+
     function pause() external onlyOwner {
         _pause();
     }
@@ -467,15 +494,35 @@ contract OutrunStakingPosition is
 
         _burn(msg.sender, positionId, SPBurned);
 
-        uint256 redeemedPrincipalValue = Math.mulDiv(position.initPrincipal, SPBurned, position.SPMinted);
-        redeemedPrincipal = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemedPrincipalValue);
+        uint256 _totalPrincipalValue = totalPrincipalValue;
+        uint256 redeemablePrincipalValue = _calcRedeemablePrincipalValue(
+            negativeYields, 
+            _totalPrincipalValue, 
+            position.initPrincipal, 
+            SPBurned, 
+            position.SPMinted
+        );
+        redeemedPrincipal = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue);
         
         unchecked {
-            totalPrincipalValue -= redeemedPrincipalValue;
+            totalPrincipalValue = _totalPrincipalValue - redeemablePrincipalValue;
             position.SYStaked = SYStaked - redeemedPrincipal;
         }
 
         _transferSY(receiver, redeemedPrincipal);
+    }
+
+    function _calcRedeemablePrincipalValue(
+        uint256 _negativeYields,
+        uint256 _totalPrincipalValue,
+        uint256 _initPositionPrincipal, 
+        uint256 _SPBurned, 
+        uint256 _SPMinted
+    ) internal pure returns (uint256 redeemablePrincipalValue) {
+        uint256 actualPositionPrincipal = _negativeYields > 0
+            ? Math.mulDiv(_initPositionPrincipal, _totalPrincipalValue - _negativeYields, _totalPrincipalValue)
+            : _initPositionPrincipal;
+        redeemablePrincipalValue = Math.mulDiv(actualPositionPrincipal, _SPBurned, _SPMinted);
     }
 
     function _transferSY(address receiver, uint256 syAmount) internal {

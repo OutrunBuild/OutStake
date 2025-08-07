@@ -7,7 +7,7 @@ pragma solidity ^0.8.28;
 interface IOutrunStakeManager {
     struct Position {
         uint256 SYStaked;               // Amount of SY staked
-        uint256 initPrincipal;          // The initial principal value
+        uint256 initPrincipal;          // Initial principal value, non-redeemable actual principal
         uint256 PTMintable;             // Amount of PT mintable
         uint256 PTMinted;               // Amount of PT minted
         uint256 SPMinted;               // Amount of SP minted
@@ -47,6 +47,8 @@ interface IOutrunStakeManager {
     function syTotalStaking() external view returns (uint256);
 
     function totalPrincipalValue() external view returns (uint256);
+
+    function totalActualPrincipal() external view returns (uint256);
 
     function averageStakingDays() external view returns (uint256);
 
@@ -101,6 +103,8 @@ interface IOutrunStakeManager {
     ) external;
 
     function transferYields(address receiver, uint256 syAmount) external;
+
+    function updateNegativeYields(uint256 negativeYields) external;
 
     function setLockupDuration(uint128 minLockupDays, uint128 maxLockupDays) external;
 
@@ -163,6 +167,8 @@ interface IOutrunStakeManager {
         uint256 redeemedPrincipal, 
         uint256 liquidatorPrincipal
     );
+
+    event UpdateNegativeYields(uint256 negativeYields);
 
     event SetLockupDuration(uint128 minLockupDays, uint128 maxLockupDays);
 
