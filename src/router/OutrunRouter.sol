@@ -73,9 +73,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         amountInRedeemed = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, doPull);
     }
 
-    /** Preview mint SP, (U)PT, YT, PYT **/
+    /** Preview mint SP, UPT, YT **/
     /**
-     * @dev Preview mint yield tokens(SP, (U)PT, YT, PYT) from yield-Bearing token
+     * @dev Preview mint yield tokens(SP, UPT, YT) from yield-Bearing token
      */
     function previewMintYieldTokensFromToken(
         address SY,
@@ -83,36 +83,34 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable) {
+    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 UPTMintable) {
         uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
 
-        (SPMintable, YTMintable, PTMintable, PYTMintable) = IOutrunStakeManager(SP).previewStake(
+        (SPMintable, YTMintable, UPTMintable) = IOutrunStakeManager(SP).previewStake(
             amountInSY, 
             stakeParam.lockupDays,
-            stakeParam.isTypeUPT,
             stakeParam.isSPSeparated
         );
     }
 
     /**
-     * @dev Preview mint yield tokens(SP, (U)PT, YT, PYT) from SY
+     * @dev Preview mint yield tokens(SP, UPT, YT) from SY
      */
     function previewMintYieldTokensFromSY(
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable) {
-        (SPMintable, YTMintable, PTMintable, PYTMintable) = IOutrunStakeManager(SP).previewStake(
+    ) external view override returns (uint256 SPMintable, uint256 YTMintable, uint256 UPTMintable) {
+        (SPMintable, YTMintable, UPTMintable) = IOutrunStakeManager(SP).previewStake(
             amountInSY, 
             stakeParam.lockupDays,
-            stakeParam.isTypeUPT,
             stakeParam.isSPSeparated
         );
     }
 
-    /** MINT SP, (U)PT, YT, PYT **/
+    /** MINT SP, UPT, YT **/
     /**
-     * @dev Mint yield tokens(SP, (U)PT, YT, PYT) from yield-Bearing token
+     * @dev Mint yield tokens(SP, UPT, YT) from yield-Bearing token
      */
     function mintYieldTokensFromToken(
         address SY,
@@ -120,11 +118,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) public payable override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted) {
-        uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, 0, true);
+    ) public payable override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 UPTMinted) {
+        uint128 amountInSY = uint128(_mintSY(SY, tokenIn, address(this), tokenAmount, 0, true));
 
         _safeApproveInf(SY, SP);
-        (positionId, SPMinted, YTMinted, PTMinted, PYTMinted) = _mintYieldTokensFromSY(
+        (positionId, SPMinted, YTMinted, UPTMinted) = _mintYieldTokensFromSY(
             SP,
             amountInSY, 
             stakeParam
@@ -132,18 +130,18 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     }
 
     /**
-     * @dev Mint yield tokens(SP, (U)PT, YT, PYT) by staking SY
+     * @dev Mint yield tokens(SP, UPT, YT) by staking SY
      */
     function mintYieldTokensFromSY(
         address SY,
         address SP,
-        uint256 amountInSY,
+        uint128 amountInSY,
         StakeParam calldata stakeParam
-    ) public override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted) {
+    ) public override returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 UPTMinted) {
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
 
         _safeApproveInf(SY, SP);
-        (positionId, SPMinted, YTMinted, PTMinted, PYTMinted) = _mintYieldTokensFromSY(
+        (positionId, SPMinted, YTMinted, UPTMinted) = _mintYieldTokensFromSY(
             SP,
             amountInSY, 
             stakeParam
@@ -152,22 +150,21 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
     function _mintYieldTokensFromSY(
         address SP,
-        uint256 amountInSY,
+        uint128 amountInSY,
         StakeParam calldata stakeParam
-    ) internal returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted) {
-        (positionId, SPMinted, YTMinted, PYTMinted) = IOutrunStakeManager(SP).stake(
+    ) internal returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 UPTMinted) {
+        (positionId, SPMinted, YTMinted) = IOutrunStakeManager(SP).stake(
             amountInSY, 
             stakeParam.lockupDays,
             address(this), 
-            stakeParam.initOwner,
-            stakeParam.isTypeUPT
+            stakeParam.initOwner
         );
 
         uint256 minSPMinted = stakeParam.minSPMinted;
         require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
 
         if(stakeParam.isSPSeparated) {
-            PTMinted = IOutrunStakeManager(SP).separatePT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
+            UPTMinted = IOutrunStakeManager(SP).separateUPT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
         } else {
             IOutrunERC6909(SP).transfer(stakeParam.initOwner, positionId, SPMinted);
         }
@@ -186,13 +183,12 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     ) external payable {
         require(
             stakeParam.isSPSeparated && 
-            stakeParam.isTypeUPT &&
             stakeParam.initOwner == msg.sender && 
             stakeParam.lockupDays == 0,
             InvalidParam()
         );
 
-        (, , , uint256 amountInUPT, ) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
+        (, , , uint256 amountInUPT) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
@@ -201,20 +197,19 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address SY,
         address SP,
         address UPT,
-        uint256 amountInSY,
+        uint128 amountInSY,
         uint256 verseId,
         address genesisUser,
         StakeParam calldata stakeParam
     ) external {
         require(
             stakeParam.isSPSeparated && 
-            stakeParam.isTypeUPT &&
             stakeParam.initOwner == msg.sender && 
             stakeParam.lockupDays == 0,
             InvalidParam()
         );
 
-        (, , , uint256 amountInUPT, ) = mintYieldTokensFromSY(SY, SP, amountInSY, stakeParam);
+        (, , , uint256 amountInUPT) = mintYieldTokensFromSY(SY, SP, amountInSY, stakeParam);
         _safeApproveInf(UPT, memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }

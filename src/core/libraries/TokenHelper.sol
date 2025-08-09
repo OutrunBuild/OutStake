@@ -5,9 +5,10 @@ import { SafeERC20, IERC20 } from "@openzeppelin/contracts/token/ERC20/utils/Saf
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import { IWETH } from "../../external/IWETH.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 import { IOutrunERC6909 } from "../common/IOutrunERC6909.sol";
 
-abstract contract TokenHelper {
+abstract contract TokenHelper is ReentrancyGuard{
     using SafeERC20 for IERC20;
 
     address internal constant NATIVE = address(0);
@@ -26,7 +27,7 @@ abstract contract TokenHelper {
         if (amount != 0) token.transferFrom(from, to, id, amount);
     }
 
-    function _transferOut(address token, address to, uint256 amount) internal {
+    function _transferOut(address token, address to, uint256 amount) internal nonReentrant {
         if (amount == 0) return;
         if (token == NATIVE) {
             (bool success, ) = to.call{value: amount}("");

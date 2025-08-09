@@ -28,7 +28,7 @@ abstract contract RewardManager is RewardManagerAbstract {
 
             _redeemExternalReward();
 
-            for (uint256 i = 0; i < tokens.length; ++i) {
+            for (uint256 i = 0; i < tokens.length;) {
                 address token = tokens[i];
 
                 // the entire token balance of the contract must be the rewards of the contract
@@ -42,10 +42,13 @@ abstract contract RewardManager is RewardManagerAbstract {
 
                 rewardState[token] = RewardState({index: index.Uint128(), lastBalance: (lastBalance + accrued).Uint128()});
                 indexes[i] = index;
+
+                unchecked { i++; }
             }
         } else {
-            for (uint256 i = 0; i < tokens.length; i++) {
+            for (uint256 i = 0; i < tokens.length;) {
                 indexes[i] = rewardState[tokens[i]].index;
+                unchecked { i++; }
             }
         }
     }
@@ -57,13 +60,16 @@ abstract contract RewardManager is RewardManagerAbstract {
     function _doTransferOutRewards(address user, address receiver) internal virtual override returns (uint256[] memory rewardAmounts) {
         address[] memory tokens = _getRewardTokens();
         rewardAmounts = new uint256[](tokens.length);
-        for (uint256 i = 0; i < tokens.length; i++) {
+        for (uint256 i = 0; i < tokens.length;) {
             rewardAmounts[i] = userReward[tokens[i]][user].accrued;
+
             if (rewardAmounts[i] != 0) {
                 userReward[tokens[i]][user].accrued = 0;
                 rewardState[tokens[i]].lastBalance -= rewardAmounts[i].Uint128();
                 _transferOut(tokens[i], receiver, rewardAmounts[i]);
             }
+
+            unchecked { i++; }
         }
     }
 

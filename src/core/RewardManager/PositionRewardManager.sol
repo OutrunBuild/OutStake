@@ -23,11 +23,13 @@ abstract contract PositionRewardManager is IPositionRewardManager {
 
     function _updatePositionRewards(uint256 positionId, uint256 rewardShares) internal virtual {
         (address[] memory tokens, uint256[] memory indexes) = _updateRewardIndex();
-        if (tokens.length == 0) return;
+        uint256 len = tokens.length;
+        if (len == 0) return;
 
-        for (uint256 i = 0; i < tokens.length; ++i) {
+        for (uint256 i = 0; i < len;) {
             address token = tokens[i];
             uint256 index = indexes[i];
+            unchecked { i++; }
             PositionReward storage rewardOfPosition = positionReward[token][positionId];
             uint256 positionIndex = rewardOfPosition.index;
 

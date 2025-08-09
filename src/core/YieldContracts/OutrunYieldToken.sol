@@ -4,15 +4,18 @@ pragma solidity ^0.8.28;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
+import { OutrunERC20 } from "../common/OutrunERC20.sol";
 import { IYieldToken } from "./interfaces/IYieldToken.sol";
 import { Initializable } from "../libraries/Initializable.sol";
 import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { IOutrunStakeManager } from "../Position/interfaces/IOutrunStakeManager.sol";
-import { OutrunERC20, OutrunERC20DualBalance } from "../common/OutrunERC20DualBalance.sol";
 
+/**
+ * @dev Outrun Yield Token, non-transferable.
+ */
 abstract contract OutrunYieldToken is 
     IYieldToken, 
-    OutrunERC20DualBalance, 
+    OutrunERC20, 
     ReentrancyGuard, 
     Pausable, 
     Initializable, 
@@ -21,7 +24,7 @@ abstract contract OutrunYieldToken is
     address public SY;
     address public SP;
     address public revenuePool;
-    uint256 public protocolFeeRate;
+    uint96 public protocolFeeRate;
 
     int256 public yieldBalance;        // Withdrawable yields balance
     
@@ -30,7 +33,7 @@ abstract contract OutrunYieldToken is
         string memory _symbol,
         uint8 _decimals,
         address _revenuePool,
-        uint256 _protocolFeeRate
+        uint96 _protocolFeeRate
     ) OutrunERC20(_name, _symbol, _decimals) {
         revenuePool = _revenuePool;
         protocolFeeRate = _protocolFeeRate;
@@ -86,13 +89,12 @@ abstract contract OutrunYieldToken is
     }
 
     /**
-     * @dev Only positionOptionContract can mint when the user stake native yield token
+     * @dev Only SP Contract can mint when the user stake native yield token
      * @param account - Address who receive YT 
      * @param amount - The amount of minted YT
-     * @param transferable - Is the minted token transferable?
      */
-    function mint(address account, uint256 amount, bool transferable) external override whenNotPaused onlySP {
-        _mint(account, amount, transferable);
+    function mint(address account, uint256 amount) external override whenNotPaused onlySP {
+        _mint(account, amount);
     }
 
     /**
@@ -108,7 +110,7 @@ abstract contract OutrunYieldToken is
     /**
      * @param _protocolFeeRate - Protocol fee rate
      */
-    function setProtocolFeeRate(uint256 _protocolFeeRate) public override onlyOwner {
+    function setProtocolFeeRate(uint96 _protocolFeeRate) public override onlyOwner {
         require(_protocolFeeRate <= 1e18, FeeRateOverflow());
 
         protocolFeeRate = _protocolFeeRate;
@@ -125,6 +127,18 @@ abstract contract OutrunYieldToken is
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function approve(address /*spender*/, uint256 /*value*/) external virtual override returns (bool) {
+        revert NonApprovable();
+    }
+
+    function transfer(address /*to*/, uint256 /*value*/) external virtual override returns (bool) {
+        revert NonTransferable();
+    }
+
+    function transferFrom(address /*from*/, address /*to*/, uint256 /*value*/) external virtual override returns (bool) {
+        revert NonTransferable();
     }
 
     /**

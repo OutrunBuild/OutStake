@@ -9,6 +9,10 @@ interface IYieldToken {
 
 	error InvalidInput();
 
+	error NonApprovable();
+
+	error NonTransferable();
+
 	error FeeRateOverflow();
 
 	error PermissionDenied();
@@ -26,16 +30,16 @@ interface IYieldToken {
 
 	function withdrawYields(uint256 amountInBurnedYT) external returns (uint256 amountYieldsOut);
 	
-	function mint(address account, uint256 amount, bool transferable) external;
+	function mint(address account, uint256 amount) external;
 
 	function setRevenuePool(address revenuePool) external;
 
-    function setProtocolFeeRate(uint256 protocolFeeRate) external;
+    function setProtocolFeeRate(uint96 protocolFeeRate) external;
 
 
 	event SetRevenuePool(address revenuePool);
 	
-    event SetProtocolFeeRate(uint256 protocolFeeRate);
+    event SetProtocolFeeRate(uint96 protocolFeeRate);
 
 	event AccumulateYields(int256 totalYields, int256 increasedYields, uint256 protocolFee);
 

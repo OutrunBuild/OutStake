@@ -54,7 +54,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * - `to` cannot be the zero address.
      * - the caller must have a balance of at least `value`.
      */
-    function transfer(address to, uint256 value) external override returns (bool) {
+    function transfer(address to, uint256 value) external virtual override returns (bool) {
         address owner = _msgSender();
         _transfer(owner, to, value);
         return true;
@@ -70,7 +70,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      *
      * - `spender` cannot be the zero address.
      */
-    function approve(address spender, uint256 value) external override returns (bool) {
+    function approve(address spender, uint256 value) external virtual override returns (bool) {
         address owner = _msgSender();
         _approve(owner, spender, value);
         return true;
@@ -92,7 +92,7 @@ contract OutrunERC20 is Context, IERC20, IERC20Metadata, IERC20Errors {
      * - the caller must have allowance for ``from``'s tokens of at least
      * `value`.
      */
-    function transferFrom(address from, address to, uint256 value) external override returns (bool) {
+    function transferFrom(address from, address to, uint256 value) external virtual override returns (bool) {
         address spender = _msgSender();
         _spendAllowance(from, spender, value);
         _transfer(from, to, value);

@@ -9,11 +9,10 @@ interface IOutrunRouter {
     }
 
     struct StakeParam {
-        uint256 lockupDays;
-        uint256 minSPMinted;
+        uint128 lockupDays;
+        uint128 minSPMinted;
         address initOwner;
         bool isSPSeparated;
-        bool isTypeUPT;
     }
 
     /** MINT/REDEEM SY **/
@@ -41,29 +40,29 @@ interface IOutrunRouter {
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable);
+    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable);
 
     function previewMintYieldTokensFromSY(
         address SP,
         uint256 amountInSY,
         StakeParam calldata stakeParam
-    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable);
+    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable);
 
-    /** Mint yield tokens(SP, (U)PT, YT, PYT) **/
+    /** Mint yield tokens(SP, UPT, YT) **/
     function mintYieldTokensFromToken(
         address SY,
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         StakeParam calldata stakeParam
-    ) external payable returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted);
+    ) external payable returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted);
 
     function mintYieldTokensFromSY(
         address SY,
         address SP,
-        uint256 amountInSY,
+        uint128 amountInSY,
         StakeParam calldata stakeParam
-    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted, uint256 PYTMinted);
+    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted);
 
     /** Memeverse Genesis **/
     function genesisByToken(
@@ -81,7 +80,7 @@ interface IOutrunRouter {
         address SY,
         address SP,
         address UPT,
-        uint256 amountInSY,
+        uint128 amountInSY,
         uint256 verseId,
         address genesisUser,
         StakeParam calldata stakeParam

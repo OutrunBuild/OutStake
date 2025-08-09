@@ -6,14 +6,13 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ArrayLib } from "../libraries/ArrayLib.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { IStandardizedYield } from "./IStandardizedYield.sol";
-import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
 import { OutrunERC20, IERC20Metadata } from "../common/OutrunERC20.sol";
 import { OutrunERC20Pausable } from "../common/OutrunERC20Pausable.sol";
 
 /**
  * @dev Standardized Yield Base Contract
  */
-abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper, ReentrancyGuard {
+abstract contract SYBase is IStandardizedYield, OutrunERC20Pausable, TokenHelper {
     address public immutable yieldBearingToken;
 
     constructor(

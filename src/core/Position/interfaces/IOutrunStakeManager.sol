@@ -6,14 +6,13 @@ pragma solidity ^0.8.28;
  */
 interface IOutrunStakeManager {
     struct Position {
-        uint256 SYStaked;               // Amount of SY staked
-        uint256 initPrincipal;          // Initial principal value, non-redeemable actual principal
-        uint256 PTMintable;             // Amount of PT mintable
-        uint256 PTMinted;               // Amount of PT minted
-        uint256 SPMinted;               // Amount of SP minted
-        uint256 deadline;               // Position unlock time
+        uint128 SYStaked;               // Amount of SY staked
+        uint128 deadline;               // Position unlock time
+        uint128 UPTMinted;               // Amount of UPT minted
+        uint128 UPTMintable;             // Amount of UPT mintable
+        uint128 initPrincipal;          // Initial principal value, non-redeemable actual principal
+        uint128 SPMinted;               // Amount of SP minted
         address initOwner;              // Address of init staker(For redeem reward)
-        bool isTypeUPT;                 // Is the PT type UPT?
     }
 
     struct LockupDuration {
@@ -24,8 +23,6 @@ interface IOutrunStakeManager {
     error ZeroInput();
 
     error ErrorInput();
-
-    error NotUPTPosition();
 
     error FeeRateOverflow();
 
@@ -44,22 +41,21 @@ interface IOutrunStakeManager {
     error InvalidLockupDays(uint256 minLockupDays, uint256 maxLockupDays);
 
 
-    function syTotalStaking() external view returns (uint256);
+    function syTotalStaking() external view returns (uint128);
 
-    function totalPrincipalValue() external view returns (uint256);
+    function totalPrincipalValue() external view returns (uint128);
 
     function totalActualPrincipal() external view returns (uint256);
 
     function averageStakingDays() external view returns (uint256);
 
-    function calcPTAmount(uint256 principalValue, uint256 amountInYT, bool isTypeUPT) external view returns (uint256 amount);
+    function calcUPTAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 amount);
 
     function previewStake(
         uint256 amountInSY, 
         uint256 lockupDays,
-        bool isTypeUPT,
         bool isSPSeparated
-    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable, uint256 PYTMintable);
+    ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 UPTMintable);
     
     function previewRedeem(
         uint256 positionId, 
@@ -67,21 +63,20 @@ interface IOutrunStakeManager {
     ) external view returns (uint256 redeemableSyAmount);
 
     function stake(
-        uint256 amountInSY,
-        uint256 lockupDays,
+        uint128 amountInSY,
+        uint128 lockupDays,
         address SPRecipient,
-        address initOwner,
-        bool isTypeUPT
-    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PYTMintable);
+        address initOwner
+    ) external returns (uint256 positionId, uint128 SPMinted, uint128 YTMinted);
 
-    function separatePT(
+    function separateUPT(
         uint256 positionId, 
         uint256 SPAmount, 
         address SPRecipient, 
-        address PTRecipient
-    ) external returns (uint256 PTAmount);
+        address UPTRecipient
+    ) external returns (uint128 UPTAmount);
 
-    function encapsulatePT(uint256 positionId, uint256 SPAmount) external returns (uint256 PTBurned);
+    function encapsulateUPT(uint256 positionId, uint256 SPAmount) external returns (uint256 UPTBurned);
 
     function redeemPrincipalFromSP(
         address receiver, 
@@ -89,11 +84,11 @@ interface IOutrunStakeManager {
         uint256 SPBurned
     ) external returns (uint256 redeemedPrincipal);
 
-    function redeemPrincipalFromNSPAndPT(
+    function redeemPrincipalFromNSPAndUPT(
         address receiver, 
         uint256 positionId, 
         uint256 SPBurned
-    ) external returns (uint256 PTBurned, uint256 redeemedPrincipal);
+    ) external returns (uint256 UPTBurned, uint256 redeemedPrincipal);
 
     function redeemLiquidate(
         address SPOwner,
@@ -116,7 +111,7 @@ interface IOutrunStakeManager {
 
     function setLiquidator(address liquidator) external;
 
-    function setProtocolFeeRate(uint256 protocolFeeRate) external;
+    function setProtocolFeeRate(uint96 protocolFeeRate) external;
 
 
     event Stake(
@@ -126,23 +121,22 @@ interface IOutrunStakeManager {
         uint256 SPMinted,
         uint256 YTMinted,
         uint256 deadline,
-        address indexed initOwner,
-        bool indexed isTypeUPT
+        address indexed initOwner
     );
 
-    event SeparatePT(
+    event SeparateUPT(
         uint256 indexed positionId, 
         uint256 transferableSPAmount,
-        uint256 PTAmount,
+        uint256 UPTAmount,
         address indexed SPRecipient, 
-        address indexed PTRecipient
+        address indexed UPTRecipient
     );
 
-    event EncapsulatePT(
+    event EncapsulateUPT(
         address indexed sender, 
         uint256 indexed positionId, 
         uint256 nonTransferableSPAmount,
-        uint256 PTBurned
+        uint256 UPTBurned
     );
 
     event RedeemPrincipalFromSP(
@@ -152,11 +146,11 @@ interface IOutrunStakeManager {
         uint256 SPBurned
     );
 
-    event RedeemPrincipalFromNSPAndPT(
+    event RedeemPrincipalFromNSPAndUPT(
         uint256 indexed positionId, 
         address indexed account, 
         uint256 SPBurned, 
-        uint256 PTBurned, 
+        uint256 UPTBurned, 
         uint256 redeemedPrincipal
     );
 
@@ -180,5 +174,5 @@ interface IOutrunStakeManager {
 
     event SetLiquidator(address liquidator);
 
-    event SetProtocolFeeRate(uint256 protocolFeeRate);
+    event SetProtocolFeeRate(uint96 protocolFeeRate);
 }

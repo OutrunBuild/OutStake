@@ -11,11 +11,9 @@ import { OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { OutrunRouter, IOutrunRouter } from "../src/router/OutrunRouter.sol";
 import { IYieldToken } from "../src/core/YieldContracts/interfaces/IYieldToken.sol";
 import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
-import { IOutrunStakeManager, OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
-import { IPrincipalToken, OutrunPrincipalToken } from "../src/core/YieldContracts/OutrunPrincipalToken.sol";
+import { IOutrunStakeManager, OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
 import { OutrunUniversalPrincipalToken, IUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
-import { IOutrunPointsYieldToken, OutrunPointsYieldToken } from "../src/core/YieldContracts/OutrunPointsYieldToken.sol";
 
 import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
 import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastUSDSY.sol";
@@ -44,7 +42,7 @@ contract OutstakeScript is BaseScript {
     address internal outrunRouter;
     address internal memeverseLauncher;
 
-    uint256 internal protocolFeeRate;
+    uint96 internal protocolFeeRate;
 
     mapping(uint32 chainId => address) public endpoints;
     mapping(uint32 chainId => uint32) public endpointIds;
@@ -57,7 +55,7 @@ contract OutstakeScript is BaseScript {
         revenuePool = vm.envAddress("REVENUE_POOL");
         liquidator = vm.envAddress("LIQUIDATOR");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
-        protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
+        protocolFeeRate = uint96(vm.envUint("PROTOCOL_FEE_RATE"));
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
         outrunRouter = vm.envAddress("OUTRUN_ROUTER");
         memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
@@ -76,9 +74,6 @@ contract OutstakeScript is BaseScript {
         // _deployMockERC20SY(0);
         // _supportMockAUSDC(0);
         // _supportMockSUSDS(0);
-
-        // _supportBlastETH();
-        // _supportBlastUSD();
     }
 
     function _deployOutrunDeployer(uint256 nonce) internal {
@@ -348,22 +343,9 @@ contract OutstakeScript is BaseScript {
 
     // Mock aUSDC
     function _supportMockAUSDC(uint256 nonce) internal {
-        // PT
-        bytes32 salt = keccak256(abi.encodePacked("Mock PT aUSDC", nonce));
-        bytes memory creationCode = abi.encodePacked(
-            type(OutrunPrincipalToken).creationCode,
-            abi.encode(
-                "Outrun aUSDC Principal Token",
-                "PT aUSDC",
-                18,
-                owner
-            )
-        );
-        address aUSDCPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        
         // YT
-        salt = keccak256(abi.encodePacked("Mock YT aUSDC", nonce));
-        creationCode = abi.encodePacked(
+        bytes32 salt = keccak256(abi.encodePacked("Mock YT aUSDC", nonce));
+        bytes memory creationCode = abi.encodePacked(
             type(OutrunERC4626YieldToken).creationCode,
             abi.encode(
                 "Outrun aUSDC Yield Token",
@@ -375,21 +357,6 @@ contract OutstakeScript is BaseScript {
             )
         );
         address aUSDCYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-        
-        // PYT
-        salt = keccak256(abi.encodePacked("Mock PYT aUSDC", nonce));
-        creationCode = abi.encodePacked(
-            type(OutrunPointsYieldToken).creationCode,
-            abi.encode(
-                "Outrun aUSDC Points Yield Token",
-                "PYT aUSDC",
-                18,
-                owner, 
-                revenuePool, 
-                protocolFeeRate
-            )
-        );
-        address aUSDCPYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         // SP
         address aUSDCSYAddress = vm.envAddress("MOCK_AUSDC_SY");
@@ -405,43 +372,25 @@ contract OutstakeScript is BaseScript {
                 protocolFeeRate,
                 revenuePool,
                 aUSDCSYAddress,
-                aUSDCPTAddress,
                 aUSDCYTAddress,
-                aUSDCPYTAddress,
                 uusd
             )
         );
         address aUSDCSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+
         IUniversalPrincipalToken(uusd).setAuthorized(aUSDCSPAddress, true);
         IOutrunStakeManager(aUSDCSPAddress).setLockupDuration(0, 365);
-        IPrincipalToken(aUSDCPTAddress).initialize(aUSDCSPAddress);
         IYieldToken(aUSDCYTAddress).initialize(aUSDCSYAddress, aUSDCSPAddress);
-        IOutrunPointsYieldToken(aUSDCPYTAddress).initialize(aUSDCSPAddress);
 
-        console.log("PT_AUSDC deployed on %s", aUSDCPTAddress);
-        console.log("YT_AUSDC deployed on %s", aUSDCYTAddress);
-        console.log("PYT_AUSDC deployed on %s", aUSDCPYTAddress);
         console.log("SP_AUSDC deployed on %s", aUSDCSPAddress);
+        console.log("YT_AUSDC deployed on %s", aUSDCYTAddress);
     }
 
     // Mock sUSDS
     function _supportMockSUSDS(uint256 nonce) internal {
-        // PT
-        bytes32 salt = keccak256(abi.encodePacked("Mock PT sUSDS", nonce));
-        bytes memory creationCode = abi.encodePacked(
-            type(OutrunPrincipalToken).creationCode,
-            abi.encode(
-                "Outrun sUSDS Principal Token",
-                "PT sUSDS",
-                18,
-                owner
-            )
-        );
-        address sUSDSPTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-
         // YT
-        salt = keccak256(abi.encodePacked("Mock YT sUSDS", nonce));
-        creationCode = abi.encodePacked(
+        bytes32 salt = keccak256(abi.encodePacked("Mock YT sUSDS", nonce));
+        bytes memory creationCode = abi.encodePacked(
             type(OutrunERC4626YieldToken).creationCode,
             abi.encode(
                 "Outrun sUSDS Yield Token",
@@ -453,21 +402,6 @@ contract OutstakeScript is BaseScript {
             )
         );
         address sUSDSYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-
-        // PYT
-        salt = keccak256(abi.encodePacked("Mock PYT sUSDS", nonce));
-        creationCode = abi.encodePacked(
-            type(OutrunPointsYieldToken).creationCode,
-            abi.encode(
-                "Outrun sUSDS Points Yield Token",
-                "PYT sUSDS",
-                18,
-                owner, 
-                revenuePool, 
-                protocolFeeRate
-            )
-        );
-        address sUSDSPYTAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         // SP
         address sUSDSSYAddress = vm.envAddress("MOCK_SUSDS_SY");
@@ -483,9 +417,7 @@ contract OutstakeScript is BaseScript {
                 protocolFeeRate,
                 revenuePool,
                 sUSDSSYAddress,
-                sUSDSPTAddress,
                 sUSDSYTAddress,
-                sUSDSPYTAddress,
                 uusd
             )
         );
@@ -493,14 +425,10 @@ contract OutstakeScript is BaseScript {
 
         IUniversalPrincipalToken(uusd).setAuthorized(sUSDSSPAddress, true);
         IOutrunStakeManager(sUSDSSPAddress).setLockupDuration(0, 365);
-        IPrincipalToken(sUSDSPTAddress).initialize(sUSDSSPAddress);
         IYieldToken(sUSDSYTAddress).initialize(sUSDSSYAddress, sUSDSSPAddress);
-        IOutrunPointsYieldToken(sUSDSPYTAddress).initialize(sUSDSSPAddress);
 
-        console.log("PT_SUSDS deployed on %s", sUSDSPTAddress);
-        console.log("YT_SUSDS deployed on %s", sUSDSYTAddress);
-        console.log("PYT_SUSDS deployed on %s", sUSDSPYTAddress);
         console.log("SP_SUSDS deployed on %s", sUSDSSPAddress);
+        console.log("YT_SUSDS deployed on %s", sUSDSYTAddress);
     }
 
     function _deployOutrunRouter(uint256 nonce) internal {
@@ -512,162 +440,6 @@ contract OutstakeScript is BaseScript {
         address outrunRouterAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         console.log("OutrunRouter deployed on %s", outrunRouterAddr);
-    }
-
-    /**
-     * Support Blast ETH 
-     */
-    function _supportBlastETH() internal {
-        if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
-
-        address WETH = vm.envAddress("TESTNET_WETH");
- 
-        // SY
-        OutrunBlastETHSY SY_BETH = new OutrunBlastETHSY(
-            WETH,
-            owner,
-            blastGovernor
-        );
-        address BETHSYAddress = address(SY_BETH);
-
-        // PT
-        OutrunPrincipalToken PT_BETH = new OutrunPrincipalToken(
-            "Outrun BETH Principal Token",
-            "PT BETH",
-            18,
-            owner
-        );
-        address BETHPTAddress = address(PT_BETH);
-        
-        // YT
-        OutrunERC4626YieldToken YT_BETH = new OutrunERC4626YieldToken(
-            "Outrun Blast ETH Yield Token",
-            "YT BETH",
-            18,
-            owner, 
-            revenuePool, 
-            protocolFeeRate
-        );
-        address BETHYTAddress = address(YT_BETH);
-
-        // PYT
-        OutrunPointsYieldToken PYT_BETH = new OutrunPointsYieldToken(
-            "Outrun Blast ETH Points Yield Token",
-            "PYT BETH",
-            18,
-            owner
-        );
-        address BETHPYTAddress = address(PYT_BETH);
-
-        // SP
-        OutrunStakingPosition SP_BETH = new OutrunStakingPosition(
-            owner,
-            "Blast ETH Staking Position",
-            "SP BETH",
-            18,
-            0,
-            protocolFeeRate,
-            revenuePool,
-            liquidator,
-            BETHSYAddress,
-            BETHPTAddress,
-            BETHYTAddress,
-            BETHPYTAddress,
-            ueth
-        );
-        SP_BETH.setLockupDuration(1, 365);
-        address BETHSPAddress = address(SP_BETH);
-
-        PT_BETH.initialize(BETHSPAddress);
-        YT_BETH.initialize(BETHSYAddress, BETHSPAddress);
-        PYT_BETH.initialize(BETHSPAddress);
-
-        // After deploy, configure the yield and gas mode
-        // IBlastGovernorable(SY_BETH).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
-
-        console.log("SY_BETH deployed on %s", BETHSYAddress);
-        console.log("PT_BETH deployed on %s", BETHPTAddress);
-        console.log("YT_BETH deployed on %s", BETHYTAddress);
-        console.log("PYT_BETH deployed on %s", BETHPYTAddress);
-        console.log("SP_BETH deployed on %s", BETHSPAddress);
-    }
-
-    /**
-     * Support USDB 
-     */
-    function _supportBlastUSD() internal {
-        if (block.chainid != vm.envUint("BLAST_SEPOLIA_CHAINID")) return;
-
-        address USDB = vm.envAddress("TESTNET_USDB");
-
-        // SY
-        OutrunBlastUSDSY SY_USDB = new OutrunBlastUSDSY(
-            USDB,
-            owner,
-            blastGovernor
-        );
-        address USDBSYAddress = address(SY_USDB);
-
-        // PT
-        OutrunPrincipalToken PT_USDB = new OutrunPrincipalToken(
-            "Outrun USDB Principal Token",
-            "PT USDB",
-            18,
-            owner
-        );
-        address USDBPTAddress = address(PT_USDB);
-        
-        // YT
-        OutrunERC4626YieldToken YT_USDB = new OutrunERC4626YieldToken(
-            "Outrun Blast USD Yield Token",
-            "YT USDB",
-            18,
-            owner, 
-            revenuePool, 
-            protocolFeeRate
-        );
-        address USDBYTAddress = address(YT_USDB);
-
-        // PYT
-        OutrunPointsYieldToken PYT_USDB = new OutrunPointsYieldToken(
-            "Outrun Blast USD Points Yield Token",
-            "PYT USDB",
-            18,
-            owner
-        );
-        address USDBPYTAddress = address(PYT_USDB);
-
-        // SP
-        OutrunStakingPosition SP_USDB = new OutrunStakingPosition(
-            owner,
-            "Blast USD Staking Position",
-            "SP BETH",
-            18,
-            0,
-            protocolFeeRate,
-            liquidator,
-            revenuePool,
-            USDBSYAddress,
-            USDBPTAddress,
-            USDBYTAddress,
-            USDBPYTAddress,
-            uusd
-        );
-        SP_USDB.setLockupDuration(1, 365);
-        address USDBSPAddress = address(SP_USDB);
-
-        PT_USDB.initialize(USDBSPAddress);
-        YT_USDB.initialize(USDBSYAddress, USDBSPAddress);
-        PYT_USDB.initialize(USDBSPAddress);
-
-        // After deploy, configure the yield and gas mode
-        // IBlastGovernorable(SY_USDB).configure(BlastModeEnum.YieldMode.CLAIMABLE, BlastModeEnum.GasMode.CLAIMABLE);
-
-        console.log("SY_USDB deployed on %s", USDBSYAddress);
-        console.log("PT_USDB deployed on %s", USDBPTAddress);
-        console.log("YT_USDB deployed on %s", USDBYTAddress);
-        console.log("PYT_USDB deployed on %s", USDBPYTAddress);
-        console.log("SP_USDB deployed on %s", USDBSPAddress);
     }
 
     function _crossChainOFT() internal {

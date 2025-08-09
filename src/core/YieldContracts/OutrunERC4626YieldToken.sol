@@ -21,14 +21,14 @@ contract OutrunERC4626YieldToken is OutrunYieldToken {
         uint8 decimals_,
         address owner_,
         address revenuePool_,
-        uint256 protocolFeeRate_
+        uint96 protocolFeeRate_
     ) OutrunYieldToken(name_, symbol_, decimals_, revenuePool_, protocolFeeRate_) Ownable(owner_) {}
 
     function _realTimeYieldInfo() internal view returns (int256 realTimeYield, int256 increasedYield) {
         IOutrunStakeManager syStakeManager = IOutrunStakeManager(SP);
         uint256 exchangeRate = IStandardizedYield(SY).exchangeRate();
         int256 totalCurrentAssetValue = int256(SYUtils.syToAsset(exchangeRate, syStakeManager.syTotalStaking()));
-        int256 totalPrincipalValue = int256(syStakeManager.totalPrincipalValue());
+        int128 totalPrincipalValue = int128(syStakeManager.totalPrincipalValue());
 
         int256 yieldInAsset = totalCurrentAssetValue - totalPrincipalValue;
         bool isPositive = yieldInAsset > 0;
