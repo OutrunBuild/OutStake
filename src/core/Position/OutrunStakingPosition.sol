@@ -39,8 +39,9 @@ contract OutrunStakingPosition is
     uint256 public negativeYields;
     LockupDuration public lockupDuration;
 
-    address public UPT;
     address public liquidator;
+    address public UPT;
+    uint96 public MTV;      //Mint-to-Value Ratio
     address public revenuePool;
     uint96 public protocolFeeRate;
 
@@ -52,6 +53,7 @@ contract OutrunStakingPosition is
         string memory symbol_,
         uint8 decimals_,
         uint256 minStake_,
+        uint96 MTV_,
         uint96 protocolFeeRate_,
         address revenuePool_,
         address liquidator_,
@@ -62,6 +64,7 @@ contract OutrunStakingPosition is
         SY = _SY;
         YT = _YT;
         UPT = _UPT;
+        MTV = MTV_;
         minStake = minStake_;
         liquidator = liquidator_;
         revenuePool = revenuePool_;
@@ -96,7 +99,7 @@ contract OutrunStakingPosition is
     /**
      * @dev Calculate UPT amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
      */
-    function calcUPTAmount(uint256 principalValue, uint256 amountInYT) public view override returns (uint256 amount) {
+    function calcUPTAmount(uint256 principalValue, uint256 amountInYT) public view override returns (uint256 calcAmount) {
         int256 totalRedeemableYields = IYieldToken(YT).totalRedeemableYields();
         if (amountInYT == 0 || totalRedeemableYields <= 0) return principalValue;
         
@@ -105,8 +108,10 @@ contract OutrunStakingPosition is
             IStandardizedYield(SY).exchangeRate(), 
             Math.mulDiv(amountInYT, uint256(totalRedeemableYields), newYTSupply, Math.Rounding.Ceil)
         ));
-        
-        return principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0;
+        calcAmount = principalValue > yieldTokenValue ? principalValue - yieldTokenValue : 0;
+
+        uint256 maxMintAmount = Math.mulDiv(principalValue, MTV, 1e18);
+        if (calcAmount > maxMintAmount) calcAmount = maxMintAmount;
     }
 
     /**
@@ -421,8 +426,15 @@ contract OutrunStakingPosition is
         emit SetLiquidator(_liquidator);
     }
 
+    function setMTV(uint96 _MTV) external override onlyOwner {
+        require(_MTV <= 1e18, RateOverflow());
+        MTV = _MTV;
+
+        emit SetMTV(_MTV);
+    }
+
     function setProtocolFeeRate(uint96 _protocolFeeRate) external override onlyOwner {
-        require(_protocolFeeRate <= 1e18, FeeRateOverflow());
+        require(_protocolFeeRate <= 1e18, RateOverflow());
         protocolFeeRate = _protocolFeeRate;
 
         emit SetProtocolFeeRate(_protocolFeeRate);

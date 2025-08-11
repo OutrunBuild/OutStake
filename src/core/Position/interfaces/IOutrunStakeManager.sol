@@ -24,7 +24,7 @@ interface IOutrunStakeManager {
 
     error ErrorInput();
 
-    error FeeRateOverflow();
+    error RateOverflow();
 
     error UPTNotSupported();
 
@@ -111,6 +111,8 @@ interface IOutrunStakeManager {
 
     function setLiquidator(address liquidator) external;
 
+    function setMTV(uint96 MTV) external;
+
     function setProtocolFeeRate(uint96 protocolFeeRate) external;
 
 
@@ -173,6 +175,8 @@ interface IOutrunStakeManager {
     event SetRevenuePool(address revenuePool);
 
     event SetLiquidator(address liquidator);
+
+    event SetMTV(uint96 MTV);
 
     event SetProtocolFeeRate(uint96 protocolFeeRate);
 }

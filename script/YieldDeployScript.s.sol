@@ -28,6 +28,7 @@ contract YieldDeployScript is BaseScript {
     address internal liquidator;
     address internal outrunDeployer;
 
+    uint96 internal mtv;
     uint96 internal protocolFeeRate;
 
     function run() public broadcaster {
@@ -38,6 +39,7 @@ contract YieldDeployScript is BaseScript {
         revenuePool = vm.envAddress("REVENUE_POOL");
         liquidator = vm.envAddress("LIQUIDATOR");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
+        mtv = uint96(vm.envUint("MTV"));
         protocolFeeRate = uint96(vm.envUint("PROTOCOL_FEE_RATE"));
 
         // _supportWstETHOnSepolia();
@@ -81,6 +83,7 @@ contract YieldDeployScript is BaseScript {
             "SP wstETH",
             18,
             0,
+            mtv,
             protocolFeeRate,
             liquidator,
             revenuePool,
@@ -134,6 +137,7 @@ contract YieldDeployScript is BaseScript {
             "SP sUSDe",
             18,
             0,
+            mtv,
             protocolFeeRate,
             liquidator,
             revenuePool,
@@ -196,6 +200,7 @@ contract YieldDeployScript is BaseScript {
             "SP aUSDC",
             18,
             0,
+            mtv,
             protocolFeeRate,
             liquidator,
             revenuePool,
@@ -250,6 +255,7 @@ contract YieldDeployScript is BaseScript {
             "SP slisBNB",
             18,
             0,
+            mtv,
             protocolFeeRate,
             liquidator,
             revenuePool,
