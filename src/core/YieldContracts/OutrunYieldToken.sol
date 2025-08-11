@@ -81,11 +81,10 @@ abstract contract OutrunYieldToken is
             yieldBalance -= int256(amountYieldsOut);
         }
 
-        address msgSender = msg.sender;
-        _burn(msgSender, amountInBurnedYT);
-        IOutrunStakeManager(SP).transferYields(msgSender, amountYieldsOut);
+        _burn(msg.sender, amountInBurnedYT);
+        IOutrunStakeManager(SP).transferYields(msg.sender, amountYieldsOut);
 
-        emit WithdrawYields(msgSender, amountYieldsOut);
+        emit WithdrawYields(msg.sender, amountYieldsOut);
     }
 
     /**
@@ -129,16 +128,18 @@ abstract contract OutrunYieldToken is
         _unpause();
     }
 
-    function approve(address /*spender*/, uint256 /*value*/) external virtual override returns (bool) {
-        revert NonApprovable();
-    }
-
     function transfer(address /*to*/, uint256 /*value*/) external virtual override returns (bool) {
         revert NonTransferable();
     }
 
     function transferFrom(address /*from*/, address /*to*/, uint256 /*value*/) external virtual override returns (bool) {
         revert NonTransferable();
+    }
+
+    function _burn(address account, uint256 value) internal override {
+        require(account != address(0), ERC20InvalidSender(address(0)));
+        if (msg.sender != account) _spendAllowance(account, msg.sender, value);
+        _update(account, address(0), value);
     }
 
     /**

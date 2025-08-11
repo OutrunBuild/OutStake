@@ -64,6 +64,14 @@ interface IOutrunRouter {
         StakeParam calldata stakeParam
     ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted);
 
+    /** Redeem YT value **/
+    function redeemValueFromYT(
+        address SY,
+        address YT,
+        address tokenOut,
+        uint256 YTAmount
+    ) external returns (uint256 amountYieldsOut);
+
     /** Memeverse Genesis **/
     function genesisByToken(
         address SY,
