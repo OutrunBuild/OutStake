@@ -39,11 +39,13 @@ contract OutrunStakingPosition is
     uint256 public negativeYields;
     LockupDuration public lockupDuration;
 
+    uint256 public MTV;             //Mint-to-Value Ratio
+    uint256 public mintFeeRate;
+    uint256 public protocolFeeRate;
+
     address public liquidator;
     address public UPT;
-    uint96 public MTV;      //Mint-to-Value Ratio
     address public revenuePool;
-    uint96 public protocolFeeRate;
 
     mapping(uint256 positionId => Position) public positions;
 
@@ -101,7 +103,8 @@ contract OutrunStakingPosition is
      */
     function calcUPTAmount(uint256 principalValue, uint256 amountInYT) public view override returns (uint256 calcAmount) {
         int256 totalRedeemableYields = IYieldToken(YT).totalRedeemableYields();
-        if (amountInYT == 0 || totalRedeemableYields <= 0) return principalValue;
+        require(totalRedeemableYields >= 0, NegativeYields());
+        if (amountInYT == 0) return principalValue;
         
         uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
         uint256 yieldTokenValue = uint256(SYUtils.syToAsset(
@@ -179,13 +182,14 @@ contract OutrunStakingPosition is
             YTMinted = amountInSY * lockupDays;
         }
 
+        uint128(calcUPTAmount(principalValue, YTMinted));
         positionId = _nextId();
         SPMinted = principalValue;
         positions[positionId] = Position(
             amountInSY, 
             principalValue, 
-            uint128(calcUPTAmount(principalValue, YTMinted)), 
             0, 
+            uint128(calcUPTAmount(principalValue, YTMinted)), 
             SPMinted, 
             deadline,
             initOwner
@@ -212,7 +216,7 @@ contract OutrunStakingPosition is
         uint256 SPAmount, 
         address SPRecipient, 
         address UPTRecipient
-    ) external override whenNotPaused returns (uint128 UPTAmount) {
+    ) external override whenNotPaused returns (uint128 UPTAmount, uint256 mintFee) {
         require(positionId != 0 && SPAmount != 0 && SPRecipient != address(0) && UPTRecipient != address(0), ZeroInput());
         require(balanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
 
@@ -228,8 +232,14 @@ contract OutrunStakingPosition is
             nonTransferableBalanceOf[SPRecipient][positionId] += SPAmount;
         }
 
-        IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount);
-
+        if (position.deadline <= block.timestamp) {
+            mintFee = Math.mulDiv(UPTAmount, mintFeeRate, 1e18);
+            IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
+            IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount - mintFee);
+        } else {
+            IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount);
+        }
+        
         emit SeparateUPT(positionId, SPAmount, UPTAmount, SPRecipient, UPTRecipient);
     }
 

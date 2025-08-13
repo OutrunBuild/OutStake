@@ -26,6 +26,8 @@ interface IOutrunStakeManager {
 
     error RateOverflow();
 
+    error NegativeYields();
+
     error UPTNotSupported();
 
     error PositionMatured();
@@ -49,7 +51,7 @@ interface IOutrunStakeManager {
 
     function averageStakingDays() external view returns (uint256);
 
-    function calcUPTAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 amount);
+    function calcUPTAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 calcAmount);
 
     function previewStake(
         uint256 amountInSY, 
@@ -74,7 +76,7 @@ interface IOutrunStakeManager {
         uint256 SPAmount, 
         address SPRecipient, 
         address UPTRecipient
-    ) external returns (uint128 UPTAmount);
+    ) external returns (uint128 UPTAmount, uint256 mintFee);
 
     function encapsulateUPT(uint256 positionId, uint256 SPAmount) external returns (uint256 UPTBurned);
 

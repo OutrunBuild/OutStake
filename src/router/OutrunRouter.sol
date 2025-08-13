@@ -165,7 +165,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         require(SPMinted >= minSPMinted, InsufficientSPMinted(SPMinted, minSPMinted));
 
         if(stakeParam.isSPSeparated) {
-            UPTMinted = IOutrunStakeManager(SP).separateUPT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
+            (UPTMinted,) = IOutrunStakeManager(SP).separateUPT(positionId, SPMinted, stakeParam.initOwner, stakeParam.initOwner);
         } else {
             IOutrunERC6909(SP).transfer(stakeParam.initOwner, positionId, SPMinted);
         }
