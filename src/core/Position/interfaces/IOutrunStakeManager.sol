@@ -92,7 +92,7 @@ interface IOutrunStakeManager {
         uint256 SPBurned
     ) external returns (uint256 UPTBurned, uint256 redeemedPrincipal);
 
-    function redeemLiquidate(
+    function arbitrageRedeem(
         address SPOwner,
         address receiver, 
         uint256 positionId, 
@@ -111,7 +111,7 @@ interface IOutrunStakeManager {
 
     function setRevenuePool(address revenuePool) external;
 
-    function setLiquidator(address liquidator) external;
+    function setArbitrageur(address arbitrageur) external;
 
     function setMTV(uint96 MTV) external;
 
@@ -158,12 +158,12 @@ interface IOutrunStakeManager {
         uint256 redeemedPrincipal
     );
 
-    event RedeemLiquidate(
+    event ArbitrageRedeem(
         uint256 indexed positionId, 
         address indexed SPOwner, 
         uint256 SPBurned, 
         uint256 redeemedPrincipal, 
-        uint256 liquidatorPrincipal
+        uint256 arbitrageurPrincipal
     );
 
     event UpdateNegativeYields(uint256 negativeYields);
@@ -176,7 +176,7 @@ interface IOutrunStakeManager {
 
     event SetRevenuePool(address revenuePool);
 
-    event SetLiquidator(address liquidator);
+    event SetArbitrageur(address arbitrageur);
 
     event SetMTV(uint96 MTV);
 

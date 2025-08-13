@@ -43,7 +43,7 @@ contract OutrunStakingPosition is
     uint256 public mintFeeRate;
     uint256 public protocolFeeRate;
 
-    address public liquidator;
+    address public arbitrageur;
     address public UPT;
     address public revenuePool;
 
@@ -58,7 +58,7 @@ contract OutrunStakingPosition is
         uint96 MTV_,
         uint96 protocolFeeRate_,
         address revenuePool_,
-        address liquidator_,
+        address arbitrageur_,
         address _SY,
         address _YT,
         address _UPT
@@ -68,7 +68,7 @@ contract OutrunStakingPosition is
         UPT = _UPT;
         MTV = MTV_;
         minStake = minStake_;
-        liquidator = liquidator_;
+        arbitrageur = arbitrageur_;
         revenuePool = revenuePool_;
         protocolFeeRate = protocolFeeRate_;
     }
@@ -295,20 +295,20 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev After the expiration of any non-transferable SP, the liquidator can redeem the principal on its behalf, 
+     * @dev After the expiration of any non-transferable SP, the arbitrageur can redeem the principal on its behalf, 
             and the position holder will not incur any losses.
      * @param SPOwner - Owner of non-transferable SP
      * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
      */
-    function redeemLiquidate(
+    function arbitrageRedeem(
         address SPOwner,
         address receiver, 
         uint256 positionId, 
         uint256 SPBurned
     ) external override accumulateYields nonReentrant whenNotPaused {
-        require(msg.sender == liquidator, PermissionDenied());
+        require(msg.sender == arbitrageur, PermissionDenied());
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
         Position storage position = positions[positionId];
@@ -350,11 +350,11 @@ contract OutrunStakingPosition is
             position.SYStaked = uint128(SYStaked - redeemedPrincipal);
         }
 
-        uint256 liquidatorPrincipal = SYUtils.assetToSy(exchangeRate, UPTBurned);
-        _transferSY(receiver, liquidatorPrincipal);
-        if(redeemedPrincipal > liquidatorPrincipal) _transferSY(SPOwner, redeemedPrincipal - liquidatorPrincipal);
+        uint256 arbitrageurPrincipal = SYUtils.assetToSy(exchangeRate, UPTBurned);
+        _transferSY(receiver, arbitrageurPrincipal);
+        if(redeemedPrincipal > arbitrageurPrincipal) _transferSY(SPOwner, redeemedPrincipal - arbitrageurPrincipal);
         
-        emit RedeemLiquidate(positionId, SPOwner, SPBurned, redeemedPrincipal, liquidatorPrincipal);
+        emit ArbitrageRedeem(positionId, SPOwner, SPBurned, redeemedPrincipal, arbitrageurPrincipal);
     }
 
     /**
@@ -429,11 +429,11 @@ contract OutrunStakingPosition is
         emit SetRevenuePool(_revenuePool);
     }
 
-    function setLiquidator(address _liquidator) external override onlyOwner {
-        require(_liquidator != address(0), ZeroInput());
-        liquidator = _liquidator;
+    function setArbitrageur(address _arbitrageur) external override onlyOwner {
+        require(_arbitrageur != address(0), ZeroInput());
+        arbitrageur = _arbitrageur;
 
-        emit SetLiquidator(_liquidator);
+        emit SetArbitrageur(_arbitrageur);
     }
 
     function setMTV(uint96 _MTV) external override onlyOwner {
