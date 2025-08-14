@@ -28,11 +28,11 @@ interface IOutrunStakeManager {
 
     error NegativeYields();
 
-    error UPTNotSupported();
-
     error PositionMatured();
 
     error PermissionDenied();
+
+    error UPTMintingCapReached();
 
     error InsufficientSPBalance();
 
@@ -131,7 +131,7 @@ interface IOutrunStakeManager {
     function setProtocolFeeRate(uint256 protocolFeeRate) external;
 
 
-    event SimpleStake(uint128 amountInSY, uint128 UPTAmount, address indexed UPTRecipient);
+    event SimpleStake(uint128 amountInSY, uint128 amountInUPT, address indexed UPTRecipient);
 
     event Stake(
         uint256 indexed positionId,
@@ -146,7 +146,7 @@ interface IOutrunStakeManager {
     event SeparateUPT(
         uint256 indexed positionId, 
         uint256 transferableSPAmount,
-        uint256 UPTAmount,
+        uint256 amountInUPT,
         address indexed SPRecipient, 
         address indexed UPTRecipient
     );

@@ -378,7 +378,7 @@ contract OutstakeScript is BaseScript {
         );
         address aUSDCSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        IUniversalPrincipalToken(uusd).setAuthorized(aUSDCSPAddress, true);
+        IUniversalPrincipalToken(uusd).grantMintingCap(aUSDCSPAddress, 1000000000 ether);
         IOutrunStakeManager(aUSDCSPAddress).setLockupDuration(0, 365);
         IYieldToken(aUSDCYTAddress).initialize(aUSDCSYAddress, aUSDCSPAddress);
 
@@ -423,7 +423,7 @@ contract OutstakeScript is BaseScript {
         );
         address sUSDSSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
-        IUniversalPrincipalToken(uusd).setAuthorized(sUSDSSPAddress, true);
+        IUniversalPrincipalToken(uusd).grantMintingCap(sUSDSSPAddress, 1000000000 ether);
         IOutrunStakeManager(sUSDSSPAddress).setLockupDuration(0, 365);
         IYieldToken(sUSDSYTAddress).initialize(sUSDSSYAddress, sUSDSSPAddress);
 

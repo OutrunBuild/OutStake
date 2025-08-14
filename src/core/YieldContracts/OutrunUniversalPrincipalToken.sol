@@ -10,7 +10,7 @@ import { IUniversalPrincipalToken } from "./interfaces/IUniversalPrincipalToken.
  * @dev Outrun Universal Principal Token
  */
 contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
-    mapping(address SP => bool) public isAuthorized;
+    mapping(address minter => MintingStatus) public mintingStatusTable;
 
     constructor(
         string memory _name,
@@ -21,11 +21,22 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
     ) OutrunOFT(_name, _symbol, _decimals, _lzEndpoint, _owner) Ownable(_owner) {}
 
     /**
-     * @param SP - Address of SP
-     * @param authorized - Authorization status
+     * @dev Check Mintable Amount
      */
-    function setAuthorized(address SP, bool authorized) external override onlyOwner {
-        isAuthorized[SP] = authorized;
+    function checkMintableAmount(address minter) external view override returns (uint256 amountInMintable) {
+        MintingStatus storage status = mintingStatusTable[minter];
+        uint256 mintingCap = status.mintingCap;
+		uint256 amountInMinted = status.amountInMinted;
+        amountInMintable = mintingCap > amountInMinted ? mintingCap - amountInMinted : 0;
+    }
+
+    /**
+     * @dev Grant Minting Cap
+     * @param minter - Address of minter
+     * @param mintingCap - Minting cap
+     */
+    function grantMintingCap(address minter, uint256 mintingCap) external override onlyOwner {
+        mintingStatusTable[minter].mintingCap = mintingCap;
     }
 
     /**
@@ -34,8 +45,9 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
      * @param amount - Amount of UPT
      */
     function mint(address receiver, uint256 amount) external override whenNotPaused {
-        require(isAuthorized[msg.sender], PermissionDenied());
+        require(mintingStatusTable[msg.sender].mintingCap > 0, PermissionDenied());
 
+        mintingStatusTable[msg.sender].amountInMinted += amount;
         _mint(receiver, amount);
 
         emit MintUPT(msg.sender, receiver, amount);

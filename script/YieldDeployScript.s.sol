@@ -95,7 +95,7 @@ contract YieldDeployScript is BaseScript {
         SP_wstETH.setLockupDuration(1, 365);
         SP_wstETH.addKeeper(keeper);
         YT_wstETH.initialize(wstETHSYAddress, wstETHSPAddress);
-        IUniversalPrincipalToken(UETH).setAuthorized(wstETHSPAddress, true);
+        IUniversalPrincipalToken(UETH).grantMintingCap(wstETHSPAddress, 1000000000 ether);
 
         console.log("SY_wstETH deployed on %s", wstETHSYAddress);
         console.log("SP_wstETH deployed on %s", wstETHSPAddress);
@@ -149,7 +149,7 @@ contract YieldDeployScript is BaseScript {
         SP_sUSDe.setLockupDuration(1, 365);
         SP_sUSDe.addKeeper(keeper);
         YT_sUSDe.initialize(sUSDeSYAddress, sUSDeSPAddress);
-        IUniversalPrincipalToken(UUSD).setAuthorized(sUSDeSPAddress, true);
+        IUniversalPrincipalToken(UUSD).grantMintingCap(sUSDeSPAddress, 1000000000 ether);
 
         console.log("SY_sUSDe deployed on %s", sUSDeSYAddress);
         console.log("SP_sUSDe deployed on %s", sUSDeSPAddress);
@@ -212,7 +212,7 @@ contract YieldDeployScript is BaseScript {
         SP_aUSDC.setLockupDuration(1, 365);
         SP_aUSDC.addKeeper(keeper);
         YT_aUSDC.initialize(aUSDCSYAddress, aUSDCSPAddress);
-        IUniversalPrincipalToken(UUSD).setAuthorized(aUSDCSPAddress, true);
+        IUniversalPrincipalToken(UUSD).grantMintingCap(aUSDCSPAddress, 1000000000 ether);
 
         console.log("SY_aUSDC deployed on %s", aUSDCSYAddress);
         console.log("SP_aUSDC deployed on %s", aUSDCSPAddress);
@@ -267,7 +267,7 @@ contract YieldDeployScript is BaseScript {
         SP_slisBNB.setLockupDuration(1, 365);
         SP_slisBNB.addKeeper(keeper);
         YT_slisBNB.initialize(slisBNBSYAddress, slisBNBSPAddress);
-        IUniversalPrincipalToken(UBNB).setAuthorized(slisBNBSPAddress, true);
+        IUniversalPrincipalToken(UBNB).grantMintingCap(slisBNBSPAddress, 1000000000 ether);
 
         console.log("SY_slisBNB deployed on %s", slisBNBSYAddress);
         console.log("SP_slisBNB deployed on %s", slisBNBSPAddress);

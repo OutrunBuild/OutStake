@@ -7,9 +7,14 @@ import { IBurnable } from "../../libraries/IBurnable.sol";
   * @title Outrun omnichain universal principal token interface
   */
 interface IUniversalPrincipalToken is IBurnable {
-	function isAuthorized(address SP) external view returns (bool);
+	struct MintingStatus {
+		uint256 mintingCap;
+		uint256 amountInMinted;
+	}
 
-	function setAuthorized(address SP, bool authorized) external;
+	function checkMintableAmount(address minter) external view returns (uint256 amountInMintable);
+
+	function grantMintingCap(address minter, uint256 mintingCap) external;
 
 	function mint(address receiver, uint256 amount) external;
 	

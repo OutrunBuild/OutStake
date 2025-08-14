@@ -169,7 +169,6 @@ contract OutrunStakingPosition is
         uint128 YTMinted
     ) {
         require(initOwner != address(0), ZeroInput());
-        require(IUniversalPrincipalToken(UPT).isAuthorized(address(this)), UPTNotSupported());
 
         _stakeParamValidate(amountInSY, lockupDays);
         _transferIn(SY, msg.sender, amountInSY);
@@ -208,11 +207,12 @@ contract OutrunStakingPosition is
      * @param amountInSY - Staked amount of SY
      * @param UPTRecipient - Init owner of position
      * @notice User must have approved this contract to spend SY
+     * @return amountInUPT - Amount of UPT minted
+     * @return mintFee - Mint fee
      */
     function simpleStake(uint128 amountInSY, address UPTRecipient) 
-    external override nonReentrant whenNotPaused returns (uint128 UPTAmount, uint256 mintFee) {
+    external override nonReentrant whenNotPaused returns (uint128 amountInUPT, uint256 mintFee) {
         require(UPTRecipient != address(0), ZeroInput());
-        require(IUniversalPrincipalToken(UPT).isAuthorized(address(this)), UPTNotSupported());
 
         uint256 _sySimpleStaking = sySimpleStaking;
         _updateSimpleStakeRewards(_sySimpleStaking);
@@ -226,12 +226,14 @@ contract OutrunStakingPosition is
             sySimpleStaking = _sySimpleStaking + amountInSY;
         }
 
-        UPTAmount = uint128(calcUPTAmount(principalValue, 0));
-        mintFee = Math.mulDiv(UPTAmount, mintFeeRate, 1e18);
-        IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
-        IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount - mintFee);
+        amountInUPT = uint128(calcUPTAmount(principalValue, 0));
+        require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInUPT, UPTMintingCapReached());
 
-        emit SimpleStake(amountInSY, UPTAmount, UPTRecipient);
+        mintFee = Math.mulDiv(amountInUPT, mintFeeRate, 1e18);
+        IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
+        IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT - mintFee);
+
+        emit SimpleStake(amountInSY, amountInUPT, UPTRecipient);
     }
 
     /**
@@ -240,14 +242,14 @@ contract OutrunStakingPosition is
      * @param SPAmount - Amount of transferableSP
      * @param SPRecipient - Receiver of nonTransferableSP
      * @param UPTRecipient - Receiver of UPT
-     * @return UPTAmount - UPT separated Amount
+     * @return amountInUPT - UPT separated Amount
      */
     function separateUPT(
         uint256 positionId, 
         uint256 SPAmount, 
         address SPRecipient, 
         address UPTRecipient
-    ) external override nonReentrant whenNotPaused returns (uint128 UPTAmount, uint256 mintFee) {
+    ) external override nonReentrant whenNotPaused returns (uint128 amountInUPT, uint256 mintFee) {
         require(positionId != 0 && SPAmount != 0 && SPRecipient != address(0) && UPTRecipient != address(0), ZeroInput());
         require(balanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
 
@@ -256,22 +258,23 @@ contract OutrunStakingPosition is
 
         if (SPRecipient != msg.sender) transfer(SPRecipient, positionId, SPAmount);
 
-        UPTAmount = uint128(Math.mulDiv(position.UPTMintable, SPAmount, position.SPMinted));
+        amountInUPT = uint128(Math.mulDiv(position.UPTMintable, SPAmount, position.SPMinted));
+        require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInUPT, UPTMintingCapReached());
 
         unchecked {
-            position.UPTMinted += UPTAmount;
+            position.UPTMinted += amountInUPT;
             nonTransferableBalanceOf[SPRecipient][positionId] += SPAmount;
         }
 
         if (block.timestamp >= position.deadline) {
-            mintFee = Math.mulDiv(UPTAmount, mintFeeRate, 1e18);
+            mintFee = Math.mulDiv(amountInUPT, mintFeeRate, 1e18);
             IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
-            IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount - mintFee);
+            IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT - mintFee);
         } else {
-            IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount);
+            IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT);
         }
         
-        emit SeparateUPT(positionId, SPAmount, UPTAmount, SPRecipient, UPTRecipient);
+        emit SeparateUPT(positionId, SPAmount, amountInUPT, SPRecipient, UPTRecipient);
     }
 
     /**
