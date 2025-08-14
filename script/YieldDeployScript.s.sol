@@ -25,7 +25,7 @@ contract YieldDeployScript is BaseScript {
 
     address internal owner;
     address internal revenuePool;
-    address internal liquidator;
+    address internal keeper;
     address internal outrunDeployer;
 
     uint96 internal mtv;
@@ -37,7 +37,7 @@ contract YieldDeployScript is BaseScript {
         UBNB = vm.envAddress("UBNB");
         owner = vm.envAddress("OWNER");
         revenuePool = vm.envAddress("REVENUE_POOL");
-        liquidator = vm.envAddress("LIQUIDATOR");
+        keeper = vm.envAddress("KEEPER");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
         mtv = uint96(vm.envUint("MTV"));
         protocolFeeRate = uint96(vm.envUint("PROTOCOL_FEE_RATE"));
@@ -85,7 +85,6 @@ contract YieldDeployScript is BaseScript {
             0,
             mtv,
             protocolFeeRate,
-            liquidator,
             revenuePool,
             wstETHSYAddress,
             wstETHYTAddress,
@@ -94,6 +93,7 @@ contract YieldDeployScript is BaseScript {
         address wstETHSPAddress = address(SP_wstETH);
 
         SP_wstETH.setLockupDuration(1, 365);
+        SP_wstETH.addKeeper(keeper);
         YT_wstETH.initialize(wstETHSYAddress, wstETHSPAddress);
         IUniversalPrincipalToken(UETH).setAuthorized(wstETHSPAddress, true);
 
@@ -139,7 +139,6 @@ contract YieldDeployScript is BaseScript {
             0,
             mtv,
             protocolFeeRate,
-            liquidator,
             revenuePool,
             sUSDeSYAddress,
             sUSDeYTAddress,
@@ -148,6 +147,7 @@ contract YieldDeployScript is BaseScript {
         address sUSDeSPAddress = address(SP_sUSDe);
 
         SP_sUSDe.setLockupDuration(1, 365);
+        SP_sUSDe.addKeeper(keeper);
         YT_sUSDe.initialize(sUSDeSYAddress, sUSDeSPAddress);
         IUniversalPrincipalToken(UUSD).setAuthorized(sUSDeSPAddress, true);
 
@@ -202,7 +202,6 @@ contract YieldDeployScript is BaseScript {
             0,
             mtv,
             protocolFeeRate,
-            liquidator,
             revenuePool,
             aUSDCSYAddress,
             aUSDCYTAddress,
@@ -211,6 +210,7 @@ contract YieldDeployScript is BaseScript {
         address aUSDCSPAddress = address(SP_aUSDC);
 
         SP_aUSDC.setLockupDuration(1, 365);
+        SP_aUSDC.addKeeper(keeper);
         YT_aUSDC.initialize(aUSDCSYAddress, aUSDCSPAddress);
         IUniversalPrincipalToken(UUSD).setAuthorized(aUSDCSPAddress, true);
 
@@ -257,7 +257,6 @@ contract YieldDeployScript is BaseScript {
             0,
             mtv,
             protocolFeeRate,
-            liquidator,
             revenuePool,
             slisBNBSYAddress,
             slisBNBYTAddress,
@@ -266,6 +265,7 @@ contract YieldDeployScript is BaseScript {
         address slisBNBSPAddress = address(SP_slisBNB);
 
         SP_slisBNB.setLockupDuration(1, 365);
+        SP_slisBNB.addKeeper(keeper);
         YT_slisBNB.initialize(slisBNBSYAddress, slisBNBSPAddress);
         IUniversalPrincipalToken(UBNB).setAuthorized(slisBNBSPAddress, true);
 

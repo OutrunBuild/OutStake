@@ -64,6 +64,11 @@ interface IOutrunStakeManager {
         uint256 SPAmount
     ) external view returns (uint256 redeemableSyAmount);
 
+    function simpleStake(
+        uint128 amountInSY, 
+        address UPTRecipient
+    ) external returns (uint128 UPTAmount, uint256 mintFee);
+
     function stake(
         uint128 amountInSY,
         uint128 lockupDays,
@@ -92,12 +97,14 @@ interface IOutrunStakeManager {
         uint256 SPBurned
     ) external returns (uint256 UPTBurned, uint256 redeemedPrincipal);
 
-    function arbitrageRedeem(
+    function keepRedeem(
         address SPOwner,
         address receiver, 
         uint256 positionId, 
         uint256 SPBurned
     ) external;
+
+    function keepSimpleRedeem(address receiver, uint128 amountInUPT) external;
 
     function transferYields(address receiver, uint256 syAmount) external;
 
@@ -111,12 +118,20 @@ interface IOutrunStakeManager {
 
     function setRevenuePool(address revenuePool) external;
 
-    function setArbitrageur(address arbitrageur) external;
+    function addKeeper(address keeper) external;
 
-    function setMTV(uint96 MTV) external;
+    function removeKeeper(address keeper) external;
 
-    function setProtocolFeeRate(uint96 protocolFeeRate) external;
+    function setMTV(uint256 MTV) external;
 
+    function setMintFeeRate(uint256 mintFeeRate) external;
+
+    function setKeeperFeeRate(uint256 keeperFeeRate) external;
+
+    function setProtocolFeeRate(uint256 protocolFeeRate) external;
+
+
+    event SimpleStake(uint128 amountInSY, uint128 UPTAmount, address indexed UPTRecipient);
 
     event Stake(
         uint256 indexed positionId,
@@ -158,12 +173,20 @@ interface IOutrunStakeManager {
         uint256 redeemedPrincipal
     );
 
-    event ArbitrageRedeem(
+    event KeepRedeem(
         uint256 indexed positionId, 
         address indexed SPOwner, 
         uint256 SPBurned, 
         uint256 redeemedPrincipal, 
-        uint256 arbitrageurPrincipal
+        uint256 keeperPrincipal,
+        uint256 keeperFee
+    );
+
+    event KeepSimpleRedeem(
+        address indexed receiver,
+        uint256 amountInUPT,
+        uint256 amountInSY,
+        uint256 keeperFee
     );
 
     event UpdateNegativeYields(uint256 negativeYields);
@@ -176,9 +199,15 @@ interface IOutrunStakeManager {
 
     event SetRevenuePool(address revenuePool);
 
-    event SetArbitrageur(address arbitrageur);
+    event AddKeeper(address keeper);
 
-    event SetMTV(uint96 MTV);
+    event RemoveKeeper(address keeper);
 
-    event SetProtocolFeeRate(uint96 protocolFeeRate);
+    event SetMTV(uint256 MTV);
+
+    event SetMintFeeRate(uint256 mintFeeRate);
+
+    event SetKeeperFeeRate(uint256 keeperFeeRate);
+
+    event SetProtocolFeeRate(uint256 protocolFeeRate);
 }

@@ -34,18 +34,21 @@ contract OutrunStakingPosition is
     address public immutable YT;
     
     uint256 public minStake;
+    uint256 public negativeYields;
     uint128 public syTotalStaking;
     uint128 public totalPrincipalValue;
-    uint256 public negativeYields;
+    uint256 public sySimpleStaking;
     LockupDuration public lockupDuration;
 
     uint256 public MTV;             //Mint-to-Value Ratio
     uint256 public mintFeeRate;
+    uint256 public keeperFeeRate;
     uint256 public protocolFeeRate;
 
-    address public arbitrageur;
     address public UPT;
     address public revenuePool;
+
+    mapping(address keeper => bool) public keepers;
 
     mapping(uint256 positionId => Position) public positions;
 
@@ -58,7 +61,6 @@ contract OutrunStakingPosition is
         uint96 MTV_,
         uint96 protocolFeeRate_,
         address revenuePool_,
-        address arbitrageur_,
         address _SY,
         address _YT,
         address _UPT
@@ -68,7 +70,6 @@ contract OutrunStakingPosition is
         UPT = _UPT;
         MTV = MTV_;
         minStake = minStake_;
-        arbitrageur = arbitrageur_;
         revenuePool = revenuePool_;
         protocolFeeRate = protocolFeeRate_;
     }
@@ -182,7 +183,6 @@ contract OutrunStakingPosition is
             YTMinted = amountInSY * lockupDays;
         }
 
-        uint128(calcUPTAmount(principalValue, YTMinted));
         positionId = _nextId();
         SPMinted = principalValue;
         positions[positionId] = Position(
@@ -194,13 +194,44 @@ contract OutrunStakingPosition is
             deadline,
             initOwner
         );
-        if (lockupDays != 0) IYieldToken(YT).mint(initOwner, YTMinted);
+        IYieldToken(YT).mint(initOwner, YTMinted);
 
         _mint(SPRecipient, positionId, SPMinted);
 
         _storeRewardIndexes(positionId);
 
         emit Stake(positionId, amountInSY, principalValue, SPMinted, YTMinted, deadline, initOwner);
+    }
+
+    /**
+     * @dev Allows user to deposit SY and only mint UPT.
+     * @param amountInSY - Staked amount of SY
+     * @param UPTRecipient - Init owner of position
+     * @notice User must have approved this contract to spend SY
+     */
+    function simpleStake(uint128 amountInSY, address UPTRecipient) 
+    external override nonReentrant whenNotPaused returns (uint128 UPTAmount, uint256 mintFee) {
+        require(UPTRecipient != address(0), ZeroInput());
+        require(IUniversalPrincipalToken(UPT).isAuthorized(address(this)), UPTNotSupported());
+
+        uint256 _sySimpleStaking = sySimpleStaking;
+        _updateSimpleStakeRewards(_sySimpleStaking);
+
+        _transferIn(SY, msg.sender, amountInSY);
+        
+        uint128 principalValue = uint128(SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), amountInSY));
+        unchecked {
+            syTotalStaking += amountInSY;
+            totalPrincipalValue += principalValue;
+            sySimpleStaking = _sySimpleStaking + amountInSY;
+        }
+
+        UPTAmount = uint128(calcUPTAmount(principalValue, 0));
+        mintFee = Math.mulDiv(UPTAmount, mintFeeRate, 1e18);
+        IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
+        IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount - mintFee);
+
+        emit SimpleStake(amountInSY, UPTAmount, UPTRecipient);
     }
 
     /**
@@ -216,7 +247,7 @@ contract OutrunStakingPosition is
         uint256 SPAmount, 
         address SPRecipient, 
         address UPTRecipient
-    ) external override whenNotPaused returns (uint128 UPTAmount, uint256 mintFee) {
+    ) external override nonReentrant whenNotPaused returns (uint128 UPTAmount, uint256 mintFee) {
         require(positionId != 0 && SPAmount != 0 && SPRecipient != address(0) && UPTRecipient != address(0), ZeroInput());
         require(balanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
 
@@ -232,7 +263,7 @@ contract OutrunStakingPosition is
             nonTransferableBalanceOf[SPRecipient][positionId] += SPAmount;
         }
 
-        if (position.deadline <= block.timestamp) {
+        if (block.timestamp >= position.deadline) {
             mintFee = Math.mulDiv(UPTAmount, mintFeeRate, 1e18);
             IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
             IUniversalPrincipalToken(UPT).mint(UPTRecipient, UPTAmount - mintFee);
@@ -248,7 +279,7 @@ contract OutrunStakingPosition is
      * @param positionId - Position Id
      * @param SPAmount - Amount of nonTransferableSP
      */
-    function encapsulateUPT(uint256 positionId, uint256 SPAmount) external override whenNotPaused returns (uint256 UPTBurned) {
+    function encapsulateUPT(uint256 positionId, uint256 SPAmount) external override nonReentrant whenNotPaused returns (uint256 UPTBurned) {
         require(positionId != 0 && SPAmount != 0, ZeroInput());
 
         UPTBurned = _encapsulateUPT(positions[positionId], positionId, SPAmount);
@@ -295,20 +326,20 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev After the expiration of any non-transferable SP, the arbitrageur can redeem the principal on its behalf, 
+     * @dev After the expiration of any non-transferable SP, the keepers can redeem the principal on its behalf, 
             and the position holder will not incur any losses.
      * @param SPOwner - Owner of non-transferable SP
      * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
      */
-    function arbitrageRedeem(
+    function keepRedeem(
         address SPOwner,
         address receiver, 
         uint256 positionId, 
         uint256 SPBurned
     ) external override accumulateYields nonReentrant whenNotPaused {
-        require(msg.sender == arbitrageur, PermissionDenied());
+        require(keepers[msg.sender], PermissionDenied());
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
         Position storage position = positions[positionId];
@@ -350,25 +381,81 @@ contract OutrunStakingPosition is
             position.SYStaked = uint128(SYStaked - redeemedPrincipal);
         }
 
-        uint256 arbitrageurPrincipal = SYUtils.assetToSy(exchangeRate, UPTBurned);
-        _transferSY(receiver, arbitrageurPrincipal);
-        if(redeemedPrincipal > arbitrageurPrincipal) _transferSY(SPOwner, redeemedPrincipal - arbitrageurPrincipal);
+        uint256 keeperPrincipal = SYUtils.assetToSy(exchangeRate, UPTBurned);
+        uint256 keeperFee = Math.mulDiv(keeperPrincipal, keeperFeeRate, 1e18);
+        _transferSY(revenuePool, keeperFee);
+        _transferSY(receiver, keeperPrincipal - keeperFee);
+        if(redeemedPrincipal > keeperPrincipal) _transferSY(SPOwner, redeemedPrincipal - keeperPrincipal);
         
-        emit ArbitrageRedeem(positionId, SPOwner, SPBurned, redeemedPrincipal, arbitrageurPrincipal);
+        emit KeepRedeem(positionId, SPOwner, SPBurned, redeemedPrincipal, keeperPrincipal, keeperFee);
     }
 
     /**
-     * @dev Allows redemption of generated rewards after position unlocks
-     * @param positionId - Position id
+     * @dev The Keeper can burn UPT to redeem SY deposited through SimpleStake at a 1:1 underlying asset price.
+     * @param receiver - Receiver of SY
+     * @param amountInUPT - Amount of UPT burned
      */
-    function redeemReward(uint256 positionId) external whenNotPaused override {
-        Position storage position = positions[positionId];
-        uint256 deadline = position.deadline;
-        require(deadline <= block.timestamp, LockTimeNotExpired(deadline));
+    function keepSimpleRedeem(
+        address receiver,
+        uint128 amountInUPT
+    ) external override accumulateYields nonReentrant whenNotPaused {
+        require(keepers[msg.sender], PermissionDenied());
+        require(receiver != address(0) && amountInUPT != 0 , ZeroInput());
 
-        _redeemRewards(position.initOwner, positionId, position.SYStaked);
+        _redeemSimpleStakeRewards();
+
+        IBurnable(UPT).burn(msg.sender, amountInUPT);
+
+        uint256 _negativeYields = negativeYields;
+        uint128 _totalPrincipalValue = totalPrincipalValue;
+        uint128 redeemablePrincipalValue = _negativeYields > 0
+            ? uint128(Math.mulDiv(amountInUPT, _totalPrincipalValue - _negativeYields, _totalPrincipalValue))
+            : amountInUPT;
+        uint128 amountInSY = uint128(SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue));
+        
+        unchecked {
+            syTotalStaking -= amountInSY;
+            totalPrincipalValue = _totalPrincipalValue - redeemablePrincipalValue;
+            sySimpleStaking -= amountInSY;
+        }
+
+        uint256 keeperFee = Math.mulDiv(amountInSY, keeperFeeRate, 1e18);
+        _transferSY(revenuePool, keeperFee);
+        _transferSY(receiver, amountInSY - keeperFee);
+        
+        emit KeepSimpleRedeem(receiver, amountInUPT, amountInSY, keeperFee);
     }
 
+    /**
+     * @dev Allow batch redemption of accumulated rewards
+     * @param positionIds - Array of Position id
+     */
+    function batchRedeemReward(uint256[] calldata positionIds) external whenNotPaused override {
+        (address[] memory tokens, uint256[] memory indexes) = _updateRewardIndex();
+
+        uint256 positionId;
+        uint256 SYStaked;
+        address initOwner;
+        Position storage position;
+        for (uint256 i = 0; i < positionIds.length; i++) {
+            positionId = positionIds[i];
+            position = positions[positionId];
+            SYStaked = position.SYStaked;
+            initOwner = position.initOwner;
+
+            _updatePositionRewards(positionId, SYStaked, tokens, indexes);
+            uint256[] memory rewardsOut = _doTransferOutRewards(initOwner, positionId);
+            if (rewardsOut.length != 0) emit RedeemRewards(positionId, initOwner, rewardsOut);
+        }
+    }
+
+    /**
+     * @dev Redeem the rewards generated by SY staked through SimpleStake
+     */
+    function redeemSimpleStakeRewards() external whenNotPaused override {
+        _redeemSimpleStakeRewards();
+    }
+    
     /**
      * @dev Transfer yields when collecting protocol fees and withdrawing yields, only YT can call
      * @param receiver - Address of receiver
@@ -429,21 +516,42 @@ contract OutrunStakingPosition is
         emit SetRevenuePool(_revenuePool);
     }
 
-    function setArbitrageur(address _arbitrageur) external override onlyOwner {
-        require(_arbitrageur != address(0), ZeroInput());
-        arbitrageur = _arbitrageur;
+    function addKeeper(address _keeper) external override onlyOwner {
+        require(_keeper != address(0), ZeroInput());
+        keepers[_keeper] = true;
 
-        emit SetArbitrageur(_arbitrageur);
+        emit AddKeeper(_keeper);
     }
 
-    function setMTV(uint96 _MTV) external override onlyOwner {
+    function removeKeeper(address _keeper) external override onlyOwner {
+        require(_keeper != address(0), ZeroInput());
+        keepers[_keeper] = false;
+
+        emit RemoveKeeper(_keeper);
+    }
+
+    function setMTV(uint256 _MTV) external override onlyOwner {
         require(_MTV <= 1e18, RateOverflow());
         MTV = _MTV;
 
         emit SetMTV(_MTV);
     }
 
-    function setProtocolFeeRate(uint96 _protocolFeeRate) external override onlyOwner {
+    function setMintFeeRate(uint256 _mintFeeRate) external override onlyOwner {
+        require(_mintFeeRate <= 1e18, RateOverflow());
+        mintFeeRate = _mintFeeRate;
+
+        emit SetMintFeeRate(_mintFeeRate);
+    }
+
+    function setKeeperFeeRate(uint256 _keeperFeeRate) external override onlyOwner {
+        require(_keeperFeeRate <= 1e18, RateOverflow());
+        keeperFeeRate = _keeperFeeRate;
+
+        emit SetKeeperFeeRate(_keeperFeeRate);
+    }
+
+    function setProtocolFeeRate(uint256 _protocolFeeRate) external override onlyOwner {
         require(_protocolFeeRate <= 1e18, RateOverflow());
         protocolFeeRate = _protocolFeeRate;
 
@@ -554,9 +662,43 @@ contract OutrunStakingPosition is
         uint256 positionId, 
         uint256 SYStaked
     ) internal returns (uint256[] memory rewardsOut) {
-        _updatePositionRewards(positionId, SYStaked);
+        (address[] memory tokens, uint256[] memory indexes) = _updateRewardIndex();
+        _updatePositionRewards(positionId, SYStaked, tokens, indexes);
         rewardsOut = _doTransferOutRewards(initOwner, positionId);
         if (rewardsOut.length != 0) emit RedeemRewards(positionId, initOwner, rewardsOut);
+    }
+
+    function _redeemSimpleStakeRewards() internal returns (uint256[] memory rewardsOut) {
+        _updateSimpleStakeRewards(sySimpleStaking);
+
+        bool redeemExternalThisRound;
+        address[] memory tokens = getRewardTokens();
+        uint256 len = tokens.length;
+        rewardsOut = new uint256[](len);
+        for (uint256 i = 0; i < len;) {
+            address token = tokens[i];
+            uint128 totalRewards = simpleStakeRewardAccrued[token];
+
+            if (totalRewards == 0) {
+                unchecked { i++; }
+                continue;
+            }
+
+            if (!redeemExternalThisRound) {
+                if (_selfBalance(token) < totalRewards) {
+                    _redeemExternalReward();
+                    redeemExternalThisRound = true;
+                }
+            }
+
+            simpleStakeRewardAccrued[token] = 0;
+            rewardsOut[i] = totalRewards;
+            _transferOut(token, revenuePool, totalRewards);
+
+            emit ProtocolRewardRevenue(token, totalRewards);
+
+            unchecked { i++; }
+        }
     }
 
     function _doTransferOutRewards(address receiver, uint256 positionId) internal override returns (uint256[] memory rewardAmounts) {
@@ -582,12 +724,14 @@ contract OutrunStakingPosition is
                 }
             }
 
+            positionReward[token][positionId].accrued = 0;
+
             uint256 revenue;
-            if (!rewardOfPosition.ownerCollected) {
+            if (!rewardOfPosition.finalCollected) {
                 revenue = Math.mulDiv(uint256(totalRewards), protocolFeeRate, 1e18);
                 totalRewards -= uint128(revenue);
                 rewardAmounts[i] = totalRewards;
-                positionReward[token][positionId].accrued = 0;
+                if (block.timestamp >= positions[positionId].deadline) rewardOfPosition.finalCollected = true;
 
                 _transferOut(token, receiver, totalRewards);
             } else {
