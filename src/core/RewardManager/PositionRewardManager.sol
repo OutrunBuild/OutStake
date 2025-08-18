@@ -19,15 +19,15 @@ abstract contract PositionRewardManager is IPositionRewardManager {
     }
 
     // [token] => (index)
-    mapping(address => uint128) public simpleStakeRewardIndex;
+    mapping(address => uint128) public wrapStakeRewardIndex;
 
     // [token] => (accrued)
-    mapping(address => uint128) public simpleStakeRewardAccrued;
+    mapping(address => uint128) public wrapStakeRewardAccrued;
 
     // [token] => [positionId] => (index, accrued, finalCollected)
     mapping(address => mapping(uint256 => PositionReward)) public positionReward;
 
-    function _updateSimpleStakeRewards(uint256 rewardShares) internal virtual {
+    function _updateWrapStakeRewards(uint256 rewardShares) internal virtual {
         (address[] memory tokens, uint256[] memory indexes) = _updateRewardIndex();
         uint256 len = tokens.length;
         if (len == 0) return;
@@ -37,20 +37,20 @@ abstract contract PositionRewardManager is IPositionRewardManager {
             uint256 index = indexes[i];
             unchecked { i++; }
 
-            uint128 _simpleStakeRewardIndex = simpleStakeRewardIndex[token];
-            uint128 _simpleStakeRewardAccrued = simpleStakeRewardAccrued[token];
+            uint128 _wrapStakeRewardIndex = wrapStakeRewardIndex[token];
+            uint128 _wrapStakeRewardAccrued = wrapStakeRewardAccrued[token];
 
-            if (_simpleStakeRewardIndex == 0) {
-                simpleStakeRewardIndex[token] = INITIAL_REWARD_INDEX.Uint128();
+            if (_wrapStakeRewardIndex == 0) {
+                wrapStakeRewardIndex[token] = INITIAL_REWARD_INDEX.Uint128();
             }
 
-            if (_simpleStakeRewardIndex == index) continue;
+            if (_wrapStakeRewardIndex == index) continue;
 
-            uint256 deltaIndex = index - _simpleStakeRewardIndex;
+            uint256 deltaIndex = index - _wrapStakeRewardIndex;
             if (deltaIndex > 0) {
-                uint256 rewardAccrued = _simpleStakeRewardAccrued + rewardShares.mulDown(deltaIndex);
-                simpleStakeRewardIndex[token] = index.Uint128();
-                simpleStakeRewardAccrued[token] = rewardAccrued.Uint128();
+                uint256 rewardAccrued = _wrapStakeRewardAccrued + rewardShares.mulDown(deltaIndex);
+                wrapStakeRewardIndex[token] = index.Uint128();
+                wrapStakeRewardAccrued[token] = rewardAccrued.Uint128();
             }
         }
     }
@@ -88,7 +88,7 @@ abstract contract PositionRewardManager is IPositionRewardManager {
 
     function rewardIndexesCurrent() external virtual returns (uint256[] memory);
 
-    function redeemSimpleStakeRewards() external virtual;
+    function redeemWrapStakeRewards() external virtual;
 
     function batchRedeemReward(uint256[] calldata positionIds) external virtual;
 

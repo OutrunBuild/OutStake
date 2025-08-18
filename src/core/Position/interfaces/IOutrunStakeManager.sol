@@ -64,7 +64,7 @@ interface IOutrunStakeManager {
         uint256 SPAmount
     ) external view returns (uint256 redeemableSyAmount);
 
-    function simpleStake(
+    function wrapStake(
         uint128 amountInSY, 
         address UPTRecipient
     ) external returns (uint128 UPTAmount, uint256 mintFee);
@@ -104,7 +104,7 @@ interface IOutrunStakeManager {
         uint256 SPBurned
     ) external;
 
-    function keepSimpleRedeem(address receiver, uint128 amountInUPT) external;
+    function keepWrapRedeem(address receiver, uint128 amountInUPT) external;
 
     function transferYields(address receiver, uint256 syAmount) external;
 
@@ -131,7 +131,7 @@ interface IOutrunStakeManager {
     function setProtocolFeeRate(uint256 protocolFeeRate) external;
 
 
-    event SimpleStake(uint128 amountInSY, uint128 amountInUPT, address indexed UPTRecipient);
+    event WrapStake(uint128 amountInSY, uint128 amountInUPT, address indexed UPTRecipient);
 
     event Stake(
         uint256 indexed positionId,
@@ -182,7 +182,7 @@ interface IOutrunStakeManager {
         uint256 keeperFee
     );
 
-    event KeepSimpleRedeem(
+    event KeepWrapRedeem(
         address indexed receiver,
         uint256 amountInUPT,
         uint256 amountInSY,
