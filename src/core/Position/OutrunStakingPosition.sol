@@ -40,7 +40,7 @@ contract OutrunStakingPosition is
     uint256 public syWrapStaking;
     LockupDuration public lockupDuration;
 
-    uint256 public MTV;             //Mint-to-Value Ratio
+    uint256 public MTV;             // Mint-to-Value Ratio
     uint256 public mintFeeRate;
     uint256 public keeperFeeRate;
     uint256 public protocolFeeRate;
