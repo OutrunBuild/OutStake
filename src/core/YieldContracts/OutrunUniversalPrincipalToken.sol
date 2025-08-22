@@ -45,7 +45,11 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
      * @param amount - Amount of UPT
      */
     function mint(address receiver, uint256 amount) external override whenNotPaused {
-        require(mintingStatusTable[msg.sender].mintingCap > 0, PermissionDenied());
+        require(amount !=0 && receiver != address(0), ZeroInput());
+        
+        uint256 mintingCap = mintingStatusTable[msg.sender].mintingCap;
+        uint256 amountInMinted = mintingStatusTable[msg.sender].amountInMinted;
+        require(amountInMinted + amount <= mintingCap, ReachMintCap());
 
         mintingStatusTable[msg.sender].amountInMinted += amount;
         _mint(receiver, amount);
@@ -68,7 +72,14 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
      * @notice User must have approved msg.sender to spend UPT
      */
     function burn(address account, uint256 amount) external override {
+        uint256 amountInMinted = mintingStatusTable[msg.sender].amountInMinted;
+        require(amountInMinted >= amount, ReachBurnCap());
+
         if(msg.sender != account) _spendAllowance(account, msg.sender, amount);
         _burn(account, amount);
+
+        mintingStatusTable[msg.sender].amountInMinted = amountInMinted - amount;
+
+        emit BurnUPT(msg.sender, amount);
     }
 }

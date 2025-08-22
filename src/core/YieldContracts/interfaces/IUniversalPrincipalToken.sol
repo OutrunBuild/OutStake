@@ -19,7 +19,14 @@ interface IUniversalPrincipalToken is IBurnable {
 	function mint(address receiver, uint256 amount) external;
 	
 
-	event MintUPT(address indexed SP, address receiver, uint256 amount);
+	event MintUPT(address indexed minter, address receiver, uint256 amount);
 
-	error PermissionDenied();
+	event BurnUPT(address indexed minter, uint256 amount);
+
+
+	error ZeroInput();
+
+	error ReachMintCap();
+
+	error ReachBurnCap();
 }
