@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { SYBase, ArrayLib } from "../../SYBase.sol";
+import { SYBase } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
 import { SYUtils } from "../../../libraries/SYUtils.sol";
 import { IERC20Rebasing } from "../../../../external/blast/IERC20Rebasing.sol";
 import { BlastGovernorable } from "../../../../external/blast/BlastGovernorable.sol";

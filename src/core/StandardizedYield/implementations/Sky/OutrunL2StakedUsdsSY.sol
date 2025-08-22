@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { SYBase, ArrayLib } from "../../SYBase.sol";
+import { SYBase } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
 import { IPSM3 } from "../../../../external/sky/IPSM3.sol";
 
 contract OutrunL2StakedUsdsSY is SYBase {

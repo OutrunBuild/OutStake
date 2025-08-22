@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { SYBase, ArrayLib } from "../../SYBase.sol";
-import { IWstETH } from "../../../../external/lido/IWstETH.sol";
+import { SYBase } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
 import { IExchangeRateOracle } from "../../../../oracles/interfaces/IExchangeRateOracle.sol";
 
 contract OutrunL2WstETHSY is SYBase {

@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-import { ArrayLib } from "../libraries/ArrayLib.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 import { IStandardizedYield } from "./IStandardizedYield.sol";
 import { OutrunERC20, IERC20Metadata } from "../common/OutrunERC20.sol";

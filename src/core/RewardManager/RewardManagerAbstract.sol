@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import { IRewardManager } from "./interfaces/IRewardManager.sol";
 import { OutrunMath } from "../libraries/OutrunMath.sol";
-import { ArrayLib } from "../libraries/ArrayLib.sol";
 import { TokenHelper } from "../libraries/TokenHelper.sol";
 
 /**

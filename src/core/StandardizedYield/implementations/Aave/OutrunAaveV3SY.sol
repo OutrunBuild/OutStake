@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import { SYUtils } from "../../../libraries/SYUtils.sol";
 import { IAToken } from "../../../../external/aave/IAToken.sol";
-import { SYBase, ArrayLib, IERC20Metadata } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
+import { SYBase, IERC20Metadata } from "../../SYBase.sol";
 import { IAaveV3Pool } from "../../../../external/aave/IAaveV3Pool.sol";
 import { AaveAdapterLib } from "../../../../external/aave/libraries/AaveAdapterLib.sol";
 

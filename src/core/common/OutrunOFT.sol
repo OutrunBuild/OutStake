@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import { IOFT, OFTCore } from "@layerzerolabs/oft-evm/contracts/OFTCore.sol";
+import { OFTCore } from "@layerzerolabs/oft-evm/contracts/OFTCore.sol";
 
 import { OutrunERC20 } from "./OutrunERC20.sol";
 import { OutrunERC20Pausable } from "./OutrunERC20Pausable.sol";

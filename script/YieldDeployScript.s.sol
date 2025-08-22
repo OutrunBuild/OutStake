@@ -2,13 +2,9 @@
 pragma solidity ^0.8.28;
 
 import "./BaseScript.s.sol";
-import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
-import { OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
-import { IYieldToken } from "../src/core/YieldContracts/interfaces/IYieldToken.sol";
-import { IOutrunDeployer, OutrunDeployer } from "../src/external/deployer/OutrunDeployer.sol";
 import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC4626YieldToken.sol";
-import { IOutrunStakeManager, OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
-import { OutrunUniversalPrincipalToken, IUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
+import { OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
+import { IUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 
 import { ISlisBNBProvider } from "../src/external/lista/ISlisBNBProvider.sol";
 import { IListaBNBStakeManager } from "../src/external/lista/IListaBNBStakeManager.sol";

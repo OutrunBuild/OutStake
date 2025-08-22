@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import { IStETH } from "../../../../external/lido/IStETH.sol";
 import { IWstETH } from "../../../../external/lido/IWstETH.sol";
-import { SYBase, ArrayLib, IERC20Metadata } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
+import { SYBase, IERC20Metadata } from "../../SYBase.sol";
 
 contract OutrunWstETHSY is SYBase {
     address public immutable STETH;

@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
-import { SYBase, ArrayLib } from "../../SYBase.sol";
+import { SYBase } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
 
 contract OutrunStakedUsdsSY is SYBase {
     address public immutable USDS;

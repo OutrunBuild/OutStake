@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.28;
 
-import { SYBase, ArrayLib } from "../../SYBase.sol";
+import { SYBase } from "../../SYBase.sol";
+import { ArrayLib } from "../../../libraries/ArrayLib.sol";
 import { IWeETH } from "../../../../external/etherfi/IWeETH.sol";
 import { ILiquidityPool } from "../../../../external/etherfi/ILiquidityPool.sol";
 import { IDepositAdapter } from "../../../../external/etherfi/IDepositAdapter.sol";

@@ -2,7 +2,8 @@
 pragma solidity ^0.8.28;
 
 import { IMockSUSDS } from "./MockSUSDS.sol";
-import { SYBase, ArrayLib } from "../src/core/StandardizedYield/SYBase.sol";
+import { ArrayLib } from "../src/core/libraries/ArrayLib.sol";
+import { SYBase } from "../src/core/StandardizedYield/SYBase.sol";
 
 /**
  * @dev Just For Memeverse Genesis Test

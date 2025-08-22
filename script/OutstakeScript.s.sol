@@ -15,10 +15,6 @@ import { OutrunERC4626YieldToken } from "../src/core/YieldContracts/OutrunERC462
 import { IOutrunStakeManager, OutrunStakingPosition } from "../src/core/Position/OutrunStakingPosition.sol";
 import { OutrunUniversalPrincipalToken, IUniversalPrincipalToken } from "../src/core/YieldContracts/OutrunUniversalPrincipalToken.sol";
 
-import { OutrunSlisBNBSY } from "../src/core/StandardizedYield/implementations/Lista/OutrunSlisBNBSY.sol";
-import { OutrunBlastUSDSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastUSDSY.sol";
-import { OutrunBlastETHSY } from "../src/core/StandardizedYield/implementations/Blast/OutrunBlastETHSY.sol";
-
 import { Faucet, IFaucet } from "../test/Faucet.sol";
 import { MockUSDC } from "../test/MockUSDC.sol";
 import { MockAUSDC } from "../test/MockAUSDC.sol";
@@ -37,7 +33,6 @@ contract OutstakeScript is BaseScript {
     address internal blastGovernor;
     address internal slisBNB;
     address internal revenuePool;
-    address internal liquidator;
     address internal outrunDeployer;
     address internal outrunRouter;
     address internal memeverseLauncher;
@@ -53,22 +48,20 @@ contract OutstakeScript is BaseScript {
         ubnb = vm.envAddress("UBNB");
         owner = vm.envAddress("OWNER");
         revenuePool = vm.envAddress("REVENUE_POOL");
-        liquidator = vm.envAddress("LIQUIDATOR");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
         protocolFeeRate = uint96(vm.envUint("PROTOCOL_FEE_RATE"));
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
         outrunRouter = vm.envAddress("OUTRUN_ROUTER");
         memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
 
-        // _deployOutrunDeployer(0);
+        _deployOutrunDeployer(1);
 
         _chainsInit();
-
         // _crossChainOFT();
-        // _deployUETH(0);
-        // _deployUUSD(0);
-        // _deployUBNB(0);
-        _deployOutrunRouter(1);
+        // _deployUETH(1);
+        // _deployUUSD(1);
+        // _deployUBNB(1);
+        // _deployOutrunRouter(1);
         // _updateRouterLauncher();
         // _deployMockERC20(0);
         // _deployMockERC20SY(0);
@@ -89,7 +82,7 @@ contract OutstakeScript is BaseScript {
         endpoints[421614] = vm.envAddress("ARBITRUM_SEPOLIA_ENDPOINT");
         endpoints[43113] = vm.envAddress("AVALANCHE_FUJI_ENDPOINT");
         endpoints[80002] = vm.envAddress("POLYGON_AMOY_ENDPOINT");
-        endpoints[57054] = vm.envAddress("SONIC_BLAZE_ENDPOINT");
+        endpoints[57054] = vm.envAddress("SONIC_TESTNET_ENDPOINT");
         endpoints[11155420] = vm.envAddress("OPTIMISTIC_SEPOLIA_ENDPOINT");
         endpoints[300] = vm.envAddress("ZKSYNC_SEPOLIA_ENDPOINT");
         endpoints[59141] = vm.envAddress("LINEA_SEPOLIA_ENDPOINT");
@@ -104,7 +97,7 @@ contract OutstakeScript is BaseScript {
         endpointIds[421614] = uint32(vm.envUint("ARBITRUM_SEPOLIA_EID"));
         endpointIds[43113] = uint32(vm.envUint("AVALANCHE_FUJI_EID"));
         endpointIds[80002] = uint32(vm.envUint("POLYGON_AMOY_EID"));
-        endpointIds[57054] = uint32(vm.envUint("SONIC_BLAZE_EID"));
+        endpointIds[57054] = uint32(vm.envUint("SONIC_TESTNET_EID"));
         endpointIds[11155420] = uint32(vm.envUint("OPTIMISTIC_SEPOLIA_EID"));
         endpointIds[300] = uint32(vm.envUint("ZKSYNC_SEPOLIA_EID"));
         endpointIds[59141] = uint32(vm.envUint("LINEA_SEPOLIA_EID"));
