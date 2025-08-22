@@ -4,19 +4,23 @@ pragma solidity ^0.8.28;
 import { IMockSUSDS } from "./MockSUSDS.sol";
 import { ArrayLib } from "../src/core/libraries/ArrayLib.sol";
 import { SYBase } from "../src/core/StandardizedYield/SYBase.sol";
+import { IExchangeRateOracle } from "../src/oracles/interfaces/IExchangeRateOracle.sol";
 
 /**
  * @dev Just For Memeverse Genesis Test
  */
 contract MockOutrunSUSDSSY is SYBase {
     address public immutable MOCK_USDC;
+    address public ORACLE;
 
     constructor(
         address _owner,
         address _mockUSDC,
-        address _sUSDS
+        address _sUSDS,
+        address _oracle
     ) SYBase("SY Sky sUSDS", "SY sUSDS", _sUSDS, _owner) {
         MOCK_USDC = _mockUSDC;
+        ORACLE = _oracle;
     }
 
     function _deposit(
@@ -45,8 +49,8 @@ contract MockOutrunSUSDSSY is SYBase {
         }
     }
 
-    function exchangeRate() public pure override returns (uint256 res) {
-        return 1e18;
+    function exchangeRate() public view override returns (uint256 res) {
+        return IExchangeRateOracle(ORACLE).getExchangeRate();
     }
 
     function _previewDeposit(
