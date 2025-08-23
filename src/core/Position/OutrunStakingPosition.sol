@@ -58,8 +58,10 @@ contract OutrunStakingPosition is
         string memory symbol_,
         uint8 decimals_,
         uint256 minStake_,
-        uint96 MTV_,
-        uint96 protocolFeeRate_,
+        uint256 MTV_,
+        uint256 mintFeeRate_,
+        uint256 keeperFeeRate_,
+        uint256 protocolFeeRate_,
         address revenuePool_,
         address _SY,
         address _YT,
@@ -71,6 +73,8 @@ contract OutrunStakingPosition is
         MTV = MTV_;
         minStake = minStake_;
         revenuePool = revenuePool_;
+        mintFeeRate = mintFeeRate_;
+        keeperFeeRate = keeperFeeRate_;
         protocolFeeRate = protocolFeeRate_;
     }
 
