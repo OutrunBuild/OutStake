@@ -41,7 +41,7 @@ arbitrum_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "421614", url = "$
 sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155111", url = "${ETHEREUMSCAN_API_URL}" }
 avalanche_fuji = { key = "${ETHEREUMSCAN_API_KEY}", chain = "43113", url = "${ETHEREUMSCAN_API_URL}" }
 polygon_amoy = { key = "${ETHEREUMSCAN_API_KEY}", chain = "80002", url = "${ETHEREUMSCAN_API_URL}" }
-sonic_testnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "14601", url = "${ETHEREUMSCAN_API_URL}" }
+sonic_testnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "57054", url = "${ETHEREUMSCAN_API_URL}" }
 optimistic_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155420", url = "${ETHEREUMSCAN_API_URL}" }
 zksync_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "300", url = "${ETHEREUMSCAN_API_URL}" }
 linea_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "59141", url = "${ETHEREUMSCAN_API_URL}" }
@@ -51,6 +51,9 @@ scroll_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "534351", url = "${E
 bsc_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "56", url = "${ETHEREUMSCAN_API_URL}" }
 
 [lint]
-exclude_lints = ["mixed-case-variable", "mixed-case-function", "screaming-snake-case-immutable", "unaliased-plain-import"]
+exclude_lints = [
+    "mixed-case-variable", "mixed-case-function", "screaming-snake-case-immutable", 
+    "screaming-snake-case-const", "unaliased-plain-import"
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

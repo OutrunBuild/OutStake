@@ -19,6 +19,8 @@ import { Faucet, IFaucet } from "../test/Faucet.sol";
 import { MockUSDC } from "../test/MockUSDC.sol";
 import { MockAUSDC } from "../test/MockAUSDC.sol";
 import { MockSUSDS } from "../test/MockSUSDS.sol";
+import { MockAUSDCOracle } from "../test/MockAUSDCOracle.sol";
+import { MockSUSDSOracle } from "../test/MockSUSDSOracle.sol";
 import { MockOutrunAUSDCSY } from "../test/MockOutrunAUSDCSY.sol";
 import { MockOutrunSUSDSSY } from "../test/MockOutrunSUSDSSY.sol";
 
@@ -30,6 +32,7 @@ contract OutstakeScript is BaseScript {
     address internal ubnb;
 
     address internal owner;
+    address internal keeper;
     address internal blastGovernor;
     address internal slisBNB;
     address internal revenuePool;
@@ -37,7 +40,10 @@ contract OutstakeScript is BaseScript {
     address internal outrunRouter;
     address internal memeverseLauncher;
 
-    uint96 internal protocolFeeRate;
+    uint256 internal mtv;
+    uint256 internal mintFeeRate;
+    uint256 internal keeperFeeRate;
+    uint256 internal protocolFeeRate;
 
     mapping(uint32 chainId => address) public endpoints;
     mapping(uint32 chainId => uint32) public endpointIds;
@@ -47,14 +53,19 @@ contract OutstakeScript is BaseScript {
         uusd = vm.envAddress("UUSD");
         ubnb = vm.envAddress("UBNB");
         owner = vm.envAddress("OWNER");
+        keeper = vm.envAddress("KEEPER");
         revenuePool = vm.envAddress("REVENUE_POOL");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
-        protocolFeeRate = uint96(vm.envUint("PROTOCOL_FEE_RATE"));
+        mtv = vm.envUint("MTV");
+
+        mintFeeRate = vm.envUint("MINT_FEE_RATE");
+        keeperFeeRate = vm.envUint("KEEPER_FEE_RATE");
+        protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
         blastGovernor = vm.envAddress("BLAST_GOVERNOR");
         outrunRouter = vm.envAddress("OUTRUN_ROUTER");
         memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
 
-        _deployOutrunDeployer(1);
+        // _deployOutrunDeployer(1);
 
         _chainsInit();
         // _crossChainOFT();
@@ -63,10 +74,16 @@ contract OutstakeScript is BaseScript {
         // _deployUBNB(1);
         // _deployOutrunRouter(1);
         // _updateRouterLauncher();
-        // _deployMockERC20(0);
-        // _deployMockERC20SY(0);
-        // _supportMockAUSDC(0);
-        // _supportMockSUSDS(0);
+        // _deployMockERC20(1);
+        // _deployMockOracle(1);
+        // _deployMockERC20SY(1);
+        // _supportMockAUSDC(2);   // 50000 runs
+        // _supportMockSUSDS(2);   // 50000 runs
+
+        IOutrunStakeManager(0xB1407b96b99c5F75d4a80b8A1bd7EB27735684CD).setLockupDuration(1, 365);
+        IOutrunStakeManager(0xB1407b96b99c5F75d4a80b8A1bd7EB27735684CD).addKeeper(0xcae21365145C467F8957607aE364fb29Ee073209);
+        IOutrunStakeManager(0xCC365266743da4546bC85A22b953AB51E88983ed).setLockupDuration(1, 365);
+        IOutrunStakeManager(0xCC365266743da4546bC85A22b953AB51E88983ed).addKeeper(0xcae21365145C467F8957607aE364fb29Ee073209);
     }
 
     function _deployOutrunDeployer(uint256 nonce) internal {
@@ -230,7 +247,7 @@ contract OutstakeScript is BaseScript {
         omnichainIds[5] = 57054;        // Sonic Blaze
         omnichainIds[6] = 168587773;    // Blast Sepolia
         omnichainIds[7] = 534351;       // Scroll Sepolia
-        omnichainIds[8] = 11155111;    // Sepolia
+        omnichainIds[8] = 11155111;     // Sepolia
         // omnichainIds[9] = 10143;     // Monad Testnet
         // omnichainIds[10] = 80069;    // Bera Sepolia
         // omnichainIds[11] = 59141;    // Linea Sepolia
@@ -308,6 +325,25 @@ contract OutstakeScript is BaseScript {
         console.log("MockSUSDS deployed on %s", mockSUSDSAddr);
     }
 
+    function _deployMockOracle(uint256 nonce) internal {
+        bytes32 salt = keccak256(abi.encodePacked("MockAUSDCOracle", nonce));
+        bytes memory creationCode = abi.encodePacked(
+            type(MockAUSDCOracle).creationCode,
+            abi.encode(owner)
+        );
+        address mockAUSDCOracle = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+
+        salt = keccak256(abi.encodePacked("MockSUSDSOracle", nonce));
+        creationCode = abi.encodePacked(
+            type(MockSUSDSOracle).creationCode,
+            abi.encode(owner)
+        );
+        address mockSUSDSOracle = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+
+        console.log("MockAUSDCOracle deployed on %s", mockAUSDCOracle);
+        console.log("MockSUSDSOracle deployed on %s", mockSUSDSOracle);
+    }
+
     function _deployMockERC20SY(uint256 nonce) internal {
         bytes32 salt = keccak256(abi.encodePacked("MockOutrunAUSDCSY", nonce));
         bytes memory creationCode = abi.encodePacked(
@@ -315,7 +351,8 @@ contract OutstakeScript is BaseScript {
             abi.encode(
                 owner, 
                 vm.envAddress("MOCK_USDC"), 
-                vm.envAddress("MOCK_AUSDC")
+                vm.envAddress("MOCK_AUSDC"),
+                vm.envAddress("MOCK_AUSDC_ORACLE")
             )
         );
         address aUSDCSYAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
@@ -327,7 +364,8 @@ contract OutstakeScript is BaseScript {
             abi.encode(
                 owner, 
                 vm.envAddress("MOCK_USDC"), 
-                vm.envAddress("MOCK_SUSDS")
+                vm.envAddress("MOCK_SUSDS"),
+                vm.envAddress("MOCK_SUSDS_ORACLE")
             )
         );
         address sUSDSSYAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
@@ -362,6 +400,9 @@ contract OutstakeScript is BaseScript {
                 "SP aUSDC",
                 18,
                 0,
+                mtv,
+                mintFeeRate,
+                keeperFeeRate,
                 protocolFeeRate,
                 revenuePool,
                 aUSDCSYAddress,
@@ -372,7 +413,8 @@ contract OutstakeScript is BaseScript {
         address aUSDCSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         IUniversalPrincipalToken(uusd).grantMintingCap(aUSDCSPAddress, 1000000000 ether);
-        IOutrunStakeManager(aUSDCSPAddress).setLockupDuration(0, 365);
+        IOutrunStakeManager(aUSDCSPAddress).setLockupDuration(1, 365);
+        IOutrunStakeManager(aUSDCSPAddress).addKeeper(keeper);
         IYieldToken(aUSDCYTAddress).initialize(aUSDCSYAddress, aUSDCSPAddress);
 
         console.log("SP_AUSDC deployed on %s", aUSDCSPAddress);
@@ -407,6 +449,8 @@ contract OutstakeScript is BaseScript {
                 "SP sUSDS",
                 18,
                 0,
+                mtv,
+                mintFeeRate,
                 protocolFeeRate,
                 revenuePool,
                 sUSDSSYAddress,
@@ -417,7 +461,8 @@ contract OutstakeScript is BaseScript {
         address sUSDSSPAddress = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
 
         IUniversalPrincipalToken(uusd).grantMintingCap(sUSDSSPAddress, 1000000000 ether);
-        IOutrunStakeManager(sUSDSSPAddress).setLockupDuration(0, 365);
+        IOutrunStakeManager(sUSDSSPAddress).setLockupDuration(1, 365);
+        IOutrunStakeManager(sUSDSSPAddress).addKeeper(keeper);
         IYieldToken(sUSDSYTAddress).initialize(sUSDSSYAddress, sUSDSSPAddress);
 
         console.log("SP_SUSDS deployed on %s", sUSDSSPAddress);

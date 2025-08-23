@@ -24,8 +24,10 @@ contract YieldDeployScript is BaseScript {
     address internal keeper;
     address internal outrunDeployer;
 
-    uint96 internal mtv;
-    uint96 internal protocolFeeRate;
+    uint256 internal mtv;
+    uint256 internal mintFeeRate;
+    uint256 internal keeperFeeRate;
+    uint256 internal protocolFeeRate;
 
     function run() public broadcaster {
         UETH = vm.envAddress("UETH");
@@ -35,9 +37,12 @@ contract YieldDeployScript is BaseScript {
         revenuePool = vm.envAddress("REVENUE_POOL");
         keeper = vm.envAddress("KEEPER");
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
-        mtv = uint96(vm.envUint("MTV"));
-        protocolFeeRate = uint96(vm.envUint("PROTOCOL_FEE_RATE"));
+        mtv = vm.envUint("MTV");
+        mintFeeRate = vm.envUint("MINT_FEE_RATE");
+        keeperFeeRate = vm.envUint("KEEPER_FEE_RATE");
+        protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
 
+        // 50000 runs
         // _supportWstETHOnSepolia();
         // _supportSUSDeOnSepolia();
         // _supportAUSDC();
@@ -68,7 +73,7 @@ contract YieldDeployScript is BaseScript {
             18,
             owner, 
             revenuePool, 
-            protocolFeeRate
+            uint96(protocolFeeRate)
         );
         address wstETHYTAddress = address(YT_wstETH);
 
@@ -80,6 +85,8 @@ contract YieldDeployScript is BaseScript {
             18,
             0,
             mtv,
+            mintFeeRate,
+            keeperFeeRate,
             protocolFeeRate,
             revenuePool,
             wstETHSYAddress,
@@ -122,7 +129,7 @@ contract YieldDeployScript is BaseScript {
             18,
             owner, 
             revenuePool, 
-            protocolFeeRate
+            uint96(protocolFeeRate)
         );
         address sUSDeYTAddress = address(YT_sUSDe);
 
@@ -134,6 +141,8 @@ contract YieldDeployScript is BaseScript {
             18,
             0,
             mtv,
+            mintFeeRate,
+            keeperFeeRate,
             protocolFeeRate,
             revenuePool,
             sUSDeSYAddress,
@@ -185,7 +194,7 @@ contract YieldDeployScript is BaseScript {
             18,
             owner, 
             revenuePool, 
-            protocolFeeRate
+            uint96(protocolFeeRate)
         );
         address aUSDCYTAddress = address(YT_aUSDC);
 
@@ -197,6 +206,8 @@ contract YieldDeployScript is BaseScript {
             18,
             0,
             mtv,
+            mintFeeRate,
+            keeperFeeRate,
             protocolFeeRate,
             revenuePool,
             aUSDCSYAddress,
@@ -240,7 +251,7 @@ contract YieldDeployScript is BaseScript {
             18,
             owner, 
             revenuePool, 
-            protocolFeeRate
+            uint96(protocolFeeRate)
         );
         address slisBNBYTAddress = address(YT_slisBNB);
 
@@ -252,6 +263,8 @@ contract YieldDeployScript is BaseScript {
             18,
             0,
             mtv,
+            mintFeeRate,
+            keeperFeeRate,
             protocolFeeRate,
             revenuePool,
             slisBNBSYAddress,
