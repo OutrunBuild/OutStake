@@ -190,11 +190,11 @@ contract OutrunStakingPosition is
         SPMinted = principalValue;
         positions[positionId] = Position(
             amountInSY, 
-            principalValue, 
+            deadline,
             0, 
             uint128(calcUPTAmount(principalValue, YTMinted)), 
+            principalValue, 
             SPMinted, 
-            deadline,
             initOwner
         );
         IYieldToken(YT).mint(initOwner, YTMinted);
