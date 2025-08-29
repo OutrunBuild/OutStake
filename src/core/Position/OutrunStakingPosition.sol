@@ -29,7 +29,6 @@ contract OutrunStakingPosition is
     Pausable, 
     Ownable
 {
-    uint256 public constant DAY = 24 * 3600;
     address public immutable SY;
     address public immutable YT;
     
@@ -51,6 +50,8 @@ contract OutrunStakingPosition is
     mapping(address keeper => bool) public keepers;
 
     mapping(uint256 positionId => Position) public positions;
+
+    mapping(uint256 positionId => mapping(address user => uint256)) public userStoredUPTIndexes;
 
     constructor(
         address owner_,
@@ -123,6 +124,37 @@ contract OutrunStakingPosition is
     }
 
     /**
+     * @dev Calculate the index of the amount of UPTs that can be split from the position as time progresses.
+     */
+    function calcCurrentUPTIndex(uint256 positionId) public view returns (uint256 index) {
+        Position storage position = positions[positionId];
+        uint128 deadline = position.deadline;
+        uint128 startTime = position.startTime;
+        uint256 currentTime = block.timestamp;
+        uint128 initPrincipal = position.initPrincipal;
+        uint128 SPMinted = position.SPMinted;
+        if (currentTime > deadline) return initPrincipal / SPMinted;
+
+        uint128 initUPTMintable = position.initUPTMintable;
+        index = (
+            Math.mulDiv(
+                position.initPrincipal - initUPTMintable,
+                currentTime - startTime,
+                deadline - startTime
+            ) + initUPTMintable
+        ) / SPMinted;
+    }
+
+    /**
+     * @dev Calculate the amount of UPTs that can be split from the SP token.
+     */
+    function calcUPTSeparateable(uint256 positionId, uint256 amountInSP) external view override returns (uint256 UPTMintable, bool isNegative) {
+        if (negativeYields > 0) return (0, true);
+
+        UPTMintable = amountInSP * calcCurrentUPTIndex(positionId);
+    }
+
+    /**
      * @dev Preview the token mintable amount before stake
      * @param amountInSY - Staked amount of SY
      * @param lockupDays - User can redeem after lockupDays
@@ -143,15 +175,21 @@ contract OutrunStakingPosition is
     /**
      * @dev Preview redeemable SY amount before redeem
      * @param positionId - Position Id
-     * @param SPAmount - Amount of SPAmount
+     * @param SPBurned - Amount of SP burned
      */
     function previewRedeem(
         uint256 positionId, 
-        uint256 SPAmount
+        uint256 SPBurned
     ) external view override returns (uint256 redeemableSyAmount) {
-        Position memory position = positions[positionId];
-        uint256 redeemedPrincipalValue = Math.mulDiv(position.initPrincipal, SPAmount, position.SPMinted);
-        redeemableSyAmount = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemedPrincipalValue);
+        Position storage position = positions[positionId];
+        uint128 redeemablePrincipalValue = _calcRedeemablePrincipalValue(
+            negativeYields, 
+            totalPrincipalValue, 
+            position.initPrincipal, 
+            SPBurned, 
+            position.SPMinted
+        );
+        redeemableSyAmount = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue);
     }
 
     /**
@@ -182,19 +220,21 @@ contract OutrunStakingPosition is
         unchecked {
             syTotalStaking += amountInSY;
             totalPrincipalValue += principalValue;
-            deadline = uint128(block.timestamp + lockupDays * DAY);
+            deadline = uint128(block.timestamp + lockupDays * 1 days);
             YTMinted = amountInSY * lockupDays;
         }
 
         positionId = _nextId();
         SPMinted = principalValue;
         positions[positionId] = Position(
-            amountInSY, 
+            amountInSY,
+            principalValue,
+            uint128(block.timestamp),
             deadline,
-            0, 
-            uint128(calcUPTAmount(principalValue, YTMinted)), 
-            principalValue, 
-            SPMinted, 
+            0,
+            uint128(calcUPTAmount(principalValue, YTMinted)),
+            SPMinted,
+            0,
             initOwner
         );
         IYieldToken(YT).mint(initOwner, YTMinted);
@@ -243,55 +283,99 @@ contract OutrunStakingPosition is
     /**
      * @dev Allow the separation of UPT from transferableSP
      * @param positionId - Position Id
-     * @param SPAmount - Amount of transferableSP
+     * @param amountInSP - Amount of transferableSP
      * @param SPRecipient - Receiver of nonTransferableSP
      * @param UPTRecipient - Receiver of UPT
      * @return amountInUPT - UPT separated Amount
      */
     function separateUPT(
         uint256 positionId, 
-        uint256 SPAmount, 
+        uint128 amountInSP, 
         address SPRecipient, 
         address UPTRecipient
-    ) external override nonReentrant whenNotPaused returns (uint128 amountInUPT, uint256 mintFee) {
-        require(positionId != 0 && SPAmount != 0 && SPRecipient != address(0) && UPTRecipient != address(0), ZeroInput());
-        require(balanceOf(msg.sender, positionId) >= SPAmount, InsufficientSPBalance());
+    ) external override nonReentrant whenNotPaused returns (uint128 amountInUPT) {
+        require(positionId != 0 && amountInSP != 0 && SPRecipient != address(0) && UPTRecipient != address(0), ZeroInput());
+        require(balanceOf(msg.sender, positionId) >= amountInSP, InsufficientSPBalance());
+        require(negativeYields == 0, NegativeYields());
 
-        Position storage position = positions[positionId];
-        require(block.timestamp < position.deadline, PositionMatured());
+        // separateFromNonTransferableSP
+        // Process the change in UPTMintable for the SPRecipient address.
+        uint256 index;
+        uint256 amountInDeltaMint;
+        (amountInDeltaMint, index) = _separateUPTFromNSP(positionId, SPRecipient);
 
-        if (SPRecipient != msg.sender) transfer(SPRecipient, positionId, SPAmount);
+        userStoredUPTIndexes[positionId][SPRecipient] = index;
 
-        amountInUPT = uint128(Math.mulDiv(position.UPTMintable, SPAmount, position.SPMinted));
+        // separateFromTransferableSP
+        if (SPRecipient != msg.sender) transfer(SPRecipient, positionId, amountInSP);
+
+        amountInUPT = uint128(amountInSP * index + amountInDeltaMint);
         require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInUPT, UPTMintingCapReached());
 
+        Position storage position = positions[positionId];
         unchecked {
             position.UPTMinted += amountInUPT;
-            nonTransferableBalanceOf[SPRecipient][positionId] += SPAmount;
+            nonTransferableBalanceOf[SPRecipient][positionId] += amountInSP;
+            position.SPSeparated += amountInSP;
         }
 
-        if (block.timestamp >= position.deadline) {
-            mintFee = Math.mulDiv(amountInUPT, mintFeeRate, 1e18);
-            IUniversalPrincipalToken(UPT).mint(revenuePool, mintFee);
-            IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT - mintFee);
-        } else {
-            IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT);
-        }
+        IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT + amountInDeltaMint);
         
-        emit SeparateUPT(positionId, SPAmount, amountInUPT, SPRecipient, UPTRecipient);
+        emit SeparateUPT(positionId, amountInSP, amountInUPT, amountInDeltaMint, SPRecipient, UPTRecipient);
+    }
+
+    /**
+     * @dev Allow the separation of UPT from nonTransferableSP.
+            MUST split all nonTransferableSP in the wallet.
+     * @param positionId - Position Id
+     * @param UPTRecipient - Receiver of UPT
+     * @return amountInUPT - UPT separated Amount
+     */
+    function separateUPTFromNSP(
+        uint256 positionId, 
+        address UPTRecipient
+    ) external override nonReentrant whenNotPaused returns (uint128 amountInUPT) {
+        require(positionId != 0 && UPTRecipient != address(0), ZeroInput());
+        require(negativeYields == 0, NegativeYields());
+
+        // separateFromNonTransferableSP
+        // Process the change in UPTMintable for the SPRecipient address.
+        uint256 index;
+        uint256 amountInDeltaMint;
+        (amountInDeltaMint, index) = _separateUPTFromNSP(positionId, msg.sender);
+        require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInDeltaMint, UPTMintingCapReached());
+
+        userStoredUPTIndexes[positionId][msg.sender] = index;
+
+        unchecked {
+            positions[positionId].UPTMinted += amountInUPT;
+        }
+
+        IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInDeltaMint);
+    }
+
+    function _separateUPTFromNSP(uint256 positionId, address account) internal returns (uint256 amountInDeltaMint, uint256 index) {
+        index = calcCurrentUPTIndex(positionId);
+        uint256 lastIndex = userStoredUPTIndexes[positionId][account];
+        uint256 nonTransferableSPBalance = nonTransferableBalanceOf[account][positionId];
+        if (lastIndex != 0 && nonTransferableSPBalance != 0) {
+            uint256 deltaIndex = index - lastIndex;
+            amountInDeltaMint = deltaIndex * nonTransferableSPBalance;
+            emit DeltaMint(positionId, nonTransferableSPBalance, amountInDeltaMint);
+        }
     }
 
     /**
      * @dev Allow UPT to be encapsulated into transferable SP
      * @param positionId - Position Id
-     * @param SPAmount - Amount of nonTransferableSP
+     * @param amountInSP - Amount of nonTransferableSP
      */
-    function encapsulateUPT(uint256 positionId, uint256 SPAmount) external override nonReentrant whenNotPaused returns (uint256 UPTBurned) {
-        require(positionId != 0 && SPAmount != 0, ZeroInput());
+    function encapsulateUPT(uint256 positionId, uint256 amountInSP) external override nonReentrant whenNotPaused returns (uint256 UPTBurned) {
+        require(positionId != 0 && amountInSP != 0, ZeroInput());
 
-        UPTBurned = _encapsulateUPT(positions[positionId], positionId, SPAmount);
+        UPTBurned = _encapsulateUPT(positions[positionId], positionId, amountInSP);
 
-        emit EncapsulateUPT(msg.sender, positionId, SPAmount, UPTBurned);
+        emit EncapsulateUPT(msg.sender, positionId, amountInSP, UPTBurned);
     }
 
     /**
@@ -342,26 +426,29 @@ contract OutrunStakingPosition is
      */
     function keepRedeem(
         address SPOwner,
-        address receiver, 
-        uint256 positionId, 
+        address receiver,
+        uint256 positionId,
         uint256 SPBurned
     ) external override accumulateYields nonReentrant whenNotPaused {
         require(keepers[msg.sender], PermissionDenied());
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
         Position storage position = positions[positionId];
-        uint256 deadline = position.deadline;
+        uint128 deadline = position.deadline;
         require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
 
         /** EncapsulateUPT **/
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[SPOwner][positionId];
         require(nonTransferableSPBalance >= SPBurned, InsufficientSPBalance());
 
-        uint256 UPTBurned = Math.mulDiv(position.UPTMintable, SPBurned, position.SPMinted, Math.Rounding.Ceil);
+        uint128 UPTMinted = position.UPTMinted;
+        uint128 SPSeparated = position.SPSeparated;
+        uint256 UPTBurned = Math.mulDiv(UPTMinted, SPBurned, SPSeparated, Math.Rounding.Ceil);
         IBurnable(UPT).burn(msg.sender, UPTBurned);  
 
         unchecked {
-            position.UPTMinted -= uint128(UPTBurned);
+            position.UPTMinted = UPTMinted - uint128(UPTBurned);
+            position.SPSeparated = SPSeparated - uint128(SPBurned);
             nonTransferableBalanceOf[SPOwner][positionId] = nonTransferableSPBalance - SPBurned;
         }
 
@@ -578,17 +665,20 @@ contract OutrunStakingPosition is
     function _encapsulateUPT(
         Position storage position, 
         uint256 positionId, 
-        uint256 SPAmount
+        uint256 amountInSP
     ) internal returns (uint256 UPTBurned) {
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[msg.sender][positionId];
-        require(nonTransferableSPBalance >= SPAmount, InsufficientSPBalance());
+        require(nonTransferableSPBalance >= amountInSP, InsufficientSPBalance());
 
-        UPTBurned = Math.mulDiv(position.UPTMintable, SPAmount, position.SPMinted, Math.Rounding.Ceil);
+        uint128 UPTMinted = position.UPTMinted;
+        uint128 SPSeparated = position.SPSeparated;
+        UPTBurned = Math.mulDiv(UPTMinted, amountInSP, SPSeparated, Math.Rounding.Ceil);
         IBurnable(UPT).burn(msg.sender, UPTBurned);  
 
         unchecked {
-            position.UPTMinted -= uint128(UPTBurned);
-            nonTransferableBalanceOf[msg.sender][positionId] = nonTransferableSPBalance - SPAmount;
+            position.UPTMinted = UPTMinted - uint128(UPTBurned);
+            position.SPSeparated = SPSeparated - uint128(amountInSP);
+            nonTransferableBalanceOf[msg.sender][positionId] = nonTransferableSPBalance - amountInSP;
         }
     }
 
@@ -598,20 +688,20 @@ contract OutrunStakingPosition is
         uint256 positionId, 
         uint256 SPBurned
     ) internal returns (uint128 redeemedPrincipal) {
-        uint256 deadline = position.deadline;
+        uint128 deadline = position.deadline;
+        uint128 SYStaked = position.SYStaked;
         require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
 
-        uint128 SYStaked = position.SYStaked;
         _redeemRewards(position.initOwner, positionId, SYStaked);
 
         _burn(msg.sender, positionId, SPBurned);
 
         uint128 _totalPrincipalValue = totalPrincipalValue;
         uint128 redeemablePrincipalValue = _calcRedeemablePrincipalValue(
-            negativeYields, 
-            _totalPrincipalValue, 
-            position.initPrincipal, 
-            SPBurned, 
+            negativeYields,
+            _totalPrincipalValue,
+            position.initPrincipal,
+            SPBurned,
             position.SPMinted
         );
         redeemedPrincipal = uint128(SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue));

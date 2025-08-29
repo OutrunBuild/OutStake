@@ -7,11 +7,13 @@ pragma solidity ^0.8.28;
 interface IOutrunStakeManager {
     struct Position {
         uint128 SYStaked;               // Amount of SY staked
-        uint128 deadline;               // Position unlock time
-        uint128 UPTMinted;               // Amount of UPT minted
-        uint128 UPTMintable;             // Amount of UPT mintable
         uint128 initPrincipal;          // Initial principal value, non-redeemable actual principal
+        uint128 startTime;              // Position lock time
+        uint128 deadline;               // Position unlock time
+        uint128 UPTMinted;              // Amount of UPT minted
+        uint128 initUPTMintable;        // Amount of UPT mintable
         uint128 SPMinted;               // Amount of SP minted
+        uint128 SPSeparated;            // Amount of SP separated
         address initOwner;              // Address of init staker(For redeem reward)
     }
 
@@ -36,7 +38,7 @@ interface IOutrunStakeManager {
 
     error InsufficientSPBalance();
 
-    error LockTimeNotExpired(uint256 deadLine);
+    error LockTimeNotExpired(uint128 deadLine);
 
     error MinStakeInsufficient(uint256 minStake);
 
@@ -53,6 +55,8 @@ interface IOutrunStakeManager {
 
     function calcUPTAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 calcAmount);
 
+    function calcUPTSeparateable(uint256 positionId, uint256 amountInSP) external view returns (uint256 UPTMintable, bool isNegative);
+
     function previewStake(
         uint256 amountInSY, 
         uint256 lockupDays,
@@ -61,7 +65,7 @@ interface IOutrunStakeManager {
     
     function previewRedeem(
         uint256 positionId, 
-        uint256 SPAmount
+        uint256 SPBurned
     ) external view returns (uint256 redeemableSyAmount);
 
     function wrapStake(
@@ -78,12 +82,17 @@ interface IOutrunStakeManager {
 
     function separateUPT(
         uint256 positionId, 
-        uint256 SPAmount, 
+        uint128 amountInSP, 
         address SPRecipient, 
         address UPTRecipient
-    ) external returns (uint128 UPTAmount, uint256 mintFee);
+    ) external returns (uint128 UPTAmount);
 
-    function encapsulateUPT(uint256 positionId, uint256 SPAmount) external returns (uint256 UPTBurned);
+    function separateUPTFromNSP(
+        uint256 positionId, 
+        address UPTRecipient
+    ) external returns (uint128 amountInUPT);
+
+    function encapsulateUPT(uint256 positionId, uint256 amountInSP) external returns (uint256 UPTBurned);
 
     function redeemPrincipalFromSP(
         address receiver, 
@@ -143,10 +152,17 @@ interface IOutrunStakeManager {
         address indexed initOwner
     );
 
+    event DeltaMint(
+        uint256 indexed positionId,
+        uint256 nonTransferableSPBalance,
+        uint256 amountInDeltaMint
+    );
+
     event SeparateUPT(
         uint256 indexed positionId, 
         uint256 transferableSPAmount,
         uint256 amountInUPT,
+        uint256 amountInDeltaMint,
         address indexed SPRecipient, 
         address indexed UPTRecipient
     );
