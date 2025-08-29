@@ -77,13 +77,8 @@ contract OutstakeScript is BaseScript {
         // _deployMockERC20(1);
         // _deployMockOracle(1);
         // _deployMockERC20SY(1);
-        // _supportMockAUSDC(2);   // 50000 runs
-        // _supportMockSUSDS(2);   // 50000 runs
-
-        IOutrunStakeManager(0xB1407b96b99c5F75d4a80b8A1bd7EB27735684CD).setLockupDuration(1, 365);
-        IOutrunStakeManager(0xB1407b96b99c5F75d4a80b8A1bd7EB27735684CD).addKeeper(0xcae21365145C467F8957607aE364fb29Ee073209);
-        IOutrunStakeManager(0xCC365266743da4546bC85A22b953AB51E88983ed).setLockupDuration(1, 365);
-        IOutrunStakeManager(0xCC365266743da4546bC85A22b953AB51E88983ed).addKeeper(0xcae21365145C467F8957607aE364fb29Ee073209);
+        _supportMockAUSDC(6);   // 20000 runs
+        _supportMockSUSDS(6);   // 20000 runs
     }
 
     function _deployOutrunDeployer(uint256 nonce) internal {
