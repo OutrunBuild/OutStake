@@ -109,6 +109,20 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         );
     }
 
+    /**
+     * @dev Preview wrap stake from token
+     */
+    function previewWrapStakeFromToken(
+        address SY,
+        address SP,
+        address tokenIn,
+        uint256 tokenAmount
+    ) external view override returns (uint256 UPTMintable) {
+        uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
+
+        (,, UPTMintable) = IOutrunStakeManager(SP).previewStake(amountInSY, 0, true);
+    }
+
     /** MINT SP, UPT, YT **/
     /**
      * @dev Mint yield tokens(SP, UPT, YT) from yield-Bearing token
@@ -147,6 +161,22 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             amountInSY, 
             stakeParam
         );
+    }
+
+    /**
+     * @dev Wrap stake from token to UPT
+     */
+    function wrapStakeFromToken(
+        address SY,
+        address SP,
+        address tokenIn,
+        uint256 tokenAmount,
+        address UPTRecipient
+    ) external override returns (uint128 UPTMinted, uint256 mintFee) {
+        uint128 amountInSY = uint128(_mintSY(SY, tokenIn, address(this), tokenAmount, 0, true));
+
+        _safeApproveInf(SY, SP);
+        (UPTMinted, mintFee) = IOutrunStakeManager(SP).wrapStake(amountInSY, UPTRecipient);
     }
 
     function _mintYieldTokensFromSY(

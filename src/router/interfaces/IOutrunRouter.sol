@@ -48,6 +48,13 @@ interface IOutrunRouter {
         StakeParam calldata stakeParam
     ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 PTMintable);
 
+    function previewWrapStakeFromToken(
+        address SY,
+        address SP,
+        address tokenIn,
+        uint256 tokenAmount
+    ) external view returns (uint256 UPTMintable);
+
     /** Mint yield tokens(SP, UPT, YT) **/
     function mintYieldTokensFromToken(
         address SY,
@@ -62,7 +69,15 @@ interface IOutrunRouter {
         address SP,
         uint128 amountInSY,
         StakeParam calldata stakeParam
-    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 PTMinted);
+    ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 UPTMinted);
+
+    function wrapStakeFromToken(
+        address SY,
+        address SP,
+        address tokenIn,
+        uint256 tokenAmount,
+        address UPTRecipient
+    ) external returns (uint128 UPTMinted, uint256 mintFee);
 
     /** Redeem YT value **/
     function redeemValueFromYT(
