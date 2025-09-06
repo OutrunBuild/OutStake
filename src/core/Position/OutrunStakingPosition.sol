@@ -191,10 +191,9 @@ contract OutrunStakingPosition is
             SPBurned, 
             position.SPMinted
         );
-
-        amountTokenOut = IStandardizedYield(SY).previewRedeem(
-            tokenOut, SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue)
-        );
+        
+        uint256 redeemedPrincipal = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue);
+        amountTokenOut = tokenOut == SY ? redeemedPrincipal : IStandardizedYield(SY).previewRedeem(tokenOut, redeemedPrincipal);
     }
 
     /**

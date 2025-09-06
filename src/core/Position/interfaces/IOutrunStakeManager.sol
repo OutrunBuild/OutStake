@@ -45,6 +45,12 @@ interface IOutrunStakeManager {
     error InvalidLockupDays(uint256 minLockupDays, uint256 maxLockupDays);
 
 
+    function SY() external view returns (address);
+
+    function YT() external view returns (address);
+
+    function UPT() external view returns (address);
+
     function syTotalStaking() external view returns (uint128);
 
     function totalPrincipalValue() external view returns (uint128);
