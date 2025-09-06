@@ -90,7 +90,7 @@ contract OutrunStakingPosition is
     }
     
     /**
-     * @dev The implied average number of days staked based on YT. It isn't the true average number of days staked for the position.
+     * @notice The implied average number of days staked based on YT. It isn't the true average number of days staked for the position.
      */
     function averageStakingDays() external view override returns (uint256) {
         uint256 _syTotalStaking = syTotalStaking == 0 ? 1 : syTotalStaking;
@@ -98,19 +98,19 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev The total actual principal value
+     * @notice The total actual principal value
      */
     function totalActualPrincipal() external view override returns (uint256) {
         return totalPrincipalValue - negativeYields;
     }
 
     /**
-     * @dev Calculate UPT amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
+     * @notice Calculate UPT amount by YT amount and principal value, reasonable input needs to be provided during simulation calculations.
      */
     function calcUPTAmount(uint256 principalValue, uint256 amountInYT) public view override returns (uint256 calcAmount) {
         int256 totalRedeemableYields = IYieldToken(YT).totalRedeemableYields();
         require(totalRedeemableYields >= 0, NegativeYields());
-        if (amountInYT == 0) return principalValue;
+        if (amountInYT == 0) return principalValue - Math.mulDiv(principalValue, mintFeeRate, 1e18);
         
         uint256 newYTSupply = IERC20(YT).totalSupply() + amountInYT;
         uint256 yieldTokenValue = uint256(SYUtils.syToAsset(
@@ -124,7 +124,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Calculate the index of the amount of UPTs that can be split from the position as time progresses.
+     * @notice Calculate the index of the amount of UPTs that can be split from the position as time progresses.
      */
     function calcCurrentUPTIndex(uint256 positionId) public view returns (uint256 index) {
         Position storage position = positions[positionId];
@@ -146,7 +146,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Calculate the amount of UPTs that can be split from the SP token.
+     * @notice Calculate the amount of UPTs that can be split from the SP token.
      */
     function calcUPTSeparateable(uint256 positionId, uint256 amountInSP) external view override returns (uint256 UPTMintable, bool isNegative) {
         if (negativeYields > 0) return (0, true);
@@ -155,7 +155,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Preview the token mintable amount before stake
+     * @notice Preview the token mintable amount before stake
      * @param amountInSY - Staked amount of SY
      * @param lockupDays - User can redeem after lockupDays
      * @param isSPSeparated - Is SP separated?
@@ -173,7 +173,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Preview redeemable SY amount before redeem
+     * @notice Preview redeemable SY amount before redeem
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
      */
@@ -193,12 +193,12 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Allows user to deposit SY, then mints UPT, YT.
+     * @notice Allows user to deposit SY, then mints UPT, YT.
+     * @dev MUST approve this contract to spend SY
      * @param amountInSY - Staked amount of SY
      * @param lockupDays - User can redeem after lockupDays
      * @param SPRecipient - Receiver of SP
      * @param initOwner - Init owner of position
-     * @notice User must have approved this contract to spend SY
      */
     function stake(
         uint128 amountInSY,
@@ -247,7 +247,8 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Allows user to deposit SY and only mint UPT.
+     * @notice Allows user to deposit SY and only mint UPT.
+     * @dev MUST approve this contract to spend SY
      * @param amountInSY - Staked amount of SY
      * @param UPTRecipient - Init owner of position
      * @notice User must have approved this contract to spend SY
@@ -281,7 +282,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Allow the separation of UPT from transferableSP
+     * @notice Allow the separation of UPT from transferableSP
      * @param positionId - Position Id
      * @param amountInSP - Amount of transferableSP
      * @param SPRecipient - Receiver of nonTransferableSP
@@ -325,8 +326,8 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Allow the separation of UPT from nonTransferableSP.
-            MUST split all nonTransferableSP in the wallet.
+     * @notice Allow the separation of UPT from nonTransferableSP.
+     * @dev MUST split all nonTransferableSP in the wallet.
      * @param positionId - Position Id
      * @param UPTRecipient - Receiver of UPT
      * @return amountInUPT - UPT separated Amount
@@ -380,45 +381,49 @@ contract OutrunStakingPosition is
 
     /**
      * @dev Allows user to redeem principal by burning transferableSP.
-     * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
+     * @param receiver - Receiver of redeemed principal
+     * @param tokenOut - Principal token
      */
     function redeemPrincipalFromSP(
-        address receiver, 
         uint256 positionId, 
-        uint256 SPBurned
+        uint256 SPBurned,
+        address receiver, 
+        address tokenOut
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 redeemedPrincipal) {
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
-        redeemedPrincipal = _redeemPrincipalFromSP(receiver, positions[positionId], positionId, SPBurned);
+        redeemedPrincipal = _redeemPrincipalFromSP(positionId, SPBurned, positions[positionId], receiver, tokenOut);
 
-        emit RedeemPrincipalFromSP(positionId, msg.sender, redeemedPrincipal, SPBurned);
+        emit RedeemPrincipalFromSP(positionId, SPBurned, receiver, tokenOut, redeemedPrincipal);
     }
 
     /**
-     * @dev Allows user to redeem principal by burning nonTransferableSP and UPT.
+     * @notice Allows user to redeem principal by burning nonTransferableSP and UPT.
      * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
      */
     function redeemPrincipalFromNSPAndUPT(
-        address receiver, 
-        uint256 positionId, 
-        uint256 SPBurned
+        uint256 positionId,
+        uint256 SPBurned,
+        address receiver,
+        address tokenOut
     ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 UPTBurned, uint256 redeemedPrincipal) {
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
         Position storage position = positions[positionId];
         UPTBurned = _encapsulateUPT(position, positionId, SPBurned);
-        redeemedPrincipal = _redeemPrincipalFromSP(receiver, position, positionId, SPBurned);
+        redeemedPrincipal = _redeemPrincipalFromSP(positionId, SPBurned, position, receiver, tokenOut);
         
         emit RedeemPrincipalFromNSPAndUPT(positionId, msg.sender, SPBurned, UPTBurned, redeemedPrincipal);
     }
 
     /**
-     * @dev After the expiration of any non-transferable SP, the keepers can redeem the principal on its behalf, 
+     * @notice After the expiration of any non-transferable SP, the keepers can redeem the principal on its behalf, 
             and the position holder will not incur any losses.
+     * @dev MUST approve this contract to spend UPT
      * @param SPOwner - Owner of non-transferable SP
      * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
@@ -485,7 +490,8 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev The Keeper can burn UPT to redeem SY deposited through WrapStake at a 1:1 underlying asset price.
+     * @notice The Keeper can burn UPT to redeem SY deposited through WrapStake at a 1:1 underlying asset price.
+     * @dev MUST approve this contract to spend UPT
      * @param receiver - Receiver of SY
      * @param amountInUPT - Amount of UPT burned
      */
@@ -521,7 +527,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Allow batch redemption of accumulated rewards
+     * @notice Allow batch redemption of accumulated rewards
      * @param positionIds - Array of Position id
      */
     function batchRedeemReward(uint256[] calldata positionIds) external whenNotPaused override {
@@ -544,14 +550,14 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Redeem the rewards generated by SY staked through WrapStake
+     * @notice Redeem the rewards generated by SY staked through WrapStake
      */
     function redeemWrapStakeRewards() external whenNotPaused override {
         _redeemWrapStakeRewards();
     }
     
     /**
-     * @dev Transfer yields when collecting protocol fees and withdrawing yields, only YT can call
+     * @notice Transfer yields when collecting protocol fees and withdrawing yields, only YT can call
      * @param receiver - Address of receiver
      * @param syAmount - Amount of protocol fee
      */
@@ -560,7 +566,7 @@ contract OutrunStakingPosition is
     }
 
     /**
-     * @dev Update the negative yields, only when the total yields is negative (triggered only in extreme cases)
+     * @notice Update the negative yields, only when the total yields is negative (triggered only in extreme cases)
      * @param _negativeYields - negativeYields
      */
     function updateNegativeYields(uint256 _negativeYields) external whenNotPaused override onlyYT {
@@ -683,10 +689,11 @@ contract OutrunStakingPosition is
     }
 
     function _redeemPrincipalFromSP(
-        address receiver, 
-        Position storage position, 
-        uint256 positionId, 
-        uint256 SPBurned
+        uint256 positionId,
+        uint256 SPBurned,
+        Position storage position,
+        address receiver,
+        address tokenOut
     ) internal returns (uint128 redeemedPrincipal) {
         uint128 deadline = position.deadline;
         uint128 SYStaked = position.SYStaked;
@@ -711,7 +718,11 @@ contract OutrunStakingPosition is
             position.SYStaked = SYStaked - redeemedPrincipal;
         }
 
-        _transferSY(receiver, redeemedPrincipal);
+        if (tokenOut == SY) {
+            _transferSY(receiver, redeemedPrincipal);
+        } else {
+            IStandardizedYield(SY).redeem(receiver, redeemedPrincipal, tokenOut, 0, false);
+        }
     }
 
     function _calcRedeemablePrincipalValue(

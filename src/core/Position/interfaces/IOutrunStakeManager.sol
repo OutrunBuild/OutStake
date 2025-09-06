@@ -95,15 +95,17 @@ interface IOutrunStakeManager {
     function encapsulateUPT(uint256 positionId, uint256 amountInSP) external returns (uint256 UPTBurned);
 
     function redeemPrincipalFromSP(
-        address receiver, 
         uint256 positionId, 
-        uint256 SPBurned
+        uint256 SPBurned,
+        address receiver, 
+        address tokenOut
     ) external returns (uint256 redeemedPrincipal);
 
     function redeemPrincipalFromNSPAndUPT(
-        address receiver, 
-        uint256 positionId, 
-        uint256 SPBurned
+        uint256 positionId,
+        uint256 SPBurned,
+        address receiver,
+        address tokenOut
     ) external returns (uint256 UPTBurned, uint256 redeemedPrincipal);
 
     function keepRedeem(
@@ -179,6 +181,14 @@ interface IOutrunStakeManager {
         address indexed account,
         uint256 redeemedPrincipal, 
         uint256 SPBurned
+    );
+
+    event RedeemPrincipalFromSP(
+        uint256 indexed positionId, 
+        uint256 SPBurned, 
+        address indexed receiver, 
+        address indexed tokenOut, 
+        uint256 redeemedPrincipal
     );
 
     event RedeemPrincipalFromNSPAndUPT(
