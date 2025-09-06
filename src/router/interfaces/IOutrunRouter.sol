@@ -72,12 +72,11 @@ interface IOutrunRouter {
     ) external returns (uint256 positionId, uint256 SPMinted, uint256 YTMinted, uint256 UPTMinted);
 
     function wrapStakeFromToken(
-        address SY,
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         address UPTRecipient
-    ) external returns (uint128 UPTMinted, uint256 mintFee);
+    ) external payable returns (uint128 UPTMinted, uint256 mintFee);
 
     /** Redeem YT value **/
     function redeemValueFromYT(
@@ -89,24 +88,18 @@ interface IOutrunRouter {
 
     /** Memeverse Genesis **/
     function genesisByToken(
-        address SY,
         address SP,
-        address UPT,
         address tokenIn,
         uint256 tokenAmount,
         uint256 verseId,
-        address genesisUser,
-        StakeParam calldata stakeParam
+        address genesisUser
     ) external payable;
 
     function genesisBySY(
-        address SY,
         address SP,
-        address UPT,
         uint128 amountInSY,
         uint256 verseId,
-        address genesisUser,
-        StakeParam calldata stakeParam
+        address genesisUser
     ) external;
 
     function setMemeverseLauncher(address memeverseLauncher) external;

@@ -167,12 +167,12 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @dev Wrap stake from token to UPT
      */
     function wrapStakeFromToken(
-        address SY,
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         address UPTRecipient
-    ) external override returns (uint128 UPTMinted, uint256 mintFee) {
+    ) public payable override returns (uint128 UPTMinted, uint256 mintFee) {
+        address SY = IOutrunStakeManager(SP).SY();
         uint128 amountInSY = uint128(_mintSY(SY, tokenIn, address(this), tokenAmount, 0, true));
 
         _safeApproveInf(SY, SP);
@@ -213,45 +213,25 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
     /** Memeverse Genesis **/
     function genesisByToken(
-        address SY,
         address SP,
-        address UPT,
         address tokenIn,
         uint256 tokenAmount,
         uint256 verseId,
-        address genesisUser,
-        StakeParam calldata stakeParam
-    ) external payable {
-        require(
-            stakeParam.isSPSeparated && 
-            stakeParam.initOwner == msg.sender && 
-            stakeParam.lockupDays == 0,
-            InvalidParam()
-        );
-
-        (, , , uint256 amountInUPT) = mintYieldTokensFromToken(SY, SP, tokenIn, tokenAmount, stakeParam);
-        _safeApproveInf(UPT, memeverseLauncher);
+        address genesisUser
+    ) external payable override {
+        (uint128 amountInUPT, ) = wrapStakeFromToken(SP, tokenIn, tokenAmount, address(this));
+        _safeApproveInf(IOutrunStakeManager(SP).UPT(), memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
 
     function genesisBySY(
-        address SY,
         address SP,
-        address UPT,
         uint128 amountInSY,
         uint256 verseId,
-        address genesisUser,
-        StakeParam calldata stakeParam
-    ) external {
-        require(
-            stakeParam.isSPSeparated && 
-            stakeParam.initOwner == msg.sender && 
-            stakeParam.lockupDays == 0,
-            InvalidParam()
-        );
-
-        (, , , uint256 amountInUPT) = mintYieldTokensFromSY(SY, SP, amountInSY, stakeParam);
-        _safeApproveInf(UPT, memeverseLauncher);
+        address genesisUser
+    ) external override {
+        (uint128 amountInUPT, ) = IOutrunStakeManager(SP).wrapStake(amountInSY, address(this));
+        _safeApproveInf(IOutrunStakeManager(SP).UPT(), memeverseLauncher);
         IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
     }
 
