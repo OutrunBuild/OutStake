@@ -65,8 +65,9 @@ interface IOutrunStakeManager {
     
     function previewRedeem(
         uint256 positionId, 
-        uint256 SPBurned
-    ) external view returns (uint256 redeemableSyAmount);
+        uint256 SPBurned,
+        address tokenOut
+    ) external view returns (uint256 amountTokenOut);
 
     function wrapStake(
         uint128 amountInSY, 
@@ -99,14 +100,14 @@ interface IOutrunStakeManager {
         uint256 SPBurned,
         address receiver, 
         address tokenOut
-    ) external returns (uint256 redeemedPrincipal);
+    ) external returns (uint256 amountTokenOut);
 
     function redeemPrincipalFromNSPAndUPT(
         uint256 positionId,
         uint256 SPBurned,
         address receiver,
         address tokenOut
-    ) external returns (uint256 UPTBurned, uint256 redeemedPrincipal);
+    ) external returns (uint256 UPTBurned, uint256 amountTokenOut);
 
     function keepRedeem(
         address SPOwner,
@@ -188,15 +189,16 @@ interface IOutrunStakeManager {
         uint256 SPBurned, 
         address indexed receiver, 
         address indexed tokenOut, 
-        uint256 redeemedPrincipal
+        uint256 amountTokenOut
     );
 
     event RedeemPrincipalFromNSPAndUPT(
         uint256 indexed positionId, 
-        address indexed account, 
         uint256 SPBurned, 
         uint256 UPTBurned, 
-        uint256 redeemedPrincipal
+        address indexed receiver, 
+        address indexed tokenOut, 
+        uint256 amountTokenOut
     );
 
     event KeepRedeem(

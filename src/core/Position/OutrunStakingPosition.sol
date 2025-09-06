@@ -176,11 +176,13 @@ contract OutrunStakingPosition is
      * @notice Preview redeemable SY amount before redeem
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
+     * @param tokenOut - Principal token out
      */
     function previewRedeem(
         uint256 positionId, 
-        uint256 SPBurned
-    ) external view override returns (uint256 redeemableSyAmount) {
+        uint256 SPBurned,
+        address tokenOut
+    ) external view override returns (uint256 amountTokenOut) {
         Position storage position = positions[positionId];
         uint128 redeemablePrincipalValue = _calcRedeemablePrincipalValue(
             negativeYields, 
@@ -189,7 +191,10 @@ contract OutrunStakingPosition is
             SPBurned, 
             position.SPMinted
         );
-        redeemableSyAmount = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue);
+
+        amountTokenOut = IStandardizedYield(SY).previewRedeem(
+            tokenOut, SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue)
+        );
     }
 
     /**
@@ -384,40 +389,41 @@ contract OutrunStakingPosition is
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
      * @param receiver - Receiver of redeemed principal
-     * @param tokenOut - Principal token
+     * @param tokenOut - Principal token out
      */
     function redeemPrincipalFromSP(
         uint256 positionId, 
         uint256 SPBurned,
         address receiver, 
         address tokenOut
-    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 redeemedPrincipal) {
+    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 amountTokenOut) {
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
-        redeemedPrincipal = _redeemPrincipalFromSP(positionId, SPBurned, positions[positionId], receiver, tokenOut);
+        amountTokenOut = _redeemPrincipalFromSP(positionId, SPBurned, positions[positionId], receiver, tokenOut);
 
-        emit RedeemPrincipalFromSP(positionId, SPBurned, receiver, tokenOut, redeemedPrincipal);
+        emit RedeemPrincipalFromSP(positionId, SPBurned, receiver, tokenOut, amountTokenOut);
     }
 
     /**
      * @notice Allows user to redeem principal by burning nonTransferableSP and UPT.
-     * @param receiver - Receiver of redeemed principal
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
+     * @param receiver - Receiver of redeemed principal
+     * @param tokenOut - Principal token out
      */
     function redeemPrincipalFromNSPAndUPT(
         uint256 positionId,
         uint256 SPBurned,
         address receiver,
         address tokenOut
-    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 UPTBurned, uint256 redeemedPrincipal) {
+    ) external override accumulateYields nonReentrant whenNotPaused returns (uint256 UPTBurned, uint256 amountTokenOut) {
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
         Position storage position = positions[positionId];
         UPTBurned = _encapsulateUPT(position, positionId, SPBurned);
-        redeemedPrincipal = _redeemPrincipalFromSP(positionId, SPBurned, position, receiver, tokenOut);
+        amountTokenOut = _redeemPrincipalFromSP(positionId, SPBurned, position, receiver, tokenOut);
         
-        emit RedeemPrincipalFromNSPAndUPT(positionId, msg.sender, SPBurned, UPTBurned, redeemedPrincipal);
+        emit RedeemPrincipalFromNSPAndUPT(positionId, SPBurned, UPTBurned, receiver, tokenOut, amountTokenOut);
     }
 
     /**
@@ -694,7 +700,7 @@ contract OutrunStakingPosition is
         Position storage position,
         address receiver,
         address tokenOut
-    ) internal returns (uint128 redeemedPrincipal) {
+    ) internal returns (uint256 amountTokenOut) {
         uint128 deadline = position.deadline;
         uint128 SYStaked = position.SYStaked;
         require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
@@ -711,17 +717,18 @@ contract OutrunStakingPosition is
             SPBurned,
             position.SPMinted
         );
-        redeemedPrincipal = uint128(SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue));
+        uint256 redeemedPrincipal = SYUtils.assetToSy(IStandardizedYield(SY).exchangeRate(), redeemablePrincipalValue);
         
         unchecked {
             totalPrincipalValue = _totalPrincipalValue - redeemablePrincipalValue;
-            position.SYStaked = SYStaked - redeemedPrincipal;
+            position.SYStaked = SYStaked - uint128(redeemedPrincipal);
         }
 
         if (tokenOut == SY) {
             _transferSY(receiver, redeemedPrincipal);
+            amountTokenOut = redeemedPrincipal;
         } else {
-            IStandardizedYield(SY).redeem(receiver, redeemedPrincipal, tokenOut, 0, false);
+            amountTokenOut = IStandardizedYield(SY).redeem(receiver, redeemedPrincipal, tokenOut, 0, false);
         }
     }
 
