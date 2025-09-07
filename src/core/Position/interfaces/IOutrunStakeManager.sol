@@ -124,7 +124,7 @@ interface IOutrunStakeManager {
 
     function keepWrapRedeem(address receiver, uint128 amountInUPT) external;
 
-    function transferYields(address receiver, uint256 syAmount) external;
+    function transferYields(address tokenOut, address receiver, uint256 amountInSY) external returns (uint256 amountYieldsOut);
 
     function updateNegativeYields(uint256 negativeYields) external;
 

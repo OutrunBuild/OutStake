@@ -142,7 +142,7 @@ contract OutrunStakingPosition is
                 currentTime - startTime,
                 deadline - startTime
             ) + initUPTMintable
-        ) / SPMinted;
+        ) * 1e18 / SPMinted;
     }
 
     /**
@@ -151,7 +151,7 @@ contract OutrunStakingPosition is
     function calcUPTSeparateable(uint256 positionId, uint256 amountInSP) external view override returns (uint256 UPTMintable, bool isNegative) {
         if (negativeYields > 0) return (0, true);
 
-        UPTMintable = amountInSP * calcCurrentUPTIndex(positionId);
+        UPTMintable = Math.mulDiv(amountInSP, calcCurrentUPTIndex(positionId), 1e18);
     }
 
     /**
@@ -314,7 +314,7 @@ contract OutrunStakingPosition is
         // separateFromTransferableSP
         if (SPRecipient != msg.sender) transfer(SPRecipient, positionId, amountInSP);
 
-        amountInUPT = uint128(amountInSP * index + amountInDeltaMint);
+        amountInUPT = uint128(Math.mulDiv(amountInSP, index, 1e18)  + amountInDeltaMint);
         require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInUPT, UPTMintingCapReached());
 
         Position storage position = positions[positionId];
@@ -365,7 +365,7 @@ contract OutrunStakingPosition is
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[account][positionId];
         if (lastIndex != 0 && nonTransferableSPBalance != 0) {
             uint256 deltaIndex = index - lastIndex;
-            amountInDeltaMint = deltaIndex * nonTransferableSPBalance;
+            amountInDeltaMint = Math.mulDiv(deltaIndex, nonTransferableSPBalance, 1e18);
             emit DeltaMint(positionId, nonTransferableSPBalance, amountInDeltaMint);
         }
     }
@@ -563,11 +563,21 @@ contract OutrunStakingPosition is
     
     /**
      * @notice Transfer yields when collecting protocol fees and withdrawing yields, only YT can call
+     * @param tokenOut - The specific token type of the withdrawed yields
      * @param receiver - Address of receiver
-     * @param syAmount - Amount of protocol fee
+     * @param amountInSY - Amount of yield tokens in SY units
      */
-    function transferYields(address receiver, uint256 syAmount) external whenNotPaused override onlyYT {
-        _transferSY(receiver, syAmount);
+    function transferYields(
+        address tokenOut,
+        address receiver,
+        uint256 amountInSY
+    ) external whenNotPaused override onlyYT returns (uint256 amountYieldsOut) {
+        if (tokenOut == SY) {
+            _transferSY(receiver, amountInSY);
+            amountYieldsOut = amountInSY;
+        } else {
+            amountYieldsOut = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, 0, false);
+        }
     }
 
     /**
