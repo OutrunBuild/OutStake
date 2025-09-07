@@ -45,8 +45,8 @@ contract YieldDeployScript is BaseScript {
         // 20000 runs
         // _supportWstETHOnSepolia();
         // _supportSUSDeOnSepolia();
-        // _supportAUSDC();
-        _supportSlisBNB();
+        _supportAUSDC();
+        // _supportSlisBNB();
     }
 
     /**

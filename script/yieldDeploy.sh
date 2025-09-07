@@ -7,27 +7,27 @@ source ../.env
 #     --broadcast --ffi -vvvv \
 #     --verify
 
-forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url bsc_testnet \
+# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url bsc_testnet \
+#     --with-gas-price 1000000000 \
+#     --optimize --optimizer-runs 20000 \
+#     --via-ir \
+#     --broadcast --ffi -vvvv \
+#     --verify \
+#     --slow
+
+forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url base_sepolia \
+    --with-gas-price 100000000 \
+    --optimize --optimizer-runs 20000 \
+    --via-ir \
+    --broadcast --ffi -vvvv \
+    --verify 
+
+forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url arbitrum_sepolia \
     --with-gas-price 300000000 \
     --optimize --optimizer-runs 20000 \
     --via-ir \
     --broadcast --ffi -vvvv \
-    --verify \
-    --slow
-
-# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url base_sepolia \
-#     --with-gas-price 100000000 \
-#     --optimize --optimizer-runs 20000 \
-#     --via-ir \
-#     --broadcast --ffi -vvvv \
-#     --verify 
-
-# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url arbitrum_sepolia \
-#     --with-gas-price 300000000 \
-#     --optimize --optimizer-runs 20000 \
-#     --via-ir \
-#     --broadcast --ffi -vvvv \
-#     --verify
+    --verify
     
 # forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url avalanche_fuji \
 #     --priority-gas-price 1 --with-gas-price 2 \
