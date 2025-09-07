@@ -45,7 +45,7 @@ contract OutrunUniversalPrincipalToken is IUniversalPrincipalToken, OutrunOFT {
      * @param amount - Amount of UPT
      */
     function mint(address receiver, uint256 amount) external override whenNotPaused {
-        require(amount !=0 && receiver != address(0), ZeroInput());
+        require(amount != 0 && receiver != address(0), ZeroInput());
         
         uint256 mintingCap = mintingStatusTable[msg.sender].mintingCap;
         uint256 amountInMinted = mintingStatusTable[msg.sender].amountInMinted;
