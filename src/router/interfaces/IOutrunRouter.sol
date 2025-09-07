@@ -78,14 +78,6 @@ interface IOutrunRouter {
         address UPTRecipient
     ) external payable returns (uint128 UPTMinted, uint256 mintFee);
 
-    /** Redeem YT value **/
-    function redeemValueFromYT(
-        address SY,
-        address YT,
-        address tokenOut,
-        uint256 YTAmount
-    ) external returns (uint256 amountYieldsOut);
-
     /** Memeverse Genesis **/
     function genesisByToken(
         address SP,

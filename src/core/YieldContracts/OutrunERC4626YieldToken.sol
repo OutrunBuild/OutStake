@@ -66,7 +66,7 @@ contract OutrunERC4626YieldToken is OutrunYieldToken {
                 protocolFee = uint256(increasedYield).mulDown(protocolFeeRate);
                 realTimeYield -= int256(protocolFee);
             }
-            IOutrunStakeManager(SP).transferYields(revenuePool, protocolFee);
+            IOutrunStakeManager(SP).transferYields(SY, revenuePool, protocolFee);
         }
         
         if (realTimeYield < 0 && realTimeYield != yieldBalance) {

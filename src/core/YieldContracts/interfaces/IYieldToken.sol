@@ -28,7 +28,7 @@ interface IYieldToken {
 
 	function accumulateYields() external returns (int256 realTimeYield, int256 increasedYield);
 
-	function withdrawYields(uint256 amountInBurnedYT) external returns (uint256 amountYieldsOut);
+	function withdrawYields(address tokenOut, uint256 amountInBurnedYT) external returns (uint256 amountYieldsOut);
 	
 	function mint(address account, uint256 amount) external;
 
@@ -43,5 +43,5 @@ interface IYieldToken {
 
 	event AccumulateYields(int256 totalYields, int256 increasedYields, uint256 protocolFee);
 
-	event WithdrawYields(address indexed account, uint256 amountYieldsOut);
+	event WithdrawYields(address indexed account, address indexed tokenOut, uint256 amountYieldsOut);
 }

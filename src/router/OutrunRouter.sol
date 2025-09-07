@@ -6,7 +6,6 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 import { IOutrunRouter } from "./interfaces/IOutrunRouter.sol";
 import { IMemeverseLauncher } from "./interfaces/IMemeverseLauncher.sol";
-import { IYieldToken } from "../core/YieldContracts/interfaces/IYieldToken.sol";
 import { IStandardizedYield } from "../core/StandardizedYield/IStandardizedYield.sol";
 import { TokenHelper, IERC20, IOutrunERC6909 } from "../core/libraries/TokenHelper.sol";
 import { IOutrunStakeManager } from "../core/Position/interfaces/IOutrunStakeManager.sol";
@@ -199,16 +198,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         } else {
             IOutrunERC6909(SP).transfer(stakeParam.initOwner, positionId, SPMinted);
         }
-    }
-
-    /** Redeem YT value **/
-    function redeemValueFromYT(
-        address SY,
-        address YT,
-        address tokenOut,
-        uint256 YTAmount
-    ) external override returns (uint256 amountYieldsOut) {
-        amountYieldsOut = _redeemSy(SY, msg.sender, tokenOut, IYieldToken(YT).withdrawYields(YTAmount), 0, true);
     }
 
     /** Memeverse Genesis **/

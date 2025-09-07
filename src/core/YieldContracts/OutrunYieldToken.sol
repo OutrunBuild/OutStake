@@ -67,24 +67,29 @@ abstract contract OutrunYieldToken is
 
     /**
      * @dev Burn YT to withdraw yields
+     * @param tokenOut - The specific token type of the withdrawed yields
      * @param amountInBurnedYT - The amount of burned YT
      */
-    function withdrawYields(uint256 amountInBurnedYT) external override nonReentrant whenNotPaused returns (uint256 amountYieldsOut) {
+    function withdrawYields(
+        address tokenOut,
+        uint256 amountInBurnedYT
+    ) external override nonReentrant whenNotPaused returns (uint256 amountYieldsOut) {
         require(amountInBurnedYT != 0, ZeroInput());
         uint256 _totalSupply = totalSupply;
         require(amountInBurnedYT <= _totalSupply && _totalSupply > 0, InvalidInput());
         accumulateYields();
         require(yieldBalance > 0, InsufficientYields());
 
+        uint256 amountInSY;
         unchecked {
-            amountYieldsOut = uint256(yieldBalance) * amountInBurnedYT / _totalSupply;
-            yieldBalance -= int256(amountYieldsOut);
+            amountInSY = uint256(yieldBalance) * amountInBurnedYT / _totalSupply;
+            yieldBalance -= int256(amountInSY);
         }
 
         _burn(msg.sender, amountInBurnedYT);
-        IOutrunStakeManager(SP).transferYields(msg.sender, amountYieldsOut);
+        amountYieldsOut = IOutrunStakeManager(SP).transferYields(tokenOut, msg.sender, amountInSY);
 
-        emit WithdrawYields(msg.sender, amountYieldsOut);
+        emit WithdrawYields(msg.sender, tokenOut, amountYieldsOut);
     }
 
     /**
