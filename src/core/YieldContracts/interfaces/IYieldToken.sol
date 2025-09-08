@@ -24,7 +24,7 @@ interface IYieldToken {
 
 	function totalRedeemableYields() external view returns (int256);
 
-	function previewWithdrawYields(uint256 amountInBurnedYT) external view returns (uint256 amountYieldsOut);
+	function previewWithdrawYields(address tokenOut, uint256 amountInBurnedYT) external view returns (uint256 amountYieldsOut);
 
 	function accumulateYields() external returns (int256 realTimeYield, int256 increasedYield);
 

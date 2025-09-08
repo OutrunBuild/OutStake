@@ -8,6 +8,7 @@ import { OutrunERC20 } from "../common/OutrunERC20.sol";
 import { IYieldToken } from "./interfaces/IYieldToken.sol";
 import { Initializable } from "../libraries/Initializable.sol";
 import { ReentrancyGuard } from "../libraries/ReentrancyGuard.sol";
+import { IStandardizedYield } from "../StandardizedYield/IStandardizedYield.sol";
 import { IOutrunStakeManager } from "../Position/interfaces/IOutrunStakeManager.sol";
 
 /**
@@ -53,7 +54,7 @@ abstract contract OutrunYieldToken is
      * @dev Preview available yields
      * @param amountInBurnedYT - The amount of burned YT
      */
-    function previewWithdrawYields(uint256 amountInBurnedYT) public view override returns (uint256 amountYieldsOut) {
+    function previewWithdrawYields(address tokenOut, uint256 amountInBurnedYT) external view override returns (uint256 amountYieldsOut) {
         uint256 _totalSupply = totalSupply;
         int256 _totalRedeemableYields = totalRedeemableYields();
         require(
@@ -62,7 +63,9 @@ abstract contract OutrunYieldToken is
             amountInBurnedYT <= _totalSupply,
             InvalidInput()
         );
-        amountYieldsOut = amountInBurnedYT * uint256(_totalRedeemableYields) / _totalSupply;
+        uint256 amountInSY = amountInBurnedYT * uint256(_totalRedeemableYields) / _totalSupply;
+
+        amountYieldsOut = IStandardizedYield(SY).previewRedeem(tokenOut, amountInSY);
     }
 
     /**
