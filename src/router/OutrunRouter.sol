@@ -119,7 +119,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     ) external view override returns (uint256 UPTMintable) {
         uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
 
-        (,, UPTMintable) = IOutrunStakeManager(SP).previewStake(amountInSY, 0, true);
+        UPTMintable = IOutrunStakeManager(SP).previewWrapStake(amountInSY);
     }
 
     /** MINT SP, UPT, YT **/

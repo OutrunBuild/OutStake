@@ -69,6 +69,8 @@ interface IOutrunStakeManager {
         bool isSPSeparated
     ) external view returns (uint256 SPMintable, uint256 YTMintable, uint256 UPTMintable);
     
+    function previewWrapStake(uint256 amountInSY) external view returns (uint256 UPTMintable);
+
     function previewRedeem(
         uint256 positionId, 
         uint256 SPBurned,

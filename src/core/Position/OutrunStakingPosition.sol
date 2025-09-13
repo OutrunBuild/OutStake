@@ -173,6 +173,14 @@ contract OutrunStakingPosition is
     }
 
     /**
+     * @notice Preview the UPT mintable amount before wrap stake
+     * @param amountInSY - Staked amount of SY
+     */
+    function previewWrapStake(uint256 amountInSY) external view override returns (uint256 UPTMintable) {
+        return calcUPTAmount(SYUtils.syToAsset(IStandardizedYield(SY).exchangeRate(), amountInSY), 0);
+    }
+
+    /**
      * @notice Preview redeemable SY amount before redeem
      * @param positionId - Position Id
      * @param SPBurned - Amount of SP burned
