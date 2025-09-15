@@ -12,7 +12,7 @@ For more details, please refer to the product documentation : [Outrun Official D
 
 ### OutrunRouter(Omnichain)
 
-0xa056baF70ADdb272576a30887A8Fb831A56D2BD6  
+0x304974b89Ac69825DC8D8ae380390477278385f0  
 
 ### UPT
 

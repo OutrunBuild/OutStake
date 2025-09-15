@@ -72,13 +72,13 @@ contract OutstakeScript is BaseScript {
         // _deployUETH(1);
         // _deployUUSD(1);
         // _deployUBNB(1);
-        // _deployOutrunRouter(3);
+        _deployOutrunRouter(4);
         // _updateRouterLauncher();
         // _deployMockERC20(1);
         // _deployMockOracle(1);
         // _deployMockERC20SY(1);
-        _supportMockAUSDC(11);   // 20000 runs
-        _supportMockSUSDS(11);   // 20000 runs
+        // _supportMockAUSDC(11);   // 20000 runs
+        // _supportMockSUSDS(11);   // 20000 runs
     }
 
     function _deployOutrunDeployer(uint256 nonce) internal {
