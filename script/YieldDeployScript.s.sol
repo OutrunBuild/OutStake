@@ -43,10 +43,10 @@ contract YieldDeployScript is BaseScript {
         protocolFeeRate = vm.envUint("PROTOCOL_FEE_RATE");
 
         // 20000 runs
-        // _supportWstETHOnSepolia();
-        // _supportSUSDeOnSepolia();
+        _supportWstETHOnSepolia();
+        _supportSUSDeOnSepolia();
         // _supportAUSDC();
-        _supportSlisBNB();
+        // _supportSlisBNB();
     }
 
     /**

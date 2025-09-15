@@ -1,33 +1,33 @@
 source ../.env
 
 forge script OutstakeScript.s.sol:OutstakeScript --rpc-url bsc_testnet \
-    --with-gas-price 1000000000 \
+    --with-gas-price 60000000 \
     --optimize --optimizer-runs 20000 \
     --via-ir \
     --broadcast --ffi -vvvv \
     --verify \
     --slow
 
-forge script OutstakeScript.s.sol:OutstakeScript --rpc-url sepolia \
-    --priority-gas-price 500000000 --with-gas-price 1500000000 \
-    --optimize --optimizer-runs 20000 \
-    --via-ir \
-    --broadcast --ffi -vvvv \
-    --verify
+# forge script OutstakeScript.s.sol:OutstakeScript --rpc-url sepolia \
+#     --priority-gas-price 500000000 --with-gas-price 1500000000 \
+#     --optimize --optimizer-runs 20000 \
+#     --via-ir \
+#     --broadcast --ffi -vvvv \
+#     --verify
 
-forge script OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
-    --with-gas-price 100000000 \
-    --optimize --optimizer-runs 20000 \
-    --via-ir \
-    --broadcast --ffi -vvvv \
-    --verify 
+# forge script OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
+#     --with-gas-price 100000000 \
+#     --optimize --optimizer-runs 20000 \
+#     --via-ir \
+#     --broadcast --ffi -vvvv \
+#     --verify 
 
-forge script OutstakeScript.s.sol:OutstakeScript --rpc-url arbitrum_sepolia \
-    --with-gas-price 300000000 \
-    --optimize --optimizer-runs 20000 \
-    --via-ir \
-    --broadcast --ffi -vvvv \
-    --verify
+# forge script OutstakeScript.s.sol:OutstakeScript --rpc-url arbitrum_sepolia \
+#     --with-gas-price 300000000 \
+#     --optimize --optimizer-runs 20000 \
+#     --via-ir \
+#     --broadcast --ffi -vvvv \
+#     --verify
 
 # forge script OutstakeScript.s.sol:OutstakeScript --rpc-url avalanche_fuji \
 #     --priority-gas-price 1 --with-gas-price 2 \
