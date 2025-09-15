@@ -99,7 +99,7 @@ interface IOutrunStakeManager {
     function separateUPTFromNSP(
         uint256 positionId, 
         address UPTRecipient
-    ) external returns (uint128 amountInUPT);
+    ) external returns (uint256 amountInDeltaMint);
 
     function encapsulateUPT(uint256 positionId, uint256 amountInSP) external returns (uint256 UPTBurned);
 

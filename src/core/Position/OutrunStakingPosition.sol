@@ -342,26 +342,25 @@ contract OutrunStakingPosition is
      * @dev MUST split all nonTransferableSP in the wallet.
      * @param positionId - Position Id
      * @param UPTRecipient - Receiver of UPT
-     * @return amountInUPT - UPT separated Amount
+     * @return amountInDeltaMint - UPT separated Amount
      */
     function separateUPTFromNSP(
         uint256 positionId, 
         address UPTRecipient
-    ) external override nonReentrant whenNotPaused returns (uint128 amountInUPT) {
+    ) external override nonReentrant whenNotPaused returns (uint256 amountInDeltaMint) {
         require(positionId != 0 && UPTRecipient != address(0), ZeroInput());
         require(negativeYields == 0, NegativeYields());
 
         // separateFromNonTransferableSP
         // Process the change in UPTMintable for the SPRecipient address.
         uint256 index;
-        uint256 amountInDeltaMint;
         (amountInDeltaMint, index) = _separateUPTFromNSP(positionId, msg.sender);
         require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInDeltaMint, UPTMintingCapReached());
 
         userStoredUPTIndexes[positionId][msg.sender] = index;
 
         unchecked {
-            positions[positionId].UPTMinted += amountInUPT;
+            positions[positionId].UPTMinted += uint128(amountInDeltaMint);
         }
 
         IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInDeltaMint);
