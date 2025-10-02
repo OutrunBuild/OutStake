@@ -205,6 +205,19 @@ contract OutrunStakingPosition is
     }
 
     /**
+     * @notice Preview the amount of UPT required to be burned when encapsulating SP tokens.
+     * @param positionId - Position Id
+     * @param amountInSP - Amount of SP encapsulated
+     */
+    function previewEncapsulateSP(uint256 positionId, uint256 amountInSP) external view override returns (uint256 UPTBurned) {
+        uint256 nonTransferableSPBalance = nonTransferableBalanceOf[msg.sender][positionId];
+        require(nonTransferableSPBalance >= amountInSP, InsufficientSPBalance());
+
+        Position storage position = positions[positionId];
+        UPTBurned = Math.mulDiv(position.UPTMinted, amountInSP, position.SPSeparated, Math.Rounding.Ceil);
+    }
+
+    /**
      * @notice Allows user to deposit SY, then mints UPT, YT.
      * @dev MUST approve this contract to spend SY
      * @param amountInSY - Staked amount of SY
@@ -370,7 +383,7 @@ contract OutrunStakingPosition is
         index = calcCurrentUPTIndex(positionId);
         uint256 lastIndex = userStoredUPTIndexes[positionId][account];
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[account][positionId];
-        if (lastIndex != 0 && nonTransferableSPBalance != 0) {
+        if (lastIndex != 0 && index != lastIndex && nonTransferableSPBalance != 0) {
             uint256 deltaIndex = index - lastIndex;
             amountInDeltaMint = Math.mulDiv(deltaIndex, nonTransferableSPBalance, 1e18);
             emit DeltaMint(positionId, nonTransferableSPBalance, amountInDeltaMint);
@@ -382,12 +395,12 @@ contract OutrunStakingPosition is
      * @param positionId - Position Id
      * @param amountInSP - Amount of nonTransferableSP
      */
-    function encapsulateUPT(uint256 positionId, uint256 amountInSP) external override nonReentrant whenNotPaused returns (uint256 UPTBurned) {
+    function encapsulateSP(uint256 positionId, uint256 amountInSP) external override nonReentrant whenNotPaused returns (uint256 UPTBurned) {
         require(positionId != 0 && amountInSP != 0, ZeroInput());
 
-        UPTBurned = _encapsulateUPT(positions[positionId], positionId, amountInSP);
+        UPTBurned = _encapsulateSP(positions[positionId], positionId, amountInSP);
 
-        emit EncapsulateUPT(msg.sender, positionId, amountInSP, UPTBurned);
+        emit EncapsulateSP(msg.sender, positionId, amountInSP, UPTBurned);
     }
 
     /**
@@ -426,7 +439,7 @@ contract OutrunStakingPosition is
         require(receiver != address(0) && positionId != 0 && SPBurned != 0 , ZeroInput());
 
         Position storage position = positions[positionId];
-        UPTBurned = _encapsulateUPT(position, positionId, SPBurned);
+        UPTBurned = _encapsulateSP(position, positionId, SPBurned);
         amountTokenOut = _redeemPrincipalFromSP(positionId, SPBurned, position, receiver, tokenOut);
         
         emit RedeemPrincipalFromNSPAndUPT(positionId, SPBurned, UPTBurned, receiver, tokenOut, amountTokenOut);
@@ -454,7 +467,7 @@ contract OutrunStakingPosition is
         uint128 deadline = position.deadline;
         require(block.timestamp >= deadline, LockTimeNotExpired(deadline));
 
-        /** EncapsulateUPT **/
+        /** EncapsulateSP **/
         uint256 nonTransferableSPBalance = nonTransferableBalanceOf[SPOwner][positionId];
         require(nonTransferableSPBalance >= SPBurned, InsufficientSPBalance());
 
@@ -690,7 +703,7 @@ contract OutrunStakingPosition is
         );
     }
 
-    function _encapsulateUPT(
+    function _encapsulateSP(
         Position storage position, 
         uint256 positionId, 
         uint256 amountInSP

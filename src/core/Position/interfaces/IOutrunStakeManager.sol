@@ -77,6 +77,8 @@ interface IOutrunStakeManager {
         address tokenOut
     ) external view returns (uint256 amountTokenOut);
 
+    function previewEncapsulateSP(uint256 positionId, uint256 amountInSP) external view returns (uint256 UPTBurned);
+
     function wrapStake(
         uint128 amountInSY, 
         address UPTRecipient
@@ -101,7 +103,7 @@ interface IOutrunStakeManager {
         address UPTRecipient
     ) external returns (uint256 amountInDeltaMint);
 
-    function encapsulateUPT(uint256 positionId, uint256 amountInSP) external returns (uint256 UPTBurned);
+    function encapsulateSP(uint256 positionId, uint256 amountInSP) external returns (uint256 UPTBurned);
 
     function redeemPrincipalFromSP(
         uint256 positionId, 
@@ -178,7 +180,7 @@ interface IOutrunStakeManager {
         address indexed UPTRecipient
     );
 
-    event EncapsulateUPT(
+    event EncapsulateSP(
         address indexed sender, 
         uint256 indexed positionId, 
         uint256 nonTransferableSPAmount,
