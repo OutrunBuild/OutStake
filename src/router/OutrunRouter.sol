@@ -208,9 +208,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 verseId,
         address genesisUser
     ) external payable override {
-        (uint128 amountInUPT, ) = wrapStakeFromToken(SP, tokenIn, tokenAmount, address(this));
+        (uint128 amountInUPT, uint256 mintFee) = wrapStakeFromToken(SP, tokenIn, tokenAmount, address(this));
         _safeApproveInf(IOutrunStakeManager(SP).UPT(), memeverseLauncher);
-        IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
+        IMemeverseLauncher(memeverseLauncher).genesis(verseId, uint128(amountInUPT - mintFee), genesisUser);
     }
 
     function genesisBySY(
@@ -219,9 +219,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 verseId,
         address genesisUser
     ) external override {
-        (uint128 amountInUPT, ) = IOutrunStakeManager(SP).wrapStake(amountInSY, address(this));
+        (uint128 amountInUPT, uint256 mintFee) = IOutrunStakeManager(SP).wrapStake(amountInSY, address(this));
         _safeApproveInf(IOutrunStakeManager(SP).UPT(), memeverseLauncher);
-        IMemeverseLauncher(memeverseLauncher).genesis(verseId, amountInUPT, genesisUser);
+        IMemeverseLauncher(memeverseLauncher).genesis(verseId, uint128(amountInUPT - mintFee), genesisUser);
     }
 
     // OutrunTODO Delete this function when the mainnet goes live
