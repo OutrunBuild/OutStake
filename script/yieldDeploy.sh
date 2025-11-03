@@ -107,4 +107,5 @@ forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url flow_testnet \
     --via-ir \
     --broadcast --ffi -vvvv \
     --verify --verifier blockscout \
-    --verifier-url 'https://evm-testnet.flowscan.io/api/'
+    --verifier-url 'https://evm-testnet.flowscan.io/api/' \
+    --slow
