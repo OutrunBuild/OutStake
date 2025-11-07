@@ -61,7 +61,12 @@ interface IOutrunStakeManager {
 
     function calcUPTAmount(uint256 principalValue, uint256 amountInYT) external view returns (uint256 calcAmount);
 
-    function calcUPTSeparateable(uint256 positionId, uint256 amountInSP) external view returns (uint256 UPTMintable, bool isNegative);
+    function calcUPTSeparateable(
+        uint256 positionId, 
+        uint256 amountInSP, 
+        address SPHolder, 
+        bool isFromNSP
+    ) external view returns (uint256 UPTMintable, bool isNegative, uint256 amountFromNSPMint);
 
     function previewStake(
         uint256 amountInSY, 
@@ -165,19 +170,20 @@ interface IOutrunStakeManager {
         address indexed initOwner
     );
 
-    event DeltaMint(
-        uint256 indexed positionId,
-        uint256 nonTransferableSPBalance,
-        uint256 amountInDeltaMint
-    );
-
     event SeparateUPT(
         uint256 indexed positionId, 
         uint256 transferableSPAmount,
+        uint256 nonTransferableSPBalance, 
         uint256 amountInUPT,
-        uint256 amountInDeltaMint,
+        uint256 amountFromNSP,
         address indexed SPRecipient, 
         address indexed UPTRecipient
+    );
+
+    event SeparateUPTFromNSP(
+        uint256 indexed positionId,
+        uint256 nonTransferableSPBalance,
+        uint256 amountInDeltaMint
     );
 
     event EncapsulateSP(

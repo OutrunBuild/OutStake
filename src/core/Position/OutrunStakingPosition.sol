@@ -148,10 +148,19 @@ contract OutrunStakingPosition is
     /**
      * @notice Calculate the amount of UPTs that can be split from the SP token.
      */
-    function calcUPTSeparateable(uint256 positionId, uint256 amountInSP) external view override returns (uint256 UPTMintable, bool isNegative) {
-        if (negativeYields > 0) return (0, true);
+    function calcUPTSeparateable(
+        uint256 positionId, 
+        uint256 amountInSP, 
+        address SPHolder, 
+        bool isFromNSP
+    ) external view override returns (uint256 UPTMintable, bool isNegative, uint256 amountFromNSP) {
+        if (negativeYields > 0) return (0, true, 0);
 
-        UPTMintable = Math.mulDiv(amountInSP, calcCurrentUPTIndex(positionId), 1e18);
+        uint256 index = calcCurrentUPTIndex(positionId);
+        uint256 lastIndex = userStoredUPTIndexes[positionId][SPHolder];
+        uint256 nonTransferableSPBalance = nonTransferableBalanceOf[SPHolder][positionId];
+        amountFromNSP = _separateUPTFromNSP(index, lastIndex, nonTransferableSPBalance);
+        UPTMintable = isFromNSP ? amountFromNSP : Math.mulDiv(amountInSP, index, 1e18) + amountFromNSP;
     }
 
     /**
@@ -324,18 +333,19 @@ contract OutrunStakingPosition is
         require(balanceOf(msg.sender, positionId) >= amountInSP, InsufficientSPBalance());
         require(negativeYields == 0, NegativeYields());
 
-        // separateFromNonTransferableSP
+        // SeparateFromNonTransferableSP
         // Process the change in UPTMintable for the SPRecipient address.
-        uint256 index;
-        uint256 amountInDeltaMint;
-        (amountInDeltaMint, index) = _separateUPTFromNSP(positionId, SPRecipient);
+        uint256 index = calcCurrentUPTIndex(positionId);
+        uint256 lastIndex = userStoredUPTIndexes[positionId][msg.sender];
+        uint256 nonTransferableSPBalance = nonTransferableBalanceOf[msg.sender][positionId];
+        uint256 amountFromNSP = _separateUPTFromNSP(index, lastIndex, nonTransferableSPBalance);
 
         userStoredUPTIndexes[positionId][SPRecipient] = index;
 
         // separateFromTransferableSP
         if (SPRecipient != msg.sender) transfer(SPRecipient, positionId, amountInSP);
 
-        amountInUPT = uint128(Math.mulDiv(amountInSP, index, 1e18)  + amountInDeltaMint);
+        amountInUPT = uint128(Math.mulDiv(amountInSP, index, 1e18)  + amountFromNSP);
         require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInUPT, UPTMintingCapReached());
 
         Position storage position = positions[positionId];
@@ -345,9 +355,9 @@ contract OutrunStakingPosition is
             position.SPSeparated += amountInSP;
         }
 
-        IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT + amountInDeltaMint);
+        IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInUPT + amountFromNSP);
         
-        emit SeparateUPT(positionId, amountInSP, amountInUPT, amountInDeltaMint, SPRecipient, UPTRecipient);
+        emit SeparateUPT(positionId, index, amountInSP, amountInUPT, amountFromNSP, SPRecipient, UPTRecipient);
     }
 
     /**
@@ -366,8 +376,11 @@ contract OutrunStakingPosition is
 
         // separateFromNonTransferableSP
         // Process the change in UPTMintable for the SPRecipient address.
-        uint256 index;
-        (amountInDeltaMint, index) = _separateUPTFromNSP(positionId, msg.sender);
+        uint256 index = calcCurrentUPTIndex(positionId);
+        uint256 lastIndex = userStoredUPTIndexes[positionId][msg.sender];
+        uint256 nonTransferableSPBalance = nonTransferableBalanceOf[msg.sender][positionId];
+        amountInDeltaMint = _separateUPTFromNSP(index, lastIndex, nonTransferableSPBalance);
+        
         require(IUniversalPrincipalToken(UPT).checkMintableAmount(address(this)) >= amountInDeltaMint, UPTMintingCapReached());
 
         userStoredUPTIndexes[positionId][msg.sender] = index;
@@ -377,16 +390,14 @@ contract OutrunStakingPosition is
         }
 
         IUniversalPrincipalToken(UPT).mint(UPTRecipient, amountInDeltaMint);
+
+        emit SeparateUPTFromNSP(positionId, nonTransferableSPBalance, amountInDeltaMint);
     }
 
-    function _separateUPTFromNSP(uint256 positionId, address account) internal returns (uint256 amountInDeltaMint, uint256 index) {
-        index = calcCurrentUPTIndex(positionId);
-        uint256 lastIndex = userStoredUPTIndexes[positionId][account];
-        uint256 nonTransferableSPBalance = nonTransferableBalanceOf[account][positionId];
+    function _separateUPTFromNSP(uint256 index, uint256 lastIndex, uint256 nonTransferableSPBalance) internal pure returns (uint256 amountInDeltaMint) {
         if (lastIndex != 0 && index != lastIndex && nonTransferableSPBalance != 0) {
             uint256 deltaIndex = index - lastIndex;
             amountInDeltaMint = Math.mulDiv(deltaIndex, nonTransferableSPBalance, 1e18);
-            emit DeltaMint(positionId, nonTransferableSPBalance, amountInDeltaMint);
         }
     }
 
