@@ -1,7 +1,7 @@
 source ../.env
 
 forge script OutstakeScript.s.sol:OutstakeScript --rpc-url bsc_testnet \
-    --with-gas-price 60000000 \
+    --with-gas-price 100000000 \
     --optimize --optimizer-runs 20000 \
     --via-ir \
     --broadcast --ffi -vvvv \

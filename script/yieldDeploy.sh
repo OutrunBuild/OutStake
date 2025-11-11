@@ -1,19 +1,19 @@
 source ../.env
 
-forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url sepolia \
-    --priority-gas-price 20000000 --with-gas-price 2000000000 \
-    --optimize --optimizer-runs 20000 \
-    --via-ir \
-    --broadcast --ffi -vvvv \
-    --verify
-
-# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url bsc_testnet \
-#     --with-gas-price 600000000 \
+# forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url sepolia \
+#     --priority-gas-price 20000000 --with-gas-price 2000000000 \
 #     --optimize --optimizer-runs 20000 \
 #     --via-ir \
 #     --broadcast --ffi -vvvv \
-#     --verify \
-#     --slow
+#     --verify
+
+forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url bsc_testnet \
+    --with-gas-price 600000000 \
+    --optimize --optimizer-runs 20000 \
+    --via-ir \
+    --broadcast --ffi -vvvv \
+    --verify \
+    --slow
 
 # forge script YieldDeployScript.s.sol:YieldDeployScript --rpc-url base_sepolia \
 #     --with-gas-price 100000000 \
