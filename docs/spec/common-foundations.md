@@ -33,9 +33,9 @@
 - `_safeApproveInf` 的 ERC20 approval 刷新：当 allowance 低于 `LOWER_BOUND_APPROVAL`（`type(uint96).max / 2`）时先归零再设 max——USDT 型 token 拒绝非零→非零变更；NATIVE 哨兵跳过；刷新是调用点触发的惰性重检，仅在再次调用 `_safeApproveInf` 时重查 allowance，不维护「恒 max」不变量
 - TokenHelper 资金转移契约：native 转出走低层 call，失败必须 revert `NativeTransferFailed`（不静默吞失败）；`_transferOut`/`_transferFrom` 零金额跳过不发起转账；`_transferIn`：native 分支自身不发起转账（资金随 `msg.value` 到达）、仅校验 `msg.value == amount`，ERC20 分支要求 `msg.value == 0` 且金额非零才执行 `safeTransferFrom`，两分支的 `msg.value` 校验均不因零金额跳过
 
-## 单位模型（本次修复目标）
+## 单位模型
 
-本节定义 mixed-decimals 双段换算的本次修复目标/修复后语义，不把它表述为当前代码已完成行为。
+本节定义 mixed-decimals 双段换算语义，按当前实现直接描述。
 
 - `exchangeRate` 的单位是 `canonical asset per 1 SY`，并按 `1e18` 缩放
 - `canonicalAssetDecimals = SY.assetInfo().assetDecimals`

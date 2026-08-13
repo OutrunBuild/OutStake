@@ -4,6 +4,8 @@ pragma solidity ^0.8.35;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
+import {IYieldProxy} from "../../../src/integrations/aster/interfaces/IYieldProxy.sol";
+
 /// @notice Thrown when the caller tries to burn more scaled balance than they hold.
 error NotEnoughAvailableUserBalance();
 
@@ -153,48 +155,73 @@ contract MockOracle {
     }
 }
 
-/// @notice Trivial liquidity pool mock where shares equal amounts 1:1.
+/// @notice Mock liquidity pool with a configurable ETH-per-share rate.
+/// @dev `shareRate` is the ETH value of one weETH share. Default 1e18 is identity (1:1).
+/// Tests set a non-1e18 rate so preview and execution traverse genuinely different arithmetic.
 contract MockLiquidityPool {
-    function amountForShare(uint256 shares) external pure returns (uint256) {
-        return shares;
+    uint256 public shareRate = 1e18;
+
+    function setShareRate(uint256 rate_) external {
+        shareRate = rate_;
     }
 
-    function sharesForAmount(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function amountForShare(uint256 shares) external view returns (uint256) {
+        return shares * shareRate / 1e18;
+    }
+
+    function sharesForAmount(uint256 amount) external view returns (uint256) {
+        return amount * 1e18 / shareRate;
     }
 }
 
-/// @notice Mock Wrapped eETH that mints/burns 1:1 against a backing eETH token.
+/// @notice Mock Wrapped eETH that wraps/unwraps eETH <-> weETH at a configurable rate.
+/// @dev `shareRate` must match MockLiquidityPool.shareRate so the adapter's preview path
+/// (LiquidityPool.sharesForAmount) and execution path (weETH.wrap) stay consistent.
 contract MockWeETH is MockToken {
     address public immutable EETH;
+    uint256 public shareRate = 1e18;
 
     constructor(address eETH_) MockToken("Wrapped eETH", "weETH", 18) {
         EETH = eETH_;
     }
 
-    function wrap(uint256 amount) external returns (uint256) {
-        MockToken(EETH).transferFrom(msg.sender, address(this), amount);
-        _mint(msg.sender, amount);
-        return amount;
+    function setShareRate(uint256 rate_) external {
+        shareRate = rate_;
     }
 
-    function unwrap(uint256 amount) external returns (uint256) {
-        _burn(msg.sender, amount);
-        MockToken(EETH).mint(msg.sender, amount);
-        return amount;
+    function wrap(uint256 amount) external returns (uint256) {
+        MockToken(EETH).transferFrom(msg.sender, address(this), amount);
+        uint256 weEthAmount = amount * 1e18 / shareRate;
+        _mint(msg.sender, weEthAmount);
+        return weEthAmount;
+    }
+
+    function unwrap(uint256 weEthAmount) external returns (uint256) {
+        _burn(msg.sender, weEthAmount);
+        uint256 eEthAmount = weEthAmount * shareRate / 1e18;
+        MockToken(EETH).mint(msg.sender, eEthAmount);
+        return eEthAmount;
     }
 }
 
-/// @notice Mock stETH with trivial share-to-ETH conversions.
+/// @notice Mock stETH with a configurable pooled-ETH-per-share rate.
+/// @dev `pooledEthPerShare` must match MockWstETH.stEthPerTokenRate so the wstETH adapter's
+/// preview (getSharesByPooledEth) and execution (wrap) paths stay consistent.
 contract MockStETH is MockToken {
+    uint256 public pooledEthPerShare = 1e18;
+
     constructor() MockToken("stETH", "stETH", 18) {}
 
-    function getSharesByPooledEth(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function setPooledEthPerShare(uint256 rate_) external {
+        pooledEthPerShare = rate_;
     }
 
-    function getPooledEthByShares(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function getSharesByPooledEth(uint256 ethAmount) external view returns (uint256) {
+        return ethAmount * 1e18 / pooledEthPerShare;
+    }
+
+    function getPooledEthByShares(uint256 shares) external view returns (uint256) {
+        return shares * pooledEthPerShare / 1e18;
     }
 
     function submit(address) external payable returns (uint256) {
@@ -203,36 +230,45 @@ contract MockStETH is MockToken {
     }
 }
 
-/// @notice Mock wstETH that wraps/unwraps 1:1 against a backing stETH token.
+/// @notice Mock wstETH that wraps/unwraps stETH <-> wstETH at a configurable rate.
+/// @dev `stEthPerTokenRate` is stETH per one wstETH (mirrors real wstETH.stEthPerToken).
+/// Must match MockStETH.pooledEthPerShare for preview/execution consistency.
 contract MockWstETH is MockToken {
     address public immutable STETH;
+    uint256 public stEthPerTokenRate = 1e18;
 
     constructor(address stETH_) MockToken("Wrapped stETH", "wstETH", 18) {
         STETH = stETH_;
     }
 
-    function stEthPerToken() external pure returns (uint256) {
-        return 1e18;
+    function setStEthPerToken(uint256 rate_) external {
+        stEthPerTokenRate = rate_;
     }
 
-    function getWstETHByStETH(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function stEthPerToken() external view returns (uint256) {
+        return stEthPerTokenRate;
     }
 
-    function getStETHByWstETH(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function getWstETHByStETH(uint256 stEthAmount) external view returns (uint256) {
+        return stEthAmount * 1e18 / stEthPerTokenRate;
     }
 
-    function wrap(uint256 amount) external returns (uint256) {
-        MockToken(STETH).transferFrom(msg.sender, address(this), amount);
-        _mint(msg.sender, amount);
-        return amount;
+    function getStETHByWstETH(uint256 wstEthAmount) external view returns (uint256) {
+        return wstEthAmount * stEthPerTokenRate / 1e18;
     }
 
-    function unwrap(uint256 amount) external returns (uint256) {
-        _burn(msg.sender, amount);
-        MockToken(STETH).mint(msg.sender, amount);
-        return amount;
+    function wrap(uint256 stEthAmount) external returns (uint256) {
+        MockToken(STETH).transferFrom(msg.sender, address(this), stEthAmount);
+        uint256 wstEthAmount = stEthAmount * 1e18 / stEthPerTokenRate;
+        _mint(msg.sender, wstEthAmount);
+        return wstEthAmount;
+    }
+
+    function unwrap(uint256 wstEthAmount) external returns (uint256) {
+        _burn(msg.sender, wstEthAmount);
+        uint256 stEthAmount = wstEthAmount * stEthPerTokenRate / 1e18;
+        MockToken(STETH).mint(msg.sender, stEthAmount);
+        return stEthAmount;
     }
 }
 
@@ -284,12 +320,19 @@ contract MockL2StETH is MockToken {
     }
 }
 
-/// @notice Mock ERC-4626 vault where shares equal assets 1:1.
+/// @notice Mock ERC-4626 vault with a configurable asset-per-share rate.
+/// @dev `assetsPerShare` is the asset value of one vault share. Default 1e18 is identity.
+/// Tests set a non-1e18 rate so previewDeposit and deposit traverse genuinely different arithmetic.
 contract MockVault is MockToken, IERC4626 {
     address public immutable ASSET;
+    uint256 public assetsPerShare = 1e18;
 
     constructor(address asset_) MockToken("Vault", "vTKN", 18) {
         ASSET = asset_;
+    }
+
+    function setAssetsPerShare(uint256 rate_) external {
+        assetsPerShare = rate_;
     }
 
     function asset() external view returns (address) {
@@ -297,102 +340,137 @@ contract MockVault is MockToken, IERC4626 {
     }
 
     function totalAssets() external view returns (uint256) {
-        return totalSupply();
+        return totalSupply() * assetsPerShare / 1e18;
     }
 
-    function convertToShares(uint256 assets) public pure returns (uint256) {
-        return assets;
+    function convertToShares(uint256 assets) public view returns (uint256) {
+        return assets * 1e18 / assetsPerShare;
     }
 
-    function convertToAssets(uint256 shares) public pure returns (uint256) {
-        return shares;
+    function convertToAssets(uint256 shares) public view returns (uint256) {
+        return shares * assetsPerShare / 1e18;
     }
 
     function maxDeposit(address) external pure returns (uint256) {
         return type(uint256).max;
     }
 
-    function previewDeposit(uint256 assets) external pure returns (uint256) {
-        return assets;
+    function previewDeposit(uint256 assets) external view returns (uint256) {
+        return convertToShares(assets);
     }
 
-    function deposit(uint256 assets, address receiver) external returns (uint256) {
-        _mint(receiver, assets);
-        return assets;
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
+        shares = convertToShares(assets);
+        _mint(receiver, shares);
     }
 
     function maxMint(address) external pure returns (uint256) {
         return type(uint256).max;
     }
 
-    function previewMint(uint256 shares) external pure returns (uint256) {
-        return shares;
+    function previewMint(uint256 shares) external view returns (uint256) {
+        return convertToAssets(shares);
     }
 
-    function mint(uint256 shares, address receiver) external returns (uint256) {
+    function mint(uint256 shares, address receiver) external returns (uint256 assets) {
+        assets = convertToAssets(shares);
         _mint(receiver, shares);
-        return shares;
     }
 
     function maxWithdraw(address owner) external view returns (uint256) {
-        return balanceOf(owner);
+        return convertToAssets(balanceOf(owner));
     }
 
-    function previewWithdraw(uint256 assets) external pure returns (uint256) {
-        return assets;
+    function previewWithdraw(uint256 assets) external view returns (uint256) {
+        return convertToShares(assets);
     }
 
-    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256) {
-        _burn(owner, assets);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares) {
+        shares = convertToShares(assets);
+        _burn(owner, shares);
         MockToken(ASSET).mint(receiver, assets);
-        return assets;
     }
 
     function maxRedeem(address owner) external view returns (uint256) {
         return balanceOf(owner);
     }
 
-    function previewRedeem(uint256 shares) external pure returns (uint256) {
-        return shares;
+    function previewRedeem(uint256 shares) external view returns (uint256) {
+        return convertToAssets(shares);
     }
 
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256) {
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets) {
         _burn(owner, shares);
-        MockToken(ASSET).mint(receiver, shares);
-        return shares;
+        assets = convertToAssets(shares);
+        MockToken(ASSET).mint(receiver, assets);
     }
 }
 
-/// @notice Mock PSM3 that swaps tokens 1:1 via mint-on-receive.
+/// @notice Mock PSM3 that swaps tokens at a configurable rate around one appreciating share token.
+/// @dev `shareToken` is the vault token that appreciates vs the underlying (e.g. sUSDS). Swaps into
+/// the share divide by `rate`; swaps out of the share multiply by `rate`; underlying<->underlying is 1:1.
 contract MockPSM3 {
+    address public shareToken;
+    uint256 public rate = 1e18;
+
+    function setRate(address shareToken_, uint256 rate_) external {
+        shareToken = shareToken_;
+        rate = rate_;
+    }
+
+    function _convert(address tokenIn, address tokenOut, uint256 amountIn) internal view returns (uint256) {
+        if (tokenOut == shareToken) return amountIn * 1e18 / rate;
+        if (tokenIn == shareToken) return amountIn * rate / 1e18;
+        return amountIn;
+    }
+
     function swapExactIn(address tokenIn, address tokenOut, uint256 amountIn, uint256, address receiver, uint256)
         external
         returns (uint256)
     {
         MockToken(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-        MockToken(tokenOut).mint(receiver, amountIn);
-        return amountIn;
+        uint256 amountOut = _convert(tokenIn, tokenOut, amountIn);
+        MockToken(tokenOut).mint(receiver, amountOut);
+        return amountOut;
     }
 
-    function previewSwapExactIn(address, address, uint256 amountIn) external pure returns (uint256) {
-        return amountIn;
+    function previewSwapExactIn(address tokenIn, address tokenOut, uint256 amountIn) external view returns (uint256) {
+        return _convert(tokenIn, tokenOut, amountIn);
     }
 }
 
-/// @notice Mock Lista stake manager with trivial BNB-to-slisBNB conversions.
+/// @notice Mock Lista stake manager with a configurable BNB-per-slisBNB rate and real deposit minting.
+/// @dev `rate` is BNB per slisBNB and must stay >= 1e18 (Lista init parity check). When `slisBnbToken`
+/// is set, deposit() mints slisBNB so the native deposit branch is exercisable; otherwise it is a no-op.
 contract MockListaStakeManager {
-    function deposit() external payable {}
+    uint256 public rate = 1e18;
+    MockToken public slisBnbToken;
 
-    function convertSnBnbToBnb(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function setRate(uint256 rate_) external {
+        rate = rate_;
     }
 
-    function convertBnbToSnBnb(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function setSlisBnbToken(MockToken token_) external {
+        slisBnbToken = token_;
+    }
+
+    function deposit() external payable {
+        if (address(slisBnbToken) != address(0)) {
+            slisBnbToken.mint(msg.sender, convertBnbToSnBnb(msg.value));
+        }
+    }
+
+    function convertSnBnbToBnb(uint256 amount) public view returns (uint256) {
+        return amount * rate / 1e18;
+    }
+
+    function convertBnbToSnBnb(uint256 amount) public view returns (uint256) {
+        return amount * 1e18 / rate;
     }
 }
 
-/// @notice Mock yield proxy that stores a stake manager reference.
+/// @notice Mock yield proxy that stores a stake manager reference and a toggleable activity flag.
+/// @dev The activity flag lets tests exercise the Aster queued-mint branch.
 contract MockYieldProxy {
     address public stakeManager;
     bool public activitiesOnGoing;
@@ -400,13 +478,20 @@ contract MockYieldProxy {
     constructor(address stakeManager_) {
         stakeManager = stakeManager_;
     }
+
+    function setActivitiesOnGoing(bool ongoing_) external {
+        activitiesOnGoing = ongoing_;
+    }
 }
 
-/// @notice Mock asBNB minter with trivial mint and conversion helpers.
+/// @notice Mock asBNB minter with a configurable asBNB-per-slisBNB rate and queue-aware minting.
+/// @dev `rate` is slisBNB per asBNB (convertToAsBnb divisor). mintAsBnb returns 0 while the yield
+/// proxy reports ongoing activities, modelling Aster's queued-request behaviour.
 contract MockAsBnbMinter {
-    address public asBnb;
-    address public token;
-    address public yieldProxy;
+    address public immutable asBnb;
+    address public immutable token;
+    address public immutable yieldProxy;
+    uint256 public rate = 1e18;
 
     constructor(address asBnb_, address token_, address yieldProxy_) {
         asBnb = asBnb_;
@@ -414,19 +499,40 @@ contract MockAsBnbMinter {
         yieldProxy = yieldProxy_;
     }
 
+    function setRate(uint256 rate_) external {
+        rate = rate_;
+    }
+
     function mintAsBnb() external payable returns (uint256) {
-        return msg.value;
+        if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
+        return msg.value * 1e18 / rate;
     }
 
-    function mintAsBnb(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function mintAsBnb(uint256 amount) external returns (uint256) {
+        if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
+        return amount * 1e18 / rate;
     }
 
-    function convertToTokens(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function convertToTokens(uint256 asBnbAmount) external view returns (uint256) {
+        return asBnbAmount * rate / 1e18;
     }
 
-    function convertToAsBnb(uint256 amount) external pure returns (uint256) {
-        return amount;
+    function convertToAsBnb(uint256 tokenAmount) external view returns (uint256) {
+        return tokenAmount * 1e18 / rate;
+    }
+}
+
+/// @notice Mock EtherFi deposit adapter: native ETH -> weETH at a configurable rate.
+/// @dev `shareRate` must match MockLiquidityPool.shareRate so the adapter's native preview path
+/// and the deposit execution path stay consistent.
+contract MockDepositAdapter {
+    uint256 public shareRate = 1e18;
+
+    function setShareRate(uint256 rate_) external {
+        shareRate = rate_;
+    }
+
+    function depositETHForWeETH(address) external payable returns (uint256) {
+        return msg.value * 1e18 / shareRate;
     }
 }

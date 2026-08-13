@@ -102,7 +102,7 @@
 
 ### 2.2 SY -> Token
 
-调用者把 SY 转入 SY 合约地址 -> 调用 SY.redeem() -> 份额从合约自身余额 burn -> 目标 token 转给 receiver。
+router 路径先把 SY 转入 SY 合约地址（直调路径份额留在调用者账户、不转入）-> 调用 SY.redeem() -> adapter `_redeem` 先把目标 token 交付给 receiver -> 随后 burn SY 份额（router 路径从 `address(this)` 烧、直调路径从 `msg.sender` 烧）-> 重入安全由 `redeem` 的 `nonReentrant` 保证。
 
 ### 2.3 Token / SY -> Locked Stake
 
@@ -114,11 +114,11 @@
 
 ### 2.5 Wrap Redeem
 
-调用者授权 uAsset -> router 代收 uAsset -> position.wrapRedeem() -> uAsset.repay() burn debt -> 换算 SY（健康池按 exchangeRate；不足池按池子份额比例 pro-rata）-> 减少池账务 -> 输出 SY 或目标 token 给 receiver。
+调用者授权 uAsset -> router 代收 uAsset -> position.wrapRedeem() -> 换算 SY（健康池按 exchangeRate；不足池按池子份额比例 pro-rata）-> 减少池账务 -> uAsset.repay() burn debt -> 输出 SY 或目标 token 给 receiver。
 
 ### 2.6 Position Redeem (到期)
 
-position owner 授权 uAsset -> position.redeem() -> 按比例计算 UAssetBurned -> uAsset.repay() burn -> 减少 position.syStaked 与 position.UAssetMinted -> 输出 SY 或目标 token。
+position owner 授权 uAsset -> position.redeem() -> 按比例计算 UAssetBurned -> 减少 syTotalStaking、position.syStaked 与 position.UAssetMinted -> uAsset.repay() burn -> 输出 SY 或目标 token。
 
 ### 2.7 Keeper Redeem
 
@@ -126,7 +126,7 @@ keeper 授权 uAsset -> position.keepRedeem() -> keeper 的 uAsset burnt -> 按 
 
 ### 2.8 Harvest Wrap Yield
 
-owner 调用 harvestWrapYield -> 计算 wrap 池盈余 (syWrapStaking > assetToSy(wrapUAssetDebt)) -> 减少 syTotalStaking / syWrapStaking -> 盈余转 revenuePool。
+owner 调用 harvestWrapYield -> 计算 wrap 池盈余（syWrapStaking > OutrunStakingPositionUpgradeable.sol::_assetToSyUp(wrapUAssetDebt)，uAsset -> canonical asset 与 canonical asset -> SY 两段均向上取整，口径见 docs/spec/position/accounting.md §9）-> 减少 syTotalStaking / syWrapStaking -> 盈余转 revenuePool。
 
 ### 2.9 Genesis
 
@@ -295,12 +295,14 @@ Wrap Stake (资金进入共享池):
 
 赎回路径 (资金流出协议):
 
-  User uAsset ──approve──► Position ──repay(burn)──► Position
-    → reduce position.syStaked / UAssetMinted
+  User uAsset ──approve──► Position
+    → reduce syTotalStaking / position.syStaked / position.UAssetMinted
+    → repay(burn)
     → transfer SY or external redeem → token to receiver
 
-  User uAsset ──approve──► Position ──repay(burn)──► Position (wrapRedeem)
+  User uAsset ──approve──► Position (wrapRedeem)
     → reduce syTotalStaking / syWrapStaking / wrapUAssetDebt
+    → repay(burn)
     → transfer SY or external redeem → token to receiver
 
 Keeper 代偿:
@@ -383,6 +385,6 @@ Harvest:
 - Router 当前是 pull 模式，不会消费 pre-funded 余额代替调用者出资。
 - Genesis 当前走的是 locked stake 路径，不是 wrap stake 路径。
 - Wrap 池按 principal debt 记账，不会因为汇率上涨自动给用户补发更多 uAsset。
-- 多个 SY adapter 的 deposit/redeem 核心路径缺少独立测试，当前更多依赖源码表面证据。
+- 11 个 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
 - Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验；不实现 deviation bounds 或 fallback。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。

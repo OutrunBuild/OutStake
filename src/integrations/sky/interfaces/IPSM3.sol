@@ -3,8 +3,9 @@ pragma solidity ^0.8.35;
 
 interface IPSM3 {
     /// @notice Swaps an exact amount of `assetIn` for as much `assetOut` as the PSM returns.
-    /// @dev OutrunL2StakedUsdsSY calls this with local slippage set by the adapter flow and consumes `amountOut`
-    ///      as deposit or redemption output.
+    /// @dev OutrunL2StakedUsdsSY calls this with `minAmountOut = 0`; slippage is enforced by the
+    ///      SYBase deposit/redeem wrapper (minSharesOut / minTokenOut), not at this call. The returned
+    ///      `amountOut` is consumed as the deposit or redemption output.
     /// @param assetIn Address of the ERC-20 asset to swap in.
     /// @param assetOut Address of the ERC-20 asset to swap out.
     /// @param amountIn Amount of the asset to swap in.

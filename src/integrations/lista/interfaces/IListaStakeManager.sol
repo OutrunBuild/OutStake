@@ -24,7 +24,8 @@ interface IListaStakeManager {
     function convertBnbToSnBnb(uint256 amount) external view returns (uint256);
 
     /// @notice Quotes the BNB value of a given slisBNB amount.
-    /// @dev OutrunSlisBNBSY consumes this for `exchangeRate()` and redemption previews.
+    /// @dev OutrunSlisBNBSY consumes this for `exchangeRate()` and an init-time parity check
+    ///      (1 slisBNB >= 1 BNB). Redemption is a 1:1 slisBNB pass-through and does not use this quote.
     /// @param amount The slisBNB amount to convert, in wei.
     /// @return The equivalent BNB amount, in wei.
     function convertSnBnbToBnb(uint256 amount) external view returns (uint256);

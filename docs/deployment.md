@@ -8,7 +8,7 @@
 - `script/deploy/OutstakeScript.s.sol`
 - `script/deploy/deployment/OutrunDeployer.sol`
 
-`YieldDeployScript.run()` 默认执行 `_supportUpgradeableAUSDC()`，并通过 `ERC1967Proxy` 部署 `OutrunAaveV3SYUpgradeable` 与 `OutrunStakingPositionUpgradeable`。
+`YieldDeployScript.run()` 默认执行 `_supportAUSDC()`，并通过 `ERC1967Proxy` 部署 `OutrunAaveV3SYUpgradeable` 与 `OutrunStakingPositionUpgradeable`。
 
 `OutstakeScript.run()` 默认只部署 `OutrunRouter` 与基础链配置。
 

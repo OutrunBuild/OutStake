@@ -56,9 +56,6 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     }
 
     /// @notice Deposit: supply underlying to Aave or wrap aToken.
-    /// When depositing underlying, the function supplies to Aave and returns
-    /// the scaled balance difference. When depositing an aToken directly, it
-    /// converts the token amount to scaled shares using the current liquidity index.
     /// @param tokenIn the asset being deposited (underlying or aToken)
     /// @param amountDeposited amount of tokenIn to deposit
     /// @return amountSharesOut scaled shares credited
@@ -82,10 +79,6 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
         if (amountSharesOut == 0) revert AaveZeroShares();
     }
 
-    /// @notice Redeem: withdraw from Aave or transfer aToken.
-    /// Converts scaled shares to asset amount using the current liquidity index,
-    /// then either withdraws from the Aave pool (if redeeming to underlying)
-    /// or transfers the aToken directly.
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset being redeemed (underlying or aToken)
     /// @param amountSharesToRedeem scaled shares to redeem
@@ -118,8 +111,6 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     function exchangeRate() public view override returns (uint256) {
         address _underlying = underlying();
         address _pool = aavePool();
-        // Aave's liquidity index is ray-scaled (1e27).
-        // Divide by 1e9 to get the standard 1e18-scaled exchange rate.
         return _getNormalizedIncome(_underlying, _pool) / 1e9;
     }
 

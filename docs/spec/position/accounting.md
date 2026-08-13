@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文档说明 `OutStakeV2` 当前实现中的核心账务规则，并明确 mixed-decimals 双段换算的本次修复目标/修复后语义，包括 `uAsset` minter-cap、position debt、wrap 池、汇率换算、赎回按比例销债、keeper redeem 分账与 wrap yield harvest。
+本文档说明 `OutStakeV2` 当前实现中的核心账务规则，并明确 mixed-decimals 双段换算语义，包括 `uAsset` minter-cap、position debt、wrap 池、汇率换算、赎回按比例销债、keeper redeem 分账与 wrap yield harvest。
 
 ## 1.1 Upgradeable accounting readiness
 
@@ -47,7 +47,7 @@
 锁仓仓位的初始 debt 规则是：
 
 - 用户 stake `amountInSY`
-- 本次修复目标/修复后语义：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`
+- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`
 - `principalValue` 同时成为初始 `UAssetMinted`
 - position 内写入该值，并调用 `uAsset.mint(...)`
 
@@ -65,14 +65,14 @@ wrap 池当前使用三组聚合账务变量：
 
 - 增加 `syTotalStaking`
 - 增加 `syWrapStaking`
-- 本次修复目标/修复后语义：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`
+- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`
 - 用 principal value 增加 `wrapUAssetDebt`
 - 铸造等额 `uAsset`
 
 `wrapRedeem` 时：
 
 - 先检查 `uAssetDebtUnits = amountInUAsset` 且 `uAssetDebtUnits <= wrapUAssetDebt`
-- 本次修复目标/修复后语义：先计算 `canonicalAssetValue = uAsset -> canonical asset`，再计算 `amountInSY = canonical asset -> SY`
+- 先计算 `canonicalAssetValue = uAsset -> canonical asset`，再计算 `amountInSY = canonical asset -> SY`
 - 减少 `syTotalStaking`
 - 减少 `syWrapStaking`
 - 减少 `wrapUAssetDebt` 中对应的 `uAssetDebtUnits`
@@ -87,7 +87,7 @@ wrap 池当前使用三组聚合账务变量：
 - 如果用户贡献的是价值 X 的资产，则铸出的 SY 或 debt 应通过同一换算关系推导
 - position / wrap debt 的统一语义是：先 `SY -> canonical asset`，再 `canonical asset -> uAsset`；需要从 debt 反推 `SY` 时，则先 `uAsset -> canonical asset`，再 `canonical asset -> SY`
 - `canonical asset` 在这里是 `exchangeRate()` 定义的价值单位；`canonicalAssetDecimals` 取自 `SY.assetInfo().assetDecimals`，`uAssetDecimals` 取自 `uAsset.decimals()`
-- 以下 mixed-decimals 双段换算是本次修复目标/修复后语义，不把它表述为当前代码已完成行为；具体单位模型与四个基础公式以 [docs/spec/common-foundations.md](/home/azkrale/Web3Project/OutStakeV2/docs/spec/common-foundations.md) 为准
+- 以下 mixed-decimals 双段换算为当前代码已完成行为；具体单位模型与四个基础公式以 [docs/spec/common-foundations.md](/home/azkrale/Web3Project/OutStakeV2/docs/spec/common-foundations.md) 为准
 
 `OutrunStakingPositionUpgradeable` 的相关账务应按四个基础方向换算：
 
@@ -121,13 +121,13 @@ rounding matrix：
   - `uAsset -> canonical asset` 用 up
   - `canonical asset -> SY` 用 up
 
-因此，position/wrap 账务都以 `SY` 数量和资产值之间的双向换算为前提，但 mixed-decimals 双段归一化按上表作为本次修复目标落文。
+因此，position/wrap 账务都以 `SY` 数量和资产值之间的双向换算为前提，但 mixed-decimals 双段归一化按上表作为当前实现落文。
 
 ## 6. Draw 账务
 
 `drawUAsset(positionId, recipient)` 当前的账务规则是：
 
-- 本次修复目标/修复后语义：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`
+- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`
 - 再读取已有 `position.UAssetMinted`
 - 若 `currentValueInUAsset <= minted`，则可追加铸造额为 0
 - 否则只允许铸造差额 `currentValueInUAsset - minted`
@@ -159,7 +159,7 @@ rounding matrix：
 
 ## 8. Keeper redeem 分账
 
-`keepRedeem(positionId, amountInUAsset, receiver)` 的账务路径与普通 redeem 不同，本次修复目标/修复后语义如下：
+`keepRedeem(positionId, amountInUAsset, receiver)` 的账务路径与普通 redeem 不同，当前实现语义如下：
 
 - 输入校验：`amountInUAsset == 0` → revert `ZeroInput()`；`amountInUAsset > position.UAssetMinted` → revert `ExceedsPositionDebt()`
 - **全仓位守卫（前置判定）**：先按上取整口径判断仓位整体是否不足额——`if (_assetToSyUp(positionUAssetMinted, exchangeRate) > syStaked) revert InsufficientSyCollateral();`。仓位整体不足额（当前 `SY` 市值低于债务面值）时，任何 `amountInUAsset > 0` 的 keepRedeem 一律 revert，原子回滚——keeper 的 `uAsset` 不被烧、仓位不变，不存在 amount 依赖的残余暴露
@@ -169,13 +169,13 @@ rounding matrix：
 - **per-amount 防御判定**：若 `keeperPrincipalSY > syRedeemed`，同样 revert `InsufficientSyCollateral()`（替代对 `keeperPrincipalSY` 的上限收敛写法）；该防御不重复全仓位判断、正常路径不触发，仅作防御性不变量检查保留
 - 否则分账不变：剩余 `ownerExcessSY = syRedeemed - keeperPrincipalSY`
 
-本次修复目标/修复后语义的不足额判定说明：
+不足额判定说明：
 
 - 全仓位守卫与 per-amount 防御都 revert `InsufficientSyCollateral()`，但判定口径不同：前者在仓位整体不足额时一刀切拒绝任何 `amountInUAsset > 0` 的调用，且在全仓位守卫前置下已严格覆盖所有 per-amount 情形；后者不重复全仓位判断、正常路径不触发，仅作为**防御性不变量检查**保留，防止未来重构在成功分账时 `ownerExcessSY = syRedeemed - keeperPrincipalSY` 下溢
 - 方向性说明：不足额仓位上任何 `amountInUAsset > 0` 的 keepRedeem，keeper 拿回 SY 的市值不大于所烧 uAsset 面值（当前汇率下至多盈亏平衡，整除边界存在平衡例外），故全仓位一刀切拒绝不会误伤任何“实值不亏”的 redeem；`revert 触发 ⟺ 仓位整体不足额` 在全仓位守卫口径下成立
 - keepRedeem 对调用者（keeper）的 `uAsset` 零暴露：两种不足额判定触发时调用都失败且不烧 `uAsset`，汇率下跌风险由仓位/owner 承担，不内化到 keeper 调用者
 
-本次修复目标/修复后语义新增只读查询：
+只读查询：
 
 - `previewKeepRedeem(positionId, amountInUAsset) returns (keeperPrincipalSY, ownerExcessSY)` mirror keepRedeem 的 `SY` 分账计算（同一个 `_assetToSy` 与 `roundDownDiv` 公式），并镜像以下失败路径，使”preview 与执行一致”成立：
   - **镜像 amount 相关失败路径**：
@@ -197,10 +197,10 @@ rounding matrix：
 
 ## 9. Harvest 账务
 
-`harvestWrapYield(tokenOut, minTokenOut)` 的批准修复语义是：只处理 wrap 池中高于当前 exchangeRate 下 wrap debt 最低覆盖需求的那部分 `SY`：
+`harvestWrapYield(tokenOut, minTokenOut)` 只处理 wrap 池中高于当前 exchangeRate 下 wrap debt 最低覆盖需求的那部分 `SY`：
 
 - 先读取 `wrapPoolSY = syWrapStaking`
-- 本次修复目标/修复后语义：先按 up 版本计算 `wrapDebtInCanonicalAsset = uAsset -> canonical asset`，再按 up 版本计算 `wrapDebtInSY = canonical asset -> SY`
+- 先按 up 版本计算 `wrapDebtInCanonicalAsset = uAsset -> canonical asset`，再按 up 版本计算 `wrapDebtInSY = canonical asset -> SY`
 - 若 `wrapPoolSY <= wrapDebtInSY`，则没有可 harvest 的额外收益
 - 否则 `amountInSY = wrapPoolSY - wrapDebtInSY`
 

@@ -120,6 +120,10 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
         return token == yieldBearingToken() || token == STETH();
     }
 
+    /// @notice Returns asset metadata: canonical asset is stETH, the constructor-injected underlying asset.
+    /// @return assetType always TOKEN for this adapter
+    /// @return assetAddress address of the stETH token
+    /// @return assetDecimals decimals of stETH
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, STETH(), IERC20Metadata(STETH()).decimals());
     }

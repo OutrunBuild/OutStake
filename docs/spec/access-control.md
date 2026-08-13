@@ -8,6 +8,8 @@
 - `src/position/OutrunStakingPositionUpgradeable.sol`
 - `src/router/OutrunRouter.sol`
 - `src/yield/SYBaseUpgradeable.sol`
+- `src/assets/base/OutrunERC20PausableUpgradeable.sol`
+- `src/yield/OutrunL2OracleBackedSYUpgradeable.sol`
 - `src/libraries/oracle/OutrunExchangeOracleAdapter.sol`
 
 ## 权限模型
@@ -29,7 +31,7 @@ UUPS 边界：
 - `OutrunUniversalAssetsUpgradeable` 由 owner 授权升级
 - `OutrunStakingPositionUpgradeable` 由 owner 授权升级
 - `SYBaseUpgradeable` 为所有 SY adapters 提供 UUPS authority
-- oracle-backed SY upgradeable variants 只有 owner-only `setExchangeRateOracle(address)`
+- 所有 SY adapter 经 `SYBaseUpgradeable` 继承 `OutrunERC20PausableUpgradeable`，owner 因此拥有 `pause`/`unpause`（经 `_update` 的 `whenNotPaused` 阻断 transfer/mint/burn，叠加 deposit/redeem 的 `whenNotPaused`，可一键停摆全部 SY 转账/铸造/销毁/存入/赎回）；oracle-backed SY upgradeable variants 另有 owner-only `setExchangeRateOracle(address)`
 
 ## 重要结果
 

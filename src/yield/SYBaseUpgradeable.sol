@@ -107,6 +107,11 @@ abstract contract SYBaseUpgradeable is
         require(isValidTokenOut(tokenOut), SYInvalidTokenOut(tokenOut));
         require(amountSharesToRedeem != 0, SYZeroRedeem());
         // Adapter redemption sends tokenOut before the SY shares are burned.
+        // This is reverse-CEI (external transfer-out in _redeem before the _burn state update),
+        // and is safe because nonReentrant blocks reentry into deposit/redeem during the
+        // transfer-out, and _burn is a pure internal state change with no external call that
+        // reverts atomically if the share balance is insufficient — rolling back the whole
+        // redeem (the transfer included) if anything fails.
         amountTokenOut = _redeem(receiver, tokenOut, amountSharesToRedeem);
 
         if (burnFromInternalBalance) {

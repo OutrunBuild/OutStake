@@ -90,6 +90,10 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return token == yieldBearingToken() || token == USDS();
     }
 
+    /// @notice Returns asset metadata: canonical asset is USDS, the constructor-injected underlying asset.
+    /// @return assetType always TOKEN for this adapter
+    /// @return assetAddress address of the USDS token
+    /// @return assetDecimals always 18
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, USDS(), 18);
     }

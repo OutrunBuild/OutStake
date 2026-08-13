@@ -89,6 +89,10 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
         return token == yieldBearingToken();
     }
 
+    /// @notice Returns asset metadata: canonical asset is native BNB (NATIVE = address(0) sentinel).
+    /// @return assetType always TOKEN for this adapter
+    /// @return assetAddress NATIVE sentinel (address(0)) — canonical asset is native BNB
+    /// @return assetDecimals always 18
     function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, NATIVE, 18);
     }

@@ -5,7 +5,7 @@
 - **SY Adapter**：针对特定外部收益协议（Aave、Lido、Etherfi 等）的 SY 适配器实现，负责将协议份额映射到统一的 SY 份额语义。
 - **OutrunStakingPositionUpgradeable**：当前仓位管理合约，维护锁仓仓位账本与公共 wrap 池，支持 stake、draw、redeem、keepRedeem、wrapStake、wrapRedeem、harvestWrapYield。
 - **OutrunRouter**：聚合路由入口，把 token <-> SY <-> position/uAsset 的组合路径收敛为单次调用。
-- **Underlying**：SY adapter 对应的基础资产，如 USDS（Sky）、aUSDC（Aave）、USDE（Ethena）。
+- **Underlying**：SY adapter 对应的基础资产，如 USDS（Sky）、USDC（Aave）、USDE（Ethena）。
 - **Yield Bearing Token**：SY adapter 对应的收益产生型代币，如 sUSDS、aUSDC、wstETH。
 - **Canonical Asset**：adapter 对外声明的"真实底层资产"元数据（地址 + 精度），L2 adapter 中指向 Ethereum 上的 canonical underlying 而非 L2 token。
 - **exchangeRate()**：SY 的汇率函数，返回 asset per SY。用于将 SY 份额数量与资产值双向换算。

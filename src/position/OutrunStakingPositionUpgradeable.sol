@@ -328,6 +328,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         });
 
         // Step 5: mint uAsset to the designated receiver.
+        // Minting draws on this contract's own uAsset minter record: it increases this contract's
+        // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
+        // mintingCap is exhausted.
         IUniversalAssets(_uAsset).mint(uAssetReceiver, UAssetMinted);
         emit Stake(positionId, positionOwner, amountInSY, principalValue, UAssetMinted, deadline256);
     }
@@ -358,6 +361,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         position.UAssetMinted = currentValue;
 
         address _uAsset = uAsset();
+        // Minting draws on this contract's own uAsset minter record: it increases this contract's
+        // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
+        // mintingCap is exhausted.
         IUniversalAssets(_uAsset).mint(recipient, amountInUAsset);
         emit DrawUAsset(positionId, recipient, amountInUAsset);
     }
@@ -395,6 +401,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         }
 
         UAssetAmount = principalValue;
+        // Minting draws on this contract's own uAsset minter record: it increases this contract's
+        // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
+        // mintingCap is exhausted.
         IUniversalAssets(_uAsset).mint(uAssetRecipient, UAssetAmount);
         emit WrapStake(amountInSY, UAssetAmount, uAssetRecipient);
     }
@@ -404,7 +413,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Only the position owner can call. The position deadline must have passed.
     /// @dev Debt is repaid proportionally: if all SY is redeemed, all remaining uAsset debt is burned.
     /// Partial redeems use ceil rounding for debt so no stranded debt remains on the position.
-    /// Direct SY tokenOut bypasses the SY.redeem fee route; all other tokenOut paths go through SY.redeem.
+    /// Direct SY tokenOut transfers SY 1:1 without an adapter burn; all other tokenOut paths go through SY.redeem.
     /// @param positionId The position identifier.
     /// @param syRedeemed Amount of SY to redeem from the position.
     /// @param receiver Address that receives the tokenOut.
@@ -452,7 +461,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @dev Healthy pool (value >= debt face): redeem at face value, capping at 1. Undercollateralized
     /// pool: redeem pro-rata (each uAsset gets syWrapStaking / wrapUAssetDebt SY, tracking the underlying
     /// downside without ever reverting on pool insufficiency).
-    /// Direct SY tokenOut sends SY to the receiver without a redemption fee; all other tokenOut paths go through SY.redeem.
+    /// Direct SY tokenOut sends SY 1:1 to the receiver; all other tokenOut paths go through SY.redeem.
     /// @param amountInUAsset uAsset amount to redeem. Must be > 0 and <= wrapUAssetDebt.
     /// @param receiver Address that receives the tokenOut.
     /// @param tokenOut Desired output token (SY itself or another token via SY.redeem).
@@ -479,7 +488,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
         IUniversalAssets(_uAsset).repay(msg.sender, amountInUAsset);
 
-        // If tokenOut is SY itself, send SY directly — no redemption fee is incurred.
+        // If tokenOut is SY itself, send SY directly — no adapter burn or conversion is needed.
         if (tokenOut == _SY) {
             if (amountInSY < minTokenOut) revert InsufficientTokenOut(amountInSY, minTokenOut);
             amountTokenOut = amountInSY;

@@ -33,7 +33,8 @@ import {
     MockPSM3,
     MockListaStakeManager,
     MockYieldProxy,
-    MockAsBnbMinter
+    MockAsBnbMinter,
+    MockDepositAdapter
 } from "./mocks/SYAdapterMocks.sol";
 
 contract SYAdaptersUpgradeableTest is Test {
@@ -332,14 +333,20 @@ contract SYAdaptersUpgradeableTest is Test {
         MockToken eETH = new MockToken("eETH", "eETH", 18);
         MockWeETH weETH = new MockWeETH(address(eETH));
         MockLiquidityPool pool = new MockLiquidityPool();
+        // Non-identity rate so the preview path (LiquidityPool.sharesForAmount) and the execution
+        // path (weETH.wrap) are no longer tautologically equal.
+        uint256 rate = 1.25e18;
+        weETH.setShareRate(rate);
+        pool.setShareRate(rate);
         address sy = ProxyTestHelper.deploy(
             address(new OutrunWeETHSYUpgradeable()),
             abi.encodeCall(
                 OutrunWeETHSYUpgradeable.initialize,
-                (owner, address(eETH), address(weETH), address(0xDAD), address(pool))
+                (owner, address(eETH), address(weETH), address(new MockDepositAdapter()), address(pool))
             )
         );
 
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
         eETH.mint(user, AMOUNT);
         vm.startPrank(user);
         eETH.approve(sy, AMOUNT);
@@ -349,22 +356,32 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 redeemed = _asSY(sy).redeem(user, sharesOut, address(eETH), 0, false);
         vm.stopPrank();
 
+        assertEq(previewShares, expectedShares);
+        assertEq(sharesOut, expectedShares);
         assertEq(sharesOut, previewShares);
+        assertEq(previewOut, AMOUNT);
         assertEq(redeemed, previewOut);
         assertEq(redeemed, AMOUNT);
         assertEq(eETH.balanceOf(user), AMOUNT);
         assertEq(weETH.balanceOf(sy), 0);
-        assertEq(_asSY(sy).exchangeRate(), 1e18);
+        assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
     function testWstEthStEthRoundtripMatchesPreviewAndExchangeRate() external {
         MockStETH stETH = new MockStETH();
         MockWstETH wstETH = new MockWstETH(address(stETH));
+        // Non-identity rate (1.25 stETH per wstETH): the preview path (getSharesByPooledEth) and the
+        // execution path (wrap) now traverse genuinely different arithmetic, so preview == actual is
+        // no longer tautological.
+        uint256 rate = 1.25e18;
+        stETH.setPooledEthPerShare(rate);
+        wstETH.setStEthPerToken(rate);
         address sy = ProxyTestHelper.deploy(
             address(new OutrunWstETHSYUpgradeable()),
             abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
         );
 
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
         stETH.mint(user, AMOUNT);
         vm.startPrank(user);
         stETH.approve(sy, AMOUNT);
@@ -374,12 +391,15 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 redeemed = _asSY(sy).redeem(user, sharesOut, address(stETH), 0, false);
         vm.stopPrank();
 
+        assertEq(previewShares, expectedShares);
+        assertEq(sharesOut, expectedShares);
         assertEq(sharesOut, previewShares);
+        assertEq(previewOut, AMOUNT);
         assertEq(redeemed, previewOut);
         assertEq(redeemed, AMOUNT);
         assertEq(stETH.balanceOf(user), AMOUNT);
         assertEq(wstETH.balanceOf(sy), 0);
-        assertEq(_asSY(sy).exchangeRate(), 1e18);
+        assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
     function testMockL2StEthUsesShareBalancesForTransfersAndTokenAllowances() external {
@@ -407,8 +427,13 @@ contract SYAdaptersUpgradeableTest is Test {
     }
 
     function testVaultBackedAdaptersUseDepositRedeemAndExchangeRate() external {
+        // Non-identity vault/PSM rates so deposit preview and execution are no longer tautological.
+        uint256 rate = 1.25e18;
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
+
         MockToken usde = new MockToken("USDe", "USDe", 18);
         MockVault sUSDe = new MockVault(address(usde));
+        sUSDe.setAssetsPerShare(rate);
         address ethena = ProxyTestHelper.deploy(
             address(new OutrunStakedUSDeSYUpgradeable()),
             abi.encodeCall(OutrunStakedUSDeSYUpgradeable.initialize, (owner, address(usde), address(sUSDe)))
@@ -423,12 +448,16 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 ethenaRedeemed = _asSY(ethena).redeem(user, ethenaShares, address(sUSDe), 0, false);
         vm.stopPrank();
 
+        assertEq(ethenaPreviewShares, expectedShares);
+        assertEq(ethenaShares, expectedShares);
         assertEq(ethenaShares, ethenaPreviewShares);
+        assertEq(ethenaPreviewOut, expectedShares);
         assertEq(ethenaRedeemed, ethenaPreviewOut);
-        assertEq(_asSY(ethena).exchangeRate(), 1e18);
+        assertEq(_asSY(ethena).exchangeRate(), rate);
 
         MockToken usds = new MockToken("USDS", "USDS", 18);
         MockVault sUSDS = new MockVault(address(usds));
+        sUSDS.setAssetsPerShare(rate);
         address sky = ProxyTestHelper.deploy(
             address(new OutrunStakedUsdsSYUpgradeable()),
             abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
@@ -443,20 +472,26 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 skyRedeemed = _asSY(sky).redeem(user, skyShares, address(usds), 0, false);
         vm.stopPrank();
 
+        assertEq(skyPreviewShares, expectedShares);
+        assertEq(skyShares, expectedShares);
         assertEq(skyShares, skyPreviewShares);
+        assertEq(skyPreviewOut, AMOUNT);
         assertEq(skyRedeemed, skyPreviewOut);
         assertEq(skyRedeemed, AMOUNT);
         assertEq(usds.balanceOf(user), AMOUNT);
-        assertEq(_asSY(sky).exchangeRate(), 1e18);
+        assertEq(_asSY(sky).exchangeRate(), rate);
 
         MockToken usdc = new MockToken("USDC", "USDC", 6);
         MockToken l2Usds = new MockToken("USDS", "USDS", 18);
         MockToken l2sUSDS = new MockToken("sUSDS", "sUSDS", 18);
+        MockPSM3 psm = new MockPSM3();
+        // sUSDS is the appreciating share token; USDC/USDS swap into it at the configured rate.
+        psm.setRate(address(l2sUSDS), rate);
         address skyL2 = ProxyTestHelper.deploy(
             address(new OutrunL2StakedUsdsSYUpgradeable()),
             abi.encodeCall(
                 OutrunL2StakedUsdsSYUpgradeable.initialize,
-                (owner, address(usdc), address(l2Usds), address(l2sUSDS), address(new MockPSM3()))
+                (owner, address(usdc), address(l2Usds), address(l2sUSDS), address(psm))
             )
         );
 
@@ -469,11 +504,14 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 skyL2Redeemed = _asSY(skyL2).redeem(user, skyL2Shares, address(l2Usds), 0, false);
         vm.stopPrank();
 
+        assertEq(skyL2PreviewShares, expectedShares);
+        assertEq(skyL2Shares, expectedShares);
         assertEq(skyL2Shares, skyL2PreviewShares);
+        assertEq(skyL2PreviewOut, AMOUNT);
         assertEq(skyL2Redeemed, skyL2PreviewOut);
         assertEq(skyL2Redeemed, AMOUNT);
         assertEq(l2Usds.balanceOf(user), AMOUNT);
-        assertEq(_asSY(skyL2).exchangeRate(), 1e18);
+        assertEq(_asSY(skyL2).exchangeRate(), rate);
     }
 
     function testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate() external {
@@ -522,6 +560,138 @@ contract SYAdaptersUpgradeableTest is Test {
         _assertYieldTokenRoundtrip(aster, token, AMOUNT);
         assertEq(_asSY(aster).previewDeposit(NATIVE, AMOUNT), AMOUNT);
         assertEq(_asSY(aster).exchangeRate(), 1e18);
+    }
+
+    function testListaNativeDepositMatchesPreviewAndExchangeRate() external {
+        // Non-identity rate plus a real deposit-minting stake manager make the native BNB deposit
+        // branch exercisable; preview (convertBnbToSnBnb) and actual (minted slisBNB delta) are no
+        // longer tautologically equal.
+        uint256 rate = 1.1e18;
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        stakeManager.setRate(rate);
+        stakeManager.setSlisBnbToken(token);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunSlisBNBSYUpgradeable()),
+            abi.encodeCall(OutrunSlisBNBSYUpgradeable.initialize, (owner, address(token), address(stakeManager)))
+        );
+
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
+        vm.deal(user, AMOUNT);
+        vm.startPrank(user);
+        uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
+        uint256 sharesOut = _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+        vm.stopPrank();
+
+        assertEq(previewShares, expectedShares);
+        assertEq(sharesOut, expectedShares);
+        assertEq(sharesOut, previewShares);
+        assertEq(_asSY(sy).exchangeRate(), rate);
+    }
+
+    function testAsterNativeDepositMatchesPreviewAndExchangeRate() external {
+        // Non-identity minter rate (stake manager kept at identity) exercises the native BNB -> asBNB
+        // path with a non-tautological preview/actual equality.
+        uint256 rate = 1.1e18;
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(stakeManager));
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        MockAsBnbMinter minter = new MockAsBnbMinter(address(token), address(slis), address(yieldProxy));
+        minter.setRate(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAsBNBSYUpgradeable()),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter)))
+        );
+
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
+        vm.deal(user, AMOUNT);
+        vm.startPrank(user);
+        uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
+        uint256 sharesOut = _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+        vm.stopPrank();
+
+        assertEq(previewShares, expectedShares);
+        assertEq(sharesOut, expectedShares);
+        assertEq(sharesOut, previewShares);
+        assertEq(_asSY(sy).exchangeRate(), rate);
+    }
+
+    function testAsterSlisBnbDepositMatchesPreviewAndExchangeRate() external {
+        // The slisBNB -> asBNB converting path uses different functions for preview (convertToAsBnb)
+        // and execution (mintAsBnb), so preview == actual is non-tautological at a non-identity rate.
+        uint256 rate = 1.1e18;
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(stakeManager));
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        MockAsBnbMinter minter = new MockAsBnbMinter(address(token), address(slis), address(yieldProxy));
+        minter.setRate(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAsBNBSYUpgradeable()),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter)))
+        );
+
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
+        slis.mint(user, AMOUNT);
+        vm.startPrank(user);
+        slis.approve(sy, AMOUNT);
+        uint256 previewShares = _asSY(sy).previewDeposit(address(slis), AMOUNT);
+        uint256 sharesOut = _asSY(sy).deposit(user, address(slis), AMOUNT, 0);
+        vm.stopPrank();
+
+        assertEq(previewShares, expectedShares);
+        assertEq(sharesOut, expectedShares);
+        assertEq(sharesOut, previewShares);
+        assertEq(_asSY(sy).exchangeRate(), rate);
+    }
+
+    function testAsterNativeDepositRevertsWhenQueued() external {
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(stakeManager));
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        MockAsBnbMinter minter = new MockAsBnbMinter(address(token), address(slis), address(yieldProxy));
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAsBNBSYUpgradeable()),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter)))
+        );
+
+        // While the yield proxy is processing a batch, mintAsBnb returns 0 and the adapter classifies
+        // the native deposit as queued rather than a true zero-output failure.
+        yieldProxy.setActivitiesOnGoing(true);
+        vm.deal(user, AMOUNT);
+        vm.prank(user);
+        vm.expectRevert(OutrunAsBNBSYUpgradeable.AsBnbMintQueued.selector);
+        _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+    }
+
+    function testWeEthNativeDepositMatchesPreviewAndExchangeRate() external {
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        MockLiquidityPool pool = new MockLiquidityPool();
+        MockDepositAdapter depositAdapter = new MockDepositAdapter();
+        uint256 rate = 1.25e18;
+        weETH.setShareRate(rate);
+        pool.setShareRate(rate);
+        depositAdapter.setShareRate(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(depositAdapter), address(pool))
+            )
+        );
+
+        // Native ETH preview reduces to sharesForAmount(amount) at the pool rate; the deposit adapter
+        // mints the same weETH amount, so preview == actual is non-tautological.
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
+        vm.deal(user, AMOUNT);
+        vm.startPrank(user);
+        uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
+        uint256 sharesOut = _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+        vm.stopPrank();
+
+        assertEq(previewShares, expectedShares);
+        assertEq(sharesOut, expectedShares);
+        assertEq(sharesOut, previewShares);
+        assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
     function _assertYieldTokenRoundtrip(address sy, MockToken ybt, uint256 amount) internal {
@@ -645,7 +815,7 @@ contract SYAdaptersUpgradeableTest is Test {
             address(impl),
             abi.encodeCall(
                 OutrunWeETHSYUpgradeable.initialize,
-                (owner, address(eETH), address(token), address(0xDAD), address(pool))
+                (owner, address(eETH), address(token), address(new MockDepositAdapter()), address(pool))
             )
         );
     }

@@ -11,8 +11,9 @@ interface IAToken {
 
     /**
      * @notice Returns a user's balance in scaled units.
-     * @dev Local adapters may consume scaled balances with pool income data; this interface does not define the
-     * upstream index mechanics.
+     * @dev OutrunAaveV3SY consumes this as a before/after balance delta around a pool supply() call to
+     * measure the scaled shares minted; it is never combined with pool income data at the call site.
+     * This interface does not define the upstream index mechanics.
      * @param user The account to query.
      * @return The scaled balance for `user`.
      */

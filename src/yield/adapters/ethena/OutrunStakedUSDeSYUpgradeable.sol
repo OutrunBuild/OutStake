@@ -33,7 +33,6 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return outrunStakedUSDeSYStorage.USDE;
     }
 
-    /// @notice Deposits USDe or sUSDe: USDe is deposited into the 4626 vault, sUSDe is taken 1:1.
     /// @param tokenIn The input token address (USDe or sUSDe).
     /// @param amountDeposited The amount of the input token deposited.
     /// @return amountSharesOut The amount of sUSDe shares received.
@@ -52,7 +51,6 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
 
     // Redeem by transferring sUSDe directly. Note: this does NOT withdraw from the 4626 vault —
     // the receiver gets sUSDe which they can redeem for USDe on their own.
-    /// @notice Redeems sUSDe shares by transferring them directly (does NOT withdraw from the 4626 vault).
     /// @param receiver The address receiving the sUSDe tokens.
     /// @param amountSharesToRedeem The amount of sUSDe shares to redeem.
     /// @return The amount of sUSDe sent to the receiver.
@@ -61,7 +59,6 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return amountSharesToRedeem;
     }
 
-    // ERC4626 convertToAssets returns how much USDe 1 sUSDe is worth, scaled by 1e18.
     // This rate grows as protocol yield is added to the vault.
     /// @notice Returns the USDe amount for 1 sUSDe using ERC4626 convertToAssets.
     /// @return res The amount of USDe equivalent to 1 sUSDe (scaled by 1e18).

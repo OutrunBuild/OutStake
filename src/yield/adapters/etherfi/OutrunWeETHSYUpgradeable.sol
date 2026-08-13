@@ -58,9 +58,6 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         return outrunWeETHSYStorage.LIQUIDITY_POOL;
     }
 
-    /// @notice Three deposit paths: NATIVE -> Adapter, EETH -> wrap, weETH -> 1:1.
-    /// Native ETH is routed through EtherFi's DepositAdapter. eETH is wrapped into
-    /// weETH via the weETH contract. Existing weETH is deposited 1:1.
     /// @param tokenIn the asset being deposited (NATIVE, eETH, or weETH)
     /// @param amountDeposited amount of tokenIn to deposit
     /// @return amountSharesOut amount of weETH shares credited
@@ -79,7 +76,6 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         }
     }
 
-    /// @notice Redeem weETH shares: unwrap to eETH or transfer weETH directly.
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset to redeem (eETH or weETH)
     /// @param amountSharesToRedeem amount of weETH shares to redeem
@@ -107,9 +103,6 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         return ILiquidityPool(LIQUIDITY_POOL()).amountForShare(1 ether);
     }
 
-    /// @notice ETH -> eETH -> weETH two-step preview.
-    /// For native ETH, first computes how much eETH the ETH buys,
-    /// then converts that eETH to weETH shares via the LiquidityPool.
     /// @param tokenIn the token being deposited (NATIVE, eETH, or weETH)
     /// @param amountTokenToDeposit amount of tokenIn to deposit
     /// @return amountSharesOut expected weETH shares
@@ -176,6 +169,10 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         return token == EETH() || token == yieldBearingToken();
     }
 
+    /// @notice Returns asset metadata: canonical asset is native ETH (NATIVE = address(0) sentinel).
+    /// @return assetType always TOKEN for this adapter
+    /// @return assetAddress NATIVE sentinel (address(0)) — canonical asset is native ETH
+    /// @return assetDecimals always 18
     function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, NATIVE, 18);
     }

@@ -54,7 +54,6 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
 
     // If depositing stETH: unwrap to get wstETH shares.
     // If depositing wstETH: 1:1 (already the yield-bearing token).
-    /// @notice Deposits stETH or wstETH: stETH is unwrapped to wstETH shares, wstETH is taken 1:1.
     /// @param tokenIn The input token address (stETH or wstETH).
     /// @param amountDeposited The amount of the input token deposited.
     /// @return amountSharesOut The amount of wstETH shares received.
@@ -67,7 +66,6 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     // slither-disable-next-line reentrancy-no-eth
     // If redeeming to stETH: wrap wstETH shares into stETH and transfer.
     // If redeeming to wstETH: transfer directly.
-    /// @notice Redeems wstETH shares: wraps to stETH for transfer, or transfers wstETH directly.
     /// @param receiver The address receiving the output tokens.
     /// @param tokenOut The output token address (stETH or wstETH).
     /// @param amountSharesToRedeem The amount of wstETH shares to redeem.
@@ -89,8 +87,6 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
         }
     }
 
-    // Uses the L2 stETH contract's getTokensByShares to compute the
-    // wstETH→stETH exchange rate.
     /// @notice Returns the stETH amount for 1 wstETH using the L2 stETH.getTokensByShares.
     /// @return res The amount of stETH equivalent to 1 wstETH (scaled by 1e18).
     function exchangeRate() public view override returns (uint256 res) {
