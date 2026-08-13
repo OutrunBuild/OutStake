@@ -143,20 +143,48 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(canBeSent, 40e18);
     }
 
-    function testMaxRateLimitBoundaryDoesNotOverflow() external {
-        uint64 window = type(uint64).max;
-
+    /// @dev Locks the mid-window decay branch of the rate limiter. After a partial
+    ///      window the in-flight amount must decay proportionally:
+    ///      decay = (limit * elapsed) / window. With limit = 40e18, window = 1 day,
+    ///      a 25e18 debit, then a 12-hour warp: decay = 40e18 * 12h / 24h = 20e18,
+    ///      so inFlight = 25e18 - 20e18 = 5e18 and canBeSent = 40e18 - 5e18 = 35e18.
+    ///      This warps to half the window (not the full window) so the decay formula
+    ///      actually runs instead of hitting the full-window early return.
+    function testPartialWindowDecayReducesInFlightExactly() external {
         vm.prank(owner);
-        oft.setOutboundRateLimit(DST_EID, type(uint192).max, window);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
 
         vm.prank(user);
-        oft.exposedDebit(user, oft.decimalConversionRate(), 0, DST_EID);
+        oft.exposedDebit(user, 25e18, 0, DST_EID);
 
-        vm.warp(block.timestamp + uint256(window) + 2);
+        // Half the window: the decay branch runs (0 < elapsed < window).
+        vm.warp(block.timestamp + 12 hours);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 5e18);
+        assertEq(canBeSent, 35e18);
+    }
+
+    /// @dev Locks the unchecked-subtraction guard's false branch: when decay fully
+    ///      consumes the in-flight amount but the window has not fully elapsed,
+    ///      in-flight clamps to zero (no underflow). With limit = 40e18, window =
+    ///      1 day, a 5e18 debit, then an 18-hour warp: decay = 40e18 * 18h / 24h =
+    ///      30e18, which exceeds the 5e18 in-flight, so currentAmountInFlight stays
+    ///      0 and canBeSent = 40e18 - 0 = 40e18.
+    function testMidWindowFullDecayClampsInFlightToZero() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 5e18, 0, DST_EID);
+
+        // 18h of a 24h window: decay (30e18) exceeds in-flight (5e18) but the
+        // window has not fully elapsed, so the decay formula still runs.
+        vm.warp(block.timestamp + 18 hours);
 
         (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(inFlight, 0);
-        assertEq(canBeSent, type(uint192).max);
+        assertEq(canBeSent, 40e18);
     }
 
     function testRemoveLimitRestoresSharedDecimalEnvelope() external {

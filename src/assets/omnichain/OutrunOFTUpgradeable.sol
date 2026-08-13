@@ -174,7 +174,9 @@ abstract contract OutrunOFTUpgradeable is
     }
 
     /// @notice Returns the absolute maximum OFT transfer amount: uint64 max scaled by decimal conversion rate.
-    /// @dev This is a LayerZero protocol constraint.
+    /// @dev LayerZero encodes the transfer amount on the wire as a uint64 in Shared Decimals (SD)
+    ///      (see OFTMsgCodec); _toSD reverts past type(uint64).max. Converting that SD ceiling to
+    ///      Local Decimals (LD) gives type(uint64).max * decimalConversionRate.
     /// @return Maximum transferable amount in local decimals
     function _maxOFTAmountLD() internal view returns (uint256) {
         return uint256(type(uint64).max) * decimalConversionRate;
