@@ -2,6 +2,8 @@
 pragma solidity ^0.8.35;
 
 // Conversion helpers between SY (Standardized Yield) shares and canonical asset amounts.
+// canonical asset: the SY's underlying asset, in assetInfo().assetDecimals.
+// uAsset: the borrowed debt token, in uAsset.decimals().
 // All conversions use the exchange rate scaled by 1e18 (ONE).
 // Rounding direction is chosen by the caller: round down when over-counting would
 // over-mint or over-release value, and round up when enough value must remain to

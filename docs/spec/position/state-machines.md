@@ -8,7 +8,7 @@
 
 当前 staking position 以 `OutrunStakingPositionUpgradeable` + `ERC1967Proxy` 部署：
 
-- initializer 写入 `SY`、`uAsset`、`minStake`、`revenuePool`、`keeper` 与 multisig owner。
+- initializer 写入 `SY`、`uAsset`、`minStake`、`revenuePool`、`keeper` 与 owner（终态为 multisig；部署期 owner 取值规则见 `docs/deployment.md`「关键约束」）。
 - `OutrunStakingPositionUpgradeable` 直接继承 `UUPSUpgradeable`，upgrade authorization 由 `onlyOwner` 控制。
 - `SY` 初始化后保持固定；不新增 `setSY()` 状态转移。
 - 下列 stake / draw / redeem / wrap / keeper / harvest 状态机的产品语义不因 proxy deployment 改变。
@@ -102,22 +102,42 @@
 
 ## 6. Keeper redeem 生命周期
 
-`keepRedeem(positionId, amountInUAsset, receiver)` 当前对应一个特权状态机：
+`keepRedeem(positionId, amountInUAsset, receiver)` 对应一个特权状态机，本次修复目标/修复后语义如下：
 
 1. 前置状态：调用者必须是 `keeper`；position 存在；position 已到期；合约未 paused。
-2. 输入校验：记 `uAssetDebtUnits = amountInUAsset`；`uAssetDebtUnits` 不能为 0，且不能高于 `position.UAssetMinted`。
-3. debt 清偿：keeper 先烧掉自己提供的 `uAsset`。
+2. 输入校验：记 `uAssetDebtUnits = amountInUAsset`；`amountInUAsset == 0` → revert `ZeroInput()`；`amountInUAsset > position.UAssetMinted` → revert `ExceedsPositionDebt()`。
+3. 全仓位守卫（前置判定）：按上取整口径判断仓位整体是否不足额——`if (_assetToSyUp(positionUAssetMinted, exchangeRate) > syStaked) revert InsufficientSyCollateral();`。仓位整体不足额（当前 `SY` 市值低于债务面值）时，任何 `amountInUAsset > 0` 的 keepRedeem 一律 revert，原子回滚——keeper 的 `uAsset` 不被烧、仓位不变；不存在 amount 依赖的残余暴露。
 4. `SY` 分解：
-   - 先按 `uAssetDebtUnits -> canonicalAssetValue -> SY` 的反向顺序计算 keeper 对应本金 `keeperPrincipalSY`
    - 按显式 down rounding 公式计算本次从仓位释放的 `syRedeemed = roundDownDiv(syStaked * uAssetDebtUnits, positionUAssetMinted)`
-   - 若 `keeperPrincipalSY > syRedeemed`，则必须 clamp 为 `keeperPrincipalSY = syRedeemed`
-   - 计算 owner 可拿回的 `ownerExcessSY`
-5. position 更新：与普通 redeem 一样减少 `syTotalStaking`、position principal 和 position debt。
-6. 分账输出：
+   - dust 守卫（保留）：`syRedeemed == 0` → revert `DustRoundedToZero()`，与现有实现一致
+5. debt 清偿：keeper 先烧掉自己提供的 `uAsset`。
+6. per-amount 防御判定：
+   - 按 `uAssetDebtUnits -> canonicalAssetValue -> SY` 的反向顺序计算 keeper 对应本金 `keeperPrincipalSY`，即 `_assetToSy(UAssetBurned, exchangeRate)`
+   - 若 `keeperPrincipalSY > syRedeemed`，则同样 revert `InsufficientSyCollateral()`（替代对 `keeperPrincipalSY` 的上限收敛写法）；该防御不重复全仓位判断、正常路径不触发，仅作防御性不变量检查保留
+   - 否则分账不变：`ownerExcessSY = syRedeemed - keeperPrincipalSY`
+7. position 更新：与普通 redeem 一样减少 `syTotalStaking`、position principal 和 position debt。
+8. 分账输出：
    - `receiver` 接 keeper principal
    - position owner 接剩余 excess `SY`
 
-因此，keeper redeem 当前是“keeper 帮 position 结清一部分 debt，并取回相应本金”的状态机，而不是 owner 赎回的别名。
+不足额判定说明：
+
+- 全仓位守卫与 per-amount 防御都 revert `InsufficientSyCollateral()`，但判定口径不同：前者在仓位整体不足额时一刀切拒绝任何 `amountInUAsset > 0` 的调用，且在全仓位守卫前置下已严格覆盖所有 per-amount 情形；后者不重复全仓位判断、正常路径不触发，仅作为**防御性不变量检查**保留，防止未来重构在成功分账时 `ownerExcessSY = syRedeemed - keeperPrincipalSY` 下溢
+- 方向性说明：不足额仓位上任何 `amountInUAsset > 0` 的 keepRedeem，keeper 拿回 SY 的市值不大于所烧 uAsset 面值（当前汇率下至多盈亏平衡，整除边界存在平衡例外），故全仓位一刀切拒绝不会误伤任何“实值不亏”的 redeem；`revert 触发 ⟺ 仓位整体不足额` 在全仓位守卫口径下成立
+
+本次修复目标/修复后语义新增只读查询 `previewKeepRedeem(positionId, amountInUAsset)`，返回 `(keeperPrincipalSY, ownerExcessSY)`：
+
+- mirror keepRedeem 的 `SY` 分账计算（同一个 `_assetToSy` 与 `roundDownDiv` 公式），并镜像以下失败路径，使”preview 与执行一致”成立：
+  - **镜像 amount 相关失败路径**：
+    - `amountInUAsset == 0` → `ZeroInput()`
+    - `amountInUAsset > position.UAssetMinted` → `ExceedsPositionDebt()`
+    - `syRedeemed == 0` → `DustRoundedToZero()`
+    - 全仓位守卫不足额 → `InsufficientSyCollateral()`
+  - **镜像 position 存在与 lockup（与 `previewRedeem` 一致）**：仓位不存在 → `PositionAccessDenied()`；未到期 → `LockTimeNotExpired()`（目的：对不存在仓位读全零 state 会触发底层 DivisionByZero panic，镜像前置校验保持干净失败语义）
+  - **不镜像 permission**：非 keeper 属执行期调用者身份校验，quote 公开不校验
+- preview 是 keeper 事前决策入口；补上 keepRedeem 无 preview 的缺口，与 `previewStake` / `previewRedeem` / `previewWrapRedeem` 系列一致
+
+因此，keeper redeem 当前是“keeper 帮 position 结清一部分 debt，并取回相应本金”的状态机，而不是 owner 赎回的别名。keepRedeem 对调用者（keeper）的 `uAsset` 零暴露——不足额时调用失败且不烧 `uAsset`，汇率下跌风险由仓位/owner 承担，不内化到 keeper 调用者。
 
 ## 7. Harvest wrap yield 生命周期
 

@@ -184,6 +184,41 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         assertEq(MockPositionUUPSV2(address(position)).version(), 2);
     }
 
+    function testStakeRevertsWhenDeadlineWouldExceedUint128() external {
+        // floor((2^128 - 1) / 86400) is the largest lockup whose day-product still fits uint128, yet at
+        // any realistic timestamp it pushes the deadline past uint128.max. The guard must reject it;
+        // otherwise the narrowing cast would wrap the stored deadline into the past and bypass the lock.
+        vm.warp(1_700_000_000);
+        uint128 truncating = type(uint128).max / 1 days;
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockupDaysOutOfRange.selector, truncating));
+        position.stake(10e18, truncating, user, user);
+    }
+
+    function testStakeComputesDeadlineAsNowPlusLockupDays() external {
+        vm.prank(user);
+        (uint256 positionId,) = position.stake(10e18, 3650, user, user);
+
+        (,,,, uint128 deadline) = position.positions(positionId);
+        assertEq(deadline, uint128(block.timestamp + 3650 * 1 days), "deadline must equal now + lockupDays");
+    }
+
+    function testStakeZeroLockupDaysIsImmediatelyRedeemable() external {
+        vm.prank(user);
+        (uint256 positionId,) = position.stake(10e18, 0, user, user);
+
+        (,,,, uint128 deadline) = position.positions(positionId);
+        assertEq(deadline, uint128(block.timestamp), "zero-day deadline equals now");
+
+        // No time warp: the lock check passes in the same block, so the position redeems at once.
+        vm.startPrank(user);
+        uAsset.approve(address(position), 10e18);
+        position.redeem(positionId, 10e18, user, address(sy), 0);
+        vm.stopPrank();
+        assertEq(position.syTotalStaking(), 0, "position redeemed same block as stake");
+    }
+
     function testNonOwnerCannotUpgrade() external {
         MockPositionUUPSV2 implementationV2 = new MockPositionUUPSV2();
         vm.prank(user);
@@ -241,11 +276,11 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         uint256 userSYBefore = mixedSy.balanceOf(user);
         uint256 userUAssetBefore = mixedUAsset.balanceOf(user);
 
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
         mixedPosition.previewWrapStake(1);
 
         vm.prank(user);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
         mixedPosition.wrapStake(1, user);
 
         assertEq(mixedPosition.syWrapStaking(), syWrapStakingBefore);
@@ -253,6 +288,39 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         assertEq(mixedPosition.wrapUAssetDebt(), wrapUAssetDebtBefore);
         assertEq(mixedSy.balanceOf(user), userSYBefore);
         assertEq(mixedUAsset.balanceOf(user), userUAssetBefore);
+    }
+
+    function testMixedDecimalsStakeRevertsWhenDustRoundsToZero() external {
+        _setupMixedDecimalsPosition();
+        mixedSy.setExchangeRate(1);
+
+        uint256 syTotalStakingBefore = mixedPosition.syTotalStaking();
+        uint256 userSYBefore = mixedSy.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+        mixedPosition.stake(1, 30, user, user);
+
+        // No state may change: SY must not be pulled, and no position may be created.
+        assertEq(mixedPosition.syTotalStaking(), syTotalStakingBefore);
+        assertEq(mixedSy.balanceOf(user), userSYBefore);
+        (address positionOwner,,,,) = mixedPosition.positions(1);
+        assertEq(positionOwner, address(0));
+
+        // The failed dust stake must not have consumed the position id counter: a fresh stake at a
+        // normal rate still receives id 1.
+        mixedSy.setExchangeRate(1e18);
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, user);
+        assertEq(positionId, 1);
+    }
+
+    function testStakeWithZeroAmountRevertsZeroInput() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        mixedPosition.stake(0, 30, user, user);
     }
 
     function testMixedDecimalsDrawUAssetUsesEighteenDecimalsAfterRateIncrease() external {
@@ -324,7 +392,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         mixedPosition.wrapStake(1e6, user);
 
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
         mixedPosition.previewWrapRedeem(1, address(mixedSy));
     }
 
@@ -344,7 +412,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         mixedUAsset.approve(address(mixedPosition), 1);
 
         vm.prank(user);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
         mixedPosition.wrapRedeem(1, user, address(mixedSy), 0);
 
         assertEq(minted, 1e18);
@@ -419,6 +487,143 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         assertEq(ownerExcessSY, 5e5);
         assertEq(mixedSy.balanceOf(keeper), 5e5);
         assertEq(mixedSy.balanceOf(user), 9_500000);
+    }
+
+    function testKeepRedeemRevertsWhenPositionIsUndercollateralized() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        mixedSy.setExchangeRate(5e17);
+        vm.warp(block.timestamp + 31 days);
+
+        (, uint256 syStakedBefore, uint256 uAssetMintedBefore,,) = mixedPosition.positions(positionId);
+        uint256 userSYBefore = mixedSy.balanceOf(user);
+        uint256 keeperUAssetBefore = mixedUAsset.balanceOf(keeper);
+
+        vm.startPrank(keeper);
+        mixedUAsset.approve(address(mixedPosition), type(uint256).max);
+        vm.expectRevert(IOutrunStakeManager.InsufficientSyCollateral.selector);
+        mixedPosition.keepRedeem(positionId, 1e18, keeper);
+        vm.stopPrank();
+
+        // Revert must be atomic: keeper uAsset is not burned and position state is unchanged.
+        (, uint256 syStakedAfter, uint256 uAssetMintedAfter,,) = mixedPosition.positions(positionId);
+        assertEq(syStakedAfter, syStakedBefore);
+        assertEq(uAssetMintedAfter, uAssetMintedBefore);
+        assertEq(mixedSy.balanceOf(user), userSYBefore);
+        assertEq(mixedUAsset.balanceOf(keeper), keeperUAssetBefore);
+    }
+
+    function testKeepRedeemRevertsOnZeroAmount() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.startPrank(keeper);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        mixedPosition.keepRedeem(positionId, 0, keeper);
+        vm.stopPrank();
+    }
+
+    function testKeepRedeemRevertsWhenDustUAssetRoundsToZeroSY() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.startPrank(keeper);
+        mixedUAsset.approve(address(mixedPosition), type(uint256).max);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+        mixedPosition.keepRedeem(positionId, 1, keeper);
+        vm.stopPrank();
+    }
+
+    function testPreviewKeepRedeemMatchesKeepRedeemSplit() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        mixedSy.setExchangeRate(2e18);
+        vm.warp(block.timestamp + 31 days);
+
+        (uint256 keeperPrincipalSY, uint256 ownerExcessSY) = mixedPosition.previewKeepRedeem(positionId, 1e18);
+        assertEq(keeperPrincipalSY, 5e5);
+        assertEq(ownerExcessSY, 5e5);
+    }
+
+    function testPreviewKeepRedeemRevertsWhenUndercollateralized() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        mixedSy.setExchangeRate(5e17);
+        vm.warp(block.timestamp + 31 days);
+
+        vm.expectRevert(IOutrunStakeManager.InsufficientSyCollateral.selector);
+        mixedPosition.previewKeepRedeem(positionId, 1e18);
+    }
+
+    function testPreviewKeepRedeemRevertsWhenAmountExceedsPositionDebt() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExceedsPositionDebt.selector, 1e18 + 1, 1e18));
+        mixedPosition.previewKeepRedeem(positionId, 1e18 + 1);
+    }
+
+    function testPreviewKeepRedeemRevertsBeforeDeadline() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        (,,,, uint128 deadline) = mixedPosition.positions(positionId);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeNotExpired.selector, deadline));
+        mixedPosition.previewKeepRedeem(positionId, 1e18);
+    }
+
+    function testPreviewKeepRedeemRevertsWhenPositionMissing() external {
+        _setupMixedDecimalsPosition();
+
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        mixedPosition.previewKeepRedeem(999, 1e18);
+    }
+
+    function testPreviewKeepRedeemRevertsOnZeroAmount() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        mixedPosition.previewKeepRedeem(positionId, 0);
+    }
+
+    function testPreviewKeepRedeemRevertsWhenDustRoundsToZeroSY() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+        mixedPosition.previewKeepRedeem(positionId, 1);
     }
 
     function testMixedDecimalsHarvestWrapYieldHarvestsOnlyExcessWithUpRounding() external {

@@ -310,20 +310,20 @@ contract OutrunStakingPositionFuzzTest is Test {
         // Warp past lockup
         vm.warp(block.timestamp + 31 days);
 
-        // Bound burn amount to available uAsset (must be >= 1 and <= totalMinted)
-        burnUAsset = bound(burnUAsset, 1, totalMinted);
-
-        // Success path only: dust burns that round to zero SY are covered by the adversarial revert test.
+        // Bound the burn amount so the proportional SY share is never zero (floor rounding); the
+        // undercollateralized revert path is covered by unit tests.
+        burnUAsset = bound(burnUAsset, Math.ceilDiv(totalMinted, amountInSY), totalMinted);
         uint256 syRedeemed = Math.mulDiv(amountInSY, burnUAsset, totalMinted);
-        vm.assume(syRedeemed > 0);
 
         // Transfer uAsset to keeper
         vm.prank(owner);
         uAsset.transfer(keeper, burnUAsset);
 
-        // Calculate expected values
+        // Calculate expected values. Under the solvency guard the keeper's debt-equivalent share
+        // never exceeds the proportional share; an undercollateralized position reverts with
+        // InsufficientSyCollateral instead (unit-tested).
         uint256 keeperPrincipalSYRaw = _assetToSy(burnUAsset, newRate);
-        uint256 expectedKeeperPrincipalSY = keeperPrincipalSYRaw > syRedeemed ? syRedeemed : keeperPrincipalSYRaw;
+        uint256 expectedKeeperPrincipalSY = keeperPrincipalSYRaw;
         uint256 expectedOwnerExcessSY = syRedeemed - expectedKeeperPrincipalSY;
 
         // Fund position with SY for transfers
@@ -335,7 +335,7 @@ contract OutrunStakingPositionFuzzTest is Test {
             position.keepRedeem(positionId, burnUAsset, keeper);
 
         assertEq(uAssetBurned, burnUAsset, "burned amount should match input");
-        assertLe(keeperPrincipalSY, syRedeemed, "keeperPrincipalSY should be clamped to syRedeemed");
+        assertLe(keeperPrincipalSY, syRedeemed, "keeperPrincipalSY never exceeds syRedeemed");
         assertEq(keeperPrincipalSY, expectedKeeperPrincipalSY, "keeperPrincipalSY calculation incorrect");
         assertEq(ownerExcessSY, expectedOwnerExcessSY, "ownerExcessSY calculation incorrect");
         assertEq(keeperPrincipalSY + ownerExcessSY, syRedeemed, "split should sum to syRedeemed");
@@ -796,12 +796,15 @@ contract OutrunStakingPositionFuzzTest is Test {
     }
 
     // ============================================
-    // 14. KeepRedeem Clamping Edge Cases
+    // 14. KeepRedeem Split Edge Cases
     // ============================================
 
-    function testFuzz_KeepRedeemClampingAtLowRate(uint256 amountInSY, uint256 lowRate) public {
-        amountInSY = _boundAmount(amountInSY);
+    function testFuzz_KeepRedeemSplitAtLowRate(uint256 amountInSY, uint256 lowRate) public {
         lowRate = bound(lowRate, RATE_MIN, 5e17); // Very low rate
+
+        // Dust stakes revert with DustRoundedToZero, so bound the stake amount to always mint at least
+        // 1 uAsset (bound maps inputs instead of discarding them, per repo test rules).
+        amountInSY = bound(amountInSY, Math.ceilDiv(1e18, lowRate), MAX_STAKE);
 
         // Set low rate
         sy.setExchangeRate(lowRate);
@@ -809,9 +812,6 @@ contract OutrunStakingPositionFuzzTest is Test {
         // Stake at low rate
         vm.prank(owner);
         (uint256 positionId, uint256 totalMinted) = position.stake(amountInSY, 30, owner, owner);
-
-        // Skip if totalMinted is 0 (happens when rate * amount < 1e18)
-        vm.assume(totalMinted > 0);
 
         // Warp past lockup
         vm.warp(block.timestamp + 31 days);
@@ -828,14 +828,11 @@ contract OutrunStakingPositionFuzzTest is Test {
         vm.prank(keeper);
         (, uint256 keeperPrincipalSY, uint256 ownerExcessSY) = position.keepRedeem(positionId, totalMinted, keeper);
 
-        // At low rate, keeperPrincipalRaw > syRedeemed, so clamping should occur
-        if (keeperPrincipalRaw > syRedeemed) {
-            assertEq(keeperPrincipalSY, syRedeemed, "should clamp to syRedeemed");
-            assertEq(ownerExcessSY, 0, "no owner excess when clamped");
-        } else {
-            assertEq(keeperPrincipalSY, keeperPrincipalRaw, "no clamping needed");
-            assertEq(ownerExcessSY, syRedeemed - keeperPrincipalRaw, "owner gets remainder");
-        }
+        // Under the full-position solvency guard, the keeper's debt-equivalent share can never exceed
+        // the proportional SY share; an undercollateralized position reverts with
+        // InsufficientSyCollateral instead (covered by unit tests). Floor conversion rounds down.
+        assertEq(keeperPrincipalSY, keeperPrincipalRaw, "keeper principal should equal debt-equivalent SY");
+        assertEq(ownerExcessSY, syRedeemed - keeperPrincipalRaw, "owner gets remainder");
 
         assertEq(keeperPrincipalSY + ownerExcessSY, syRedeemed, "total should equal syRedeemed");
     }

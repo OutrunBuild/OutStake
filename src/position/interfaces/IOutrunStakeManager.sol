@@ -20,12 +20,22 @@ interface IOutrunStakeManager {
     }
 
     error ZeroInput();
+    /// @dev Reverts when a non-zero input is so small that floor/pro-rata conversion rounds the
+    /// resulting SY or uAsset amount down to zero (e.g. dust after a decimal downscale). Distinct from
+    /// `ZeroInput`, which means the caller passed a zero amount or zero address.
+    error DustRoundedToZero();
     error PermissionDenied();
     error LockTimeNotExpired(uint128 deadLine);
+    /// @dev Reverts when `lockupDays` is so large that `block.timestamp + lockupDays * 1 days` no
+    /// longer fits in uint128, which would let the deadline cast wrap into the past and bypass the lock.
+    error LockupDaysOutOfRange(uint128 lockupDays);
     error MinStakeInsufficient(uint256 minStake);
     error PositionAccessDenied();
     error ExceedsPositionBalance(uint256 requested, uint256 available);
     error ExceedsPositionDebt(uint256 requested, uint256 available);
+    /// @dev Reverts when a position's staked SY value is below its uAsset debt face value, so a keeper
+    /// redemption would pay the keeper more SY than the position's proportional share covers.
+    error InsufficientSyCollateral();
     error ExceedsWrapDebt(uint256 requested, uint256 available);
     error NothingToDraw();
     error PartialRedeemMustLeaveDebt();
@@ -143,11 +153,27 @@ interface IOutrunStakeManager {
     function previewWrapRedeem(uint256 amountInUAsset, address tokenOut) external view returns (uint256 amountTokenOut);
 
     /**
+     * @notice Previews the SY split for a keeper redemption of a matured position.
+     * @dev Quote-only. Mirrors `keepRedeem`'s keeper/owner SY split and failure paths without checking keeper
+     * permission, burning uAsset, or changing state. Reverts if the position is missing, not matured, the amount
+     * is zero or exceeds position debt, the position is undercollateralized, or the proportional SY rounds to dust.
+     * @param positionId Identifier of the position being redeemed.
+     * @param amountInUAsset Amount of uAsset the keeper would burn.
+     * @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
+     * @return ownerExcessSY Excess SY the position owner would receive.
+     */
+    function previewKeepRedeem(uint256 positionId, uint256 amountInUAsset)
+        external
+        view
+        returns (uint256 keeperPrincipalSY, uint256 ownerExcessSY);
+
+    /**
      * @notice Stakes SY into a locked position and mints uAsset to a chosen receiver.
      * @dev Pulls SY from `msg.sender`, creates a locked position owned by `positionOwner`, and mints initial debt
      * to `uAssetReceiver`. The initial debt is current SY asset value, not a fixed 1:1 amount.
      * @param amountInSY Amount of SY to stake.
-     * @param lockupDays Number of days the position remains locked.
+     * @param lockupDays Number of days the position remains locked. `0` creates an immediately
+     * redeemable position. A value so large that the deadline would exceed uint128 reverts.
      * @param positionOwner Address that owns the created position.
      * @param uAssetReceiver Address receiving the initially minted uAsset.
      * @return positionId Identifier of the created position.
@@ -209,13 +235,15 @@ interface IOutrunStakeManager {
 
     /**
      * @notice Lets the keeper redeem a matured position by burning keeper-provided uAsset.
-     * @dev Keeper-only path. Burns keeper-provided uAsset, sends debt-equivalent SY capped by the released
-     * position SY to `receiver`, and sends any remaining released excess SY to the position owner.
+     * @dev Keeper-only path. Burns keeper-provided uAsset, sends floor-converted debt-equivalent SY to
+     * `receiver`, and sends any remaining released SY to the position owner. Reverts with
+     * `InsufficientSyCollateral` if the position is undercollateralized or the keeper's debt-equivalent
+     * share would exceed the proportional SY released (no capping).
      * @param positionId Identifier of the position being redeemed.
      * @param amountInUAsset Amount of uAsset the keeper burns.
      * @param receiver Address receiving the keeper principal in SY.
      * @return UAssetBurned Amount of uAsset burned by the keeper.
-     * @return keeperPrincipalSY Debt-equivalent SY sent to the keeper receiver, capped by released position SY.
+     * @return keeperPrincipalSY Debt-equivalent SY sent to the keeper receiver.
      * @return ownerExcessSY Excess SY sent back to the position owner.
      */
     function keepRedeem(uint256 positionId, uint256 amountInUAsset, address receiver)

@@ -179,14 +179,11 @@ contract AdversarialTests is Test {
         vm.prank(keeper);
         uAsset.approve(address(position), type(uint256).max);
 
-        // Rate drops to 5e17
-        sy.setExchangeRate(5e17);
-
         // 100e18 * 1 / 200e18 rounds down to 0, so no position state should change.
         assertEq(Math.mulDiv(100e18, 1, positionDebt), 0, "test setup should create zero-output redeem");
 
         vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
         position.keepRedeem(positionId, 1, keeper);
     }
 

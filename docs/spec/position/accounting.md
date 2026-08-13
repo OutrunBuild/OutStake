@@ -12,8 +12,8 @@
 - `OutrunStakingPositionUpgradeable` 继续按 position 记录 `syStaked` 与 `UAssetMinted`，并按公共 wrap 池记录 `syTotalStaking`、`syWrapStaking`、`wrapUAssetDebt`。
 - `SY` 依赖在 initializer 中写入后保持固定，不新增 `setSY()`，避免 position / wrap debt 对应的 share token 与 exchangeRate source 被替换。
 - oracle-backed SY upgradeable variants 可通过 owner-only `setExchangeRateOracle(address)` 更换 `exchangeRateOracle`，但 setter 不改变 balances、shares、position accounting 或 yield-bearing token 配置。
-- `OutrunExchangeOracleAdapter` 仍是非 upgradeable thin adapter；本次变更不新增 oracle freshness、bounds、fallback 或多源聚合保证。
-- 旧 non-upgradeable contracts 已退出当前产品真源；当前 upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout。
+- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（做 raw answer 正性、新鲜度窗口 `maxStaleness`（含 `updatedAt == 0` fail-closed）、可选构造期 sequencer 校验后做精度归一化；不提供 bounds/fallback/多源聚合）；本次变更不改变上述 oracle 校验语义。
+- 旧 non-upgradeable contracts 已退出当前产品真源；当前 upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout。L2 oracle-backed SY 变体（`OutrunL2StakedTokenSYUpgradeable` / `OutrunL2WstETHSYUpgradeable`）在共享基类中的 state（`exchangeRateOracle` 引用与 underlying asset 元数据）使用基类 ERC-7201 槽 `erc7201("outrun.storage.OutrunL2OracleBackedSY")`；原 per-subclass 命名空间 `outrun.storage.OutrunL2StakedTokenSY` / `outrun.storage.OutrunL2WstETHSY` 已并入该槽，升级兼容性以新槽为准。前提：当前无任何测试网/主网部署这两个变体（无存量旧布局 proxy），V1 发布前布局变更无需迁移函数；若出现任何存量部署，必须先提供迁移函数或恢复旧命名空间。
 
 ## 2. `uAsset` 的 minter-cap 账务
 
@@ -28,9 +28,9 @@
 - `mint(receiver, amount)` 由调用者自己的 minter 额度承担，成功后增加调用者的 `amountInMinted`。
 - `repay(account, amount)` 减少调用者（`msg.sender`，即 minter）自己的 `amountInMinted`；`account` 是被 burn 的地址，必须持有足够的 `uAsset`。若 `account != msg.sender`，则还必须先授权 `msg.sender` 消耗对应 `uAsset`。
 - `revokeMinter(minter)` 只把 cap 设为 0 以禁止后续 mint，不会自动清空历史已铸债务；既有 `amountInMinted` 保留到后续 repay。
-- `transferMinterDebt(from, to, amount)` 当前已实现为 owner-only 操作：要求 `from`、`to` 均非零、彼此不同、`amount` 非零；仅在两个 minter 地址之间迁移未偿债务，不 mint、不 burn、不 transfer，也不改变 `totalSupply` 或任一账户 `balance`。
-- `transferMinterDebt` 执行时减少 `from.amountInMinted`、增加 `to.amountInMinted`，并要求来源 minter 具备足额未偿债务、目标 minter 具备足够 `mintingCap` headroom；用途限定为运维修复或迁移，不用于用户债务豁免。
-- `transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务；若该 minter 还被 `OutrunStakingPositionUpgradeable` 的 position debt、wrap debt 或其他模块账本引用，操作方必须同步完成对应账本迁移，`uAsset` 不会单独更新这些 position/wrap 记录。
+- `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定）以 `docs/spec/common-foundations.md`「基础规则」为准。
+- accounting 视角补充：`transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务；若该 minter 还被 `OutrunStakingPositionUpgradeable` 的 position debt、wrap debt 或其他模块账本引用，操作方必须同步完成对应账本迁移，`uAsset` 不会单独更新这些 position/wrap 记录。
+- OFT 跨链铸烧豁免（outbound `_debit`/inbound `_credit` 不触碰 minter 债务台账、`_credit` 零地址重映射 `0xdead`）以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
 
 因此，`uAsset` 当前不是”全局总债务池”，而是”按 minter 独立记账的铸造额度和未偿债务”；owner 只能迁移这笔 minter 维度债务归属，不能消灭债务或改变总供应，也不能仅靠 `uAsset` 调账就让 position/wrap 账本自动一致。
 
@@ -111,6 +111,7 @@ rounding matrix：
 - keeper redeem：
   - `uAsset -> canonical asset` 用 down
   - `canonical asset -> SY` 用 down
+  - 全仓位守卫：`uAsset -> canonical asset` 用 up、`canonical asset -> SY` 用 up（与 §8 公式 `_assetToSyUp` 对齐）
 - `previewRedeem(positionId, syRedeemed, tokenOut)`：
   - full redeem 直接返回全部剩余 `position.UAssetMinted`
   - partial redeem 对 `position.UAssetMinted * syRedeemed / syStaked` 用 up
@@ -158,13 +159,33 @@ rounding matrix：
 
 ## 8. Keeper redeem 分账
 
-`keepRedeem(positionId, amountInUAsset, receiver)` 的账务路径与普通 redeem 不同，当前规则是：
+`keepRedeem(positionId, amountInUAsset, receiver)` 的账务路径与普通 redeem 不同，本次修复目标/修复后语义如下：
 
-- keeper 提供并烧掉自己持有的 `uAssetDebtUnits = amountInUAsset`
-- 本次修复目标/修复后语义：先计算 `canonicalAssetValue = uAsset -> canonical asset`，再计算 `keeperPrincipalSY = canonical asset -> SY`
+- 输入校验：`amountInUAsset == 0` → revert `ZeroInput()`；`amountInUAsset > position.UAssetMinted` → revert `ExceedsPositionDebt()`
+- **全仓位守卫（前置判定）**：先按上取整口径判断仓位整体是否不足额——`if (_assetToSyUp(positionUAssetMinted, exchangeRate) > syStaked) revert InsufficientSyCollateral();`。仓位整体不足额（当前 `SY` 市值低于债务面值）时，任何 `amountInUAsset > 0` 的 keepRedeem 一律 revert，原子回滚——keeper 的 `uAsset` 不被烧、仓位不变，不存在 amount 依赖的残余暴露
 - 再按显式 down rounding 公式 `syRedeemed = roundDownDiv(syStaked * uAssetDebtUnits, positionUAssetMinted)` 算出本次实际抽出的仓位 `SY`
-- 若 `keeperPrincipalSY > syRedeemed`，则必须 clamp 为 `keeperPrincipalSY = syRedeemed`
-- 剩余 `ownerExcessSY = syRedeemed - keeperPrincipalSY`
+- **dust 守卫（保留）**：`syRedeemed == 0` → revert `DustRoundedToZero()`，与现有实现一致；dust 输入不得在不减少 `syStaked` 的情况下烧 debt
+- keeper 提供并烧掉自己持有的 `uAssetDebtUnits = amountInUAsset`，并按 `keeperPrincipalSY = _assetToSy(UAssetBurned, exchangeRate)`（即先 `uAsset -> canonical asset`，再 `canonical asset -> SY`）折算其应得本金
+- **per-amount 防御判定**：若 `keeperPrincipalSY > syRedeemed`，同样 revert `InsufficientSyCollateral()`（替代对 `keeperPrincipalSY` 的上限收敛写法）；该防御不重复全仓位判断、正常路径不触发，仅作防御性不变量检查保留
+- 否则分账不变：剩余 `ownerExcessSY = syRedeemed - keeperPrincipalSY`
+
+本次修复目标/修复后语义的不足额判定说明：
+
+- 全仓位守卫与 per-amount 防御都 revert `InsufficientSyCollateral()`，但判定口径不同：前者在仓位整体不足额时一刀切拒绝任何 `amountInUAsset > 0` 的调用，且在全仓位守卫前置下已严格覆盖所有 per-amount 情形；后者不重复全仓位判断、正常路径不触发，仅作为**防御性不变量检查**保留，防止未来重构在成功分账时 `ownerExcessSY = syRedeemed - keeperPrincipalSY` 下溢
+- 方向性说明：不足额仓位上任何 `amountInUAsset > 0` 的 keepRedeem，keeper 拿回 SY 的市值不大于所烧 uAsset 面值（当前汇率下至多盈亏平衡，整除边界存在平衡例外），故全仓位一刀切拒绝不会误伤任何“实值不亏”的 redeem；`revert 触发 ⟺ 仓位整体不足额` 在全仓位守卫口径下成立
+- keepRedeem 对调用者（keeper）的 `uAsset` 零暴露：两种不足额判定触发时调用都失败且不烧 `uAsset`，汇率下跌风险由仓位/owner 承担，不内化到 keeper 调用者
+
+本次修复目标/修复后语义新增只读查询：
+
+- `previewKeepRedeem(positionId, amountInUAsset) returns (keeperPrincipalSY, ownerExcessSY)` mirror keepRedeem 的 `SY` 分账计算（同一个 `_assetToSy` 与 `roundDownDiv` 公式），并镜像以下失败路径，使”preview 与执行一致”成立：
+  - **镜像 amount 相关失败路径**：
+    - `amountInUAsset == 0` → `ZeroInput()`
+    - `amountInUAsset > position.UAssetMinted` → `ExceedsPositionDebt()`
+    - `syRedeemed == 0` → `DustRoundedToZero()`
+    - 全仓位守卫不足额 → `InsufficientSyCollateral()`
+  - **镜像 position 存在与 lockup（与 `previewRedeem` 一致）**：仓位不存在 → `PositionAccessDenied()`；未到期 → `LockTimeNotExpired()`（目的：对不存在仓位读全零 state 会触发底层 DivisionByZero panic，镜像前置校验保持干净失败语义）
+  - **不镜像 permission**：非 keeper 属执行期调用者身份校验，quote 公开不校验
+- preview 是 keeper 事前决策入口；补上 keepRedeem 无 preview 的缺口，与 `previewStake` / `previewRedeem` / `previewWrapRedeem` 系列一致
 
 成功后：
 
