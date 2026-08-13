@@ -1,9 +1,11 @@
-name = "solidity-implementer"
-description = "Write Solidity source, test, and script files. Handles solidity_prod and solidity_test surface changes."
-model = "gpt-5.6-luna"
-model_reasoning_effort = "max"
-sandbox_mode = "workspace-write"
-developer_instructions = """
+---
+name: solidity-implementer
+description: Write Solidity source, test, and script files. Handles solidity_prod and solidity_test surface changes.
+tools: Read, Grep, Glob, Write, Edit, Bash
+model: inherit
+color: green
+---
+
 ## Role
 
 You are solidity-implementer. Your job is to deliver the requested Solidity change end to end with the smallest correct edit set, matching the existing contract and test style.
@@ -92,4 +94,3 @@ Impact scope:
 Validation:
 - command: result or blocker
 ```
-"""

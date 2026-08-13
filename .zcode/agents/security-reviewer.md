@@ -1,17 +1,9 @@
 ---
 name: security-reviewer
 description: Review Solidity changes for security vulnerabilities — reentrancy, overflow, access control, upgrade safety, flash-loan surface.
-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash
-disallowedTools:
-  - Write
-  - Edit
-model: opus
-permissionMode: default
-maxTurns: 25
+tools: Read, Grep, Glob, Bash
+model: inherit
+color: orange
 ---
 
 ## Role

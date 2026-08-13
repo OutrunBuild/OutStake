@@ -2,13 +2,13 @@
 
 ## Goal
 
-Route repository work through the harness without violating policy, ownership, review, or verification rules.
+Route repository work through the harness without violating policy, review, or verification rules.
 
 ## Success Criteria
 
 A task is complete only when:
 
-- the intended changed-file set is known, or the task is reported blocked
+- the intended planned-file set is known, or the task is reported blocked
 - every edited path is classified by `gate.sh --classify-only` before editing
 - every edited path matches `.harness/policy.json`
 - writer, reviewer, and verifier routing follows policy and gate evidence
@@ -40,10 +40,12 @@ Do not override policy or gate evidence with natural-language guesses.
 
 - main-orchestrator stays in the primary session and is never a project agent file.
 - Derive `change_class`, `surface_sensitivity`, `orchestration_profile`, `harness_writer_roles`, `code_writer_roles`, and `code_review_roles` from policy/gate evidence before delegating.
+- Low-risk small-change exception (see main-session-contract.md): the main session may directly make and self-review a change it judges low-risk (view/pure, getter, constant, error message, NatSpec, comments, wording, typos, formatting) without dispatching writer or reviewer agents, even if gate classifies it `prod-semantic` / `full-review` / `delegated`. Hard-excluded (still dispatch per gate profile): any change altering runtime behavior, spec truth, policy/product semantics, fund flow, permissions, invariants, or reentrancy surface — including semantic or behavioral edits to contracts, `policy.json`, `gate.sh`, `.harness/runtime`, `docs/spec`, or `AGENTS.md`.
 - Current local task completion defaults to `gate:fast`. Use `full`, `ci`, release, or merge-equivalent verification only when explicitly requested or running in that context.
 - Current Solidity contracts are pre-deployment development artifacts unless a human explicitly says deployed compatibility must be preserved.
 - Review roles remain reviewer-only; do not place verifier inside review roles.
-- Project agent files under .claude/agents/ and .codex/agents/ are execution files. They do not define policy or verdict rules.
+- Project agent files (all agent trees listed in docs/TRACEABILITY.md) are execution files. They do not define policy or verdict rules.
+- Agent role-body contract text (from the `## Role` section onward) is replicated across every agent tree listed in docs/TRACEABILITY.md (currently four: `.claude/agents/`, `.codex/agents/`, `.zcode/agents/`, `.pi/agents/`); each tree is that tool's agent-definition directory (Claude Code, Codex, ZCode, Pi). Any role-body revision or new role file must land in all trees' same-named files within the same change; never scope a role-body fix or addition to a single tree.
 - Do not create a parallel control plane outside policy, gate, and project agent files.
 - Deleting untracked files from the current git working tree requires explicit human confirmation.
 
@@ -62,24 +64,39 @@ Do not override policy or gate evidence with natural-language guesses.
   - build output is suspect (ABI mismatch, unexplained test failures)
   - CI or pre-release clean build
   - after `forge clean`
-- For routine code/test edits, use plain `forge build`. When unsure, try without `--force` first.
+- For routine code/test edits, run a non-`--force` build through the wrapper (`bash script/harness/forge-serialize.sh build`). When unsure, try without `--force` first.
+- Serialize every `forge build` / `forge compile` through `bash script/harness/forge-serialize.sh <forge args...>` (e.g. `bash script/harness/forge-serialize.sh build`). The wrapper takes an exclusive flock on `${TMPDIR:-/tmp}/outstake-forge.lock` and blocks until any other forge build/compile finishes, then `exec`s the real `forge`. Never run `forge build` / `forge compile` directly — concurrent compiles corrupt the incremental cache and waste the 12-15 min rebuild budget. This rule also applies to any `forge` invocation that triggers compilation; when in doubt, route through the wrapper.
+- The wrapper call blocks until forge exits, so a queued build looks silent for minutes. Before invoking the wrapper, tell the user you are about to run a serialized forge build/compile and may queue behind another one (up to ~12-15 min per build ahead). For long builds prefer `run_in_background: true` and poll output so the user sees the wrapper's 60s heartbeat live. If the wrapper reports it is waiting on the lock (line starts `forge-serialize: ... waiting`), tell the user the call is queued normally — do not present the wait as a hang or an error.
 
 ## High-Priority Beginner-Readable Code
 
-- This section is high-priority. Optimize for code a beginner or non-programmer can read top to bottom.
+- This section is high-priority. Optimize for code a beginner can read top to bottom.
 - Favor beginner-readable names over protocol jargon, abbreviations, or internal shorthand.
 - If a specialized term must stay, explain it at first use in a short local comment.
 - Add short implementation comments for non-obvious business logic, invariants, or cross-step reasoning. NatSpec alone is not enough.
-- Many tiny single-use helpers often reduce readability because readers must jump around.
+- Many tiny single-use helpers make code harder to follow because readers must jump around.
 - Extract a helper only when it clearly improves readability, naming, reuse, or testability.
-- Inline trivial single-use logic unless extraction clearly improves readability, naming, reuse, or testability.
-- Solidity style and best practices auto-load by scope from `.claude/rules/` (`solidity-contracts.md` for `src/`, `solidity-tests.md` for `test/`, `solidity-scripts.md` for `script/`) when editing `.sol` files. Follow them when writing or modifying Solidity code; no manual read needed.
+- Inline trivial single-use logic unless extraction clearly improves comprehension.
+- Solidity style and best practices live in `.claude/rules/` (`solidity-contracts.md` for `src/`, `solidity-tests.md` for `test/`, `solidity-scripts.md` for `script/`), mirrored as lazy-loaded project skills for the other tools: `.dsh/skills/` (DeepSeek Harness), `.codex/skills/` (Codex), `.zcode/skills/` (ZCode), `.pi/skills/` (Pi). Claude Code auto-loads `.claude/rules/` by scope when editing `.sol` files (no manual read needed); Pi also auto-loads them when the project-level `.pi/extensions/claude-rules.ts` loader is installed. The skill files are gitignored (local-only, not shipped with the repo), so on machines where they are absent — or for any tool whose skill mechanism is unavailable — you MUST lazy-load the rules yourself: before writing or modifying Solidity, use the Read tool to read only the rule file matching the file type you are about to touch (`src/**` → solidity-contracts.md, `test/**` → solidity-tests.md, `script/**` → solidity-scripts.md). Do NOT preemptively read all three — read only the relevant one at the moment you start editing Solidity, treat its content as mandatory instructions, and do not restate it in replies. Follow them when writing or modifying Solidity code.
+
+## Doc-Code Citation Convention
+
+- All documents under `docs/` except the `review/` subdirectory must cite code in `File.sol::function` or `File.sol` form (e.g. `Contract.sol::functionName`).
+- Do not write code line numbers in these documents (e.g. `Contract.sol:130-131`): line numbers drift as code evolves and distort doc anchors; function names/symbols are the stable anchors.
+- New or modified documents must follow this convention; when reviewing these documents, treat violations as minor-level findings.
 
 ## Test Code Rules
 
-- Test contracts must NOT directly inherit production contracts. Use interfaces, abstract contracts, or standalone implementations to simulate dependencies.
+- Test contracts must NOT inherit upgradeable production contracts (those using `Initializable`, proxy patterns, or storage-in-heritage layouts). Use interfaces, abstract contracts, or standalone implementations to simulate dependencies.
+- Test contracts MAY inherit non-upgradeable production contracts (plain contracts without initializer logic or proxy storage risks).
 - Mock contracts go in `test/mocks/`. Do not co-locate with test files.
 - Mock contracts reuse interfaces from `src/`. Define test-only interfaces only when src/ interfaces are insufficient.
+- **Exception:** Test contracts may inherit an upgradeable `src/` contract only when it is declared `abstract contract` — either to implement its abstract functions for unit testing, or to expose its internal `pure`/`view` functions. Such harnesses must live in `test/mocks/`.
+
+## Uncommitted Changes
+
+- Do not overwrite, delete, or revert uncommitted changes you did not create. If a required edit overlaps them, stop and report it.
+- Parallel-change ownership: when you notice a suspicious or out-of-scope change mid-task, do not assume it was made by a subagent you dispatched. First check whether a parallel session or another workflow is also editing the same file (compare file mtime, git status/diff, the active state of other agents and sessions, and review/batch documents). When ownership is uncertain, treat the change as someone else's uncommitted work: do not revert, restore, or rewrite it — stop and report. Before reverting any suspicious or out-of-scope change, confirm more than once that it is not a parallel-session change.
 
 ## Context Scope
 
@@ -92,8 +109,8 @@ Do not override policy or gate evidence with natural-language guesses.
 
 - gate.sh is the enforcement entrypoint.
 - Completion, readiness, or pass claims require fresh output from the selected matching gate profile.
-- For local current work, invoke `gate.sh` with the exact changed-file set. If any Solidity file is involved, also provide diff evidence via `CHANGE_CLASSIFIER_DIFF_FILE` or `GATE_DIFF_BASE`.
-- Ignored/local scratch artifacts are outside the repository readiness verdict unless promoted into a policy-classified tracked path.
+- For pre-edit routing, invoke `gate.sh --classify-only` with the exact planned-file set via `--planned-files`.
+- For local current-work verification, invoke `gate.sh` with the exact changed-file set via `--changed-files`. If any Solidity file is involved, also provide diff evidence via `CHANGE_CLASSIFIER_DIFF_FILE` or `GATE_DIFF_BASE`.
 - See docs/VERIFICATION.md for profile meanings and command entrypoints.
 
 ## Harness Dispatch Procedure
@@ -102,7 +119,9 @@ When `.harness/policy.json` exists and the task modifies repository files, follo
 
 ### Mandatory Pre-condition
 
-After the intended changed-file set is known and before the first edit, run `bash script/harness/gate.sh --classify-only --changed-files <path>` with exact existing paths and intended-created paths. If the changed-file set is not knowable yet, inspect only enough context to identify candidate paths, then classify before editing.
+After the intended planned-file set is known and before the first edit, run `bash script/harness/gate.sh --classify-only --planned-files <path> [<path> ...]` with exact existing paths and intended-created paths. If the planned-file set is not knowable yet, inspect only enough context to identify candidate paths, then classify before editing.
+
+`--planned-files` is for pre-edit routing only. It does not require diff evidence and conservatively classifies planned Solidity files as semantic. Use `--changed-files` only for real changed-file verification after edits or in CI.
 
 Do not use stale mental classification.
 
@@ -117,15 +136,15 @@ Follow the `orchestration_profile`, writer roles, review roles, verifier require
 For `prod-semantic` work, use this sequence:
 
 1. run `gate.sh --classify-only`
-2. main session decides whether **product documentation** changes are required, by grepping the entire `docs/` tree for entries describing the affected behavior, fund flow, permissions, events, or invariants. Scope covers both the `docs/spec/` spec subtree AND `docs/` root-level product docs (`GLOSSARY`, `ARCHITECTURE`, `implementation-map`, `deployment`, `SECURITY_AND_APPROVALS`, `TRACEABILITY`, `VERIFICATION`, `testing-and-evidence`). `docs/superpowers/` (brainstorming specs and plans) is a design record, NOT this round. The main session MUST output the candidate-doc list with a per-item verdict (update / no-update + reason) before proceeding; a silent decision is not allowed.
-3. if product doc changes are required, dispatch `harness_writer_roles` (`process-implementer`) for that doc round across the affected `docs/` files
+2. the gate emits `doc_round_required=true` (and fills `harness_writer_roles=["process-implementer"]`); when that signal is true, the main session MUST run the product-doc round first: grep the entire `docs/` tree for entries describing the affected behavior, fund flow, permissions, events, or invariants, and output a candidate-doc list with a per-item verdict (update / no-update + reason) before proceeding — a silent decision is not allowed. Scope: `docs/spec/` subtree AND `docs/` root-level product docs (`GLOSSARY`, `ARCHITECTURE`, `implementation-map`, `deployment`, `SECURITY_AND_APPROVALS`, `TRACEABILITY`, `VERIFICATION`, `testing-and-evidence`); `docs/superpowers/` is a design record, NOT this round. The gate does not compute `affected_docs`; the verdict comes from the main session's grep.
+3. dispatch `harness_writer_roles` for the doc round across the affected `docs/` files
 4. once the doc round is ready, dispatch `spec-reviewer` before any code writer
 5. if other harness-control changes are required, dispatch `harness_writer_roles`
 6. dispatch `code_writer_roles`
 7. run `code_review_roles`
 8. run the selected gate profile and report the result
 
-`spec-reviewer` is a main-session orchestration hook, not a `gate.sh` routing field. `requires_human_confirmation` remains a separate policy signal for spec/doc paths.
+`spec-reviewer` is a main-session orchestration hook, not a `gate.sh` routing field. A `requires_spec_authorization_evidence=true` result requires the recorded authorization source and coverage before spec edits; see `.harness/runtime/main-session-contract.md`. The gate does not validate that natural-language evidence.
 
 Production Solidity semantic changes without structural escalation require a Risk Analysis Record before selecting `direct-review`. If analysis is incomplete or uncertain, use at least `full-review`.
 
@@ -148,7 +167,7 @@ README.md editorial-only direct changes require a Doc Editorial Attestation. REA
 
 ## Repository Truth
 
-- .harness/policy.json is the machine truth for ownership, classification, review routing, verification profiles, and hard blocks.
+- .harness/policy.json is the machine truth for classification, review routing, verification profiles, and hard blocks.
 - docs/TRACEABILITY.md lists control files and artifact locations.
 - Other repository docs are context only unless policy or gate evidence explicitly points to them.
 

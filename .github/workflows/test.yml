@@ -7,15 +7,19 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  FOUNDRY_PROFILE: ci
-
 jobs:
   check:
     name: Gate CI
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Pin the exact foundry toolchain version CI installs. foundry-toolchain's
+      # version input defaults to "stable" (latest stable at run time), which
+      # would make the same commit's gate results drift across time. This env
+      # is also part of the forge build cache key, so a forge version bump
+      # invalidates the cache instead of restoring stale artifacts.
+      FORGE_VERSION: "v1.7.1"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -25,15 +29,68 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FORGE_VERSION }}
+          # The action's built-in cache defaults to a per-commit key (job+sha),
+          # so a static versioned key makes the toolchain install itself
+          # reusable across commits and CI runs.
+          cache-key: foundry-${{ runner.os }}-${{ env.FORGE_VERSION }}
+          cache-restore-keys: |
+            foundry-${{ runner.os }}-
+
+      - name: Compute dependency refs hash
+        id: lib-hash
+        # hashFiles('lib/**') would re-hash every checked-out dependency file
+        # (LayerZero-v2, v4-core, ...) on each run; the gitlink SHAs that
+        # `git submodule status` prints change exactly when a dependency
+        # version changes, so they are a cheap and precise cache key input.
+        run: |
+          lib_refs="$(git submodule status | sha256sum | cut -d' ' -f1)"
+          echo "lib_refs=$lib_refs" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Forge build cache
+        # Persist forge's incremental-build state (cache/ holds compiled
+        # via-IR artifacts keyed by source hash) across runs. Without this,
+        # every push/PR recompiles the full via_ir build from cold
+        # (AGENTS.md: 12-15 minutes). The versioned restore-keys fallback is
+        # safe here: forge re-validates every source on build, so a partially
+        # stale cache only means some files recompile.
+        uses: actions/cache@v4
+        with:
+          path: cache
+          key: forge-${{ runner.os }}-${{ env.FORGE_VERSION }}-${{ hashFiles('foundry.toml') }}-${{ steps.lib-hash.outputs.lib_refs }}
+          restore-keys: |
+            forge-${{ runner.os }}-${{ env.FORGE_VERSION }}-
+
+      - name: Cache Forge build outputs
+        # out/ is restored on an exact key match only (no restore-keys
+        # fallback), so a stale output tree can never be mixed with a
+        # different build state. On a key miss forge rebuilds out/ from the
+        # restored cache/ incrementally, so this costs no full recompiles.
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: forge-${{ runner.os }}-${{ env.FORGE_VERSION }}-${{ hashFiles('foundry.toml') }}-${{ steps.lib-hash.outputs.lib_refs }}
+
+      - name: Cache Solc binaries
+        # solc 0.8.35 (pinned in foundry.toml) is downloaded into ~/.svm on
+        # first build; persisting it avoids re-downloading on every new
+        # commit. Keep this key in sync with the solc version in foundry.toml.
+        uses: actions/cache@v4
+        with:
+          path: ~/.svm
+          key: solc-${{ runner.os }}-0.8.35
+          restore-keys: |
+            solc-${{ runner.os }}-
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -41,10 +98,7 @@ jobs:
         run: npm ci
 
       - name: Install Slither
-        run: python3 -m pip install slither-analyzer==0.11.5 jsonschema
-
-      - name: Patch slither for Solidity 0.8.35 ERC-7201 support
-        run: python3 script/harness/patch-slither.py
+        run: python3 -m pip install slither-analyzer==0.11.5 jsonschema pyyaml
 
       - name: Show Forge version
         run: forge --version
@@ -52,7 +106,16 @@ jobs:
       - name: Run gate:ci
         env:
           HARNESS_EVENT_NAME: ${{ github.event_name }}
-          HARNESS_EVENT_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HARNESS_EVENT_HEAD_SHA: ${{ github.sha }}
           RUN_RECORD_PATH: ${{ runner.temp }}/outstakev2-gate-ci.json
         run: bash script/harness/ci-gate-entrypoint.sh
+
+      - name: Run orchestration regression tests
+        run: bash script/harness/test-orchestration.sh
+
+      - name: Upload gate run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-ci-run-record
+          path: ${{ runner.temp }}/outstakev2-gate-ci.json
+          if-no-files-found: error

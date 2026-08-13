@@ -4,4 +4,17 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-npm run gate:fast
+# Check only staged files, not the whole worktree — unrelated dirty files
+# (other sessions, unstaged work) must not trigger a full build here.
+mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACMRD)
+if [ "${#staged[@]}" -eq 0 ]; then
+    exit 0
+fi
+
+# gate.sh's changed-files mode requires diff evidence (CHANGE_CLASSIFIER_DIFF_FILE /
+# GATE_DIFF_BASE) to classify non-semantic Solidity diffs deterministically; feed it the
+# staged diff (HEAD->index, exactly what is about to be committed).
+diff_file="$(mktemp "${TMPDIR:-/tmp}/precommit-gate.XXXXXX.diff")"
+trap 'rm -f "$diff_file"' EXIT
+git diff --cached -- "${staged[@]}" > "$diff_file"
+CHANGE_CLASSIFIER_DIFF_FILE="$diff_file" npm run gate:fast -- --changed-files "${staged[@]}"

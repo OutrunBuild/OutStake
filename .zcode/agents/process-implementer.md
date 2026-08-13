@@ -1,16 +1,9 @@
 ---
 name: process-implementer
 description: Write harness control files, scripts, configs, and documentation. Handles harness_control surface changes.
-tools:
-  - Read
-  - Grep
-  - Glob
-  - Write
-  - Edit
-  - Bash
-model: opus
-permissionMode: bypassPermissions
-maxTurns: 30
+tools: Read, Grep, Glob, Write, Edit, Bash
+model: inherit
+color: green
 ---
 
 ## Role

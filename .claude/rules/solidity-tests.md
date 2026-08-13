@@ -14,7 +14,7 @@ Auto-loads when you edit `test/` files.
 | `testFuzz_Description` | fuzz | `testFuzz_TransferAnyAmount` |
 | `test_RevertWhen_Condition` | revert | `test_RevertWhen_InsufficientBalance` |
 | `test_RevertIf_Condition` | revert (alt) | `test_RevertIf_NotOwner` |
-| `invariant_Description` | invariant test (below) | `invariant_positionIdMonotonic` |
+| `invariant_Description` | invariant test (below) | `invariant_TotalSupplyConserved` |
 
 ## Organization
 - Test files end with `.t.sol`, test contracts inherit `forge-std/Test.sol`, test functions start with `test`/`test_`.
@@ -35,7 +35,7 @@ Auto-loads when you edit `test/` files.
 ## Invariant tests
 - Function names start with `invariant_`; Forge asserts the invariant holds after a random sequence of calls during fuzzing.
 - Use a handler contract plus `targetContract()`/`targetSelector()` to restrict which entry points the fuzzer may call, avoiding arbitrary calls to any function.
-- This repo already uses invariant tests (e.g. `OutrunStakingPositionInvariantUpgradeable`, functions like `invariant_positionIdMonotonic`) — new invariants must follow the same pattern.
+- This repo already uses invariant tests — new invariants must follow the same pattern.
 
 ## Fork testing
 - Test against live chain state: `forge test --fork-url <rpc> --fork-block-number <n>` (pin the block number for reproducibility); or set `eth_rpc_url` in `foundry.toml`.
@@ -46,7 +46,7 @@ Auto-loads when you edit `test/` files.
 - Coverage: `forge coverage` (`--report lcov` for lcov).
 
 ## Inheritance (strict — see AGENTS.md "Test Code Rules")
-Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in `test/mocks/`. (AGENTS.md is always in context — this is a reminder.)
+Never inherit an upgradeable production contract (`Initializable`, proxy/storage-inherited). Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in `test/mocks/`. The only exception: inheriting an upgradeable `src/` contract declared `abstract` (to implement its abstract functions or expose internal `pure`/`view`). (AGENTS.md is always in context — this is a reminder.)
 
 ## Debugging verbosity
 - `-vvv`: traces for failing tests only (most common for debugging).

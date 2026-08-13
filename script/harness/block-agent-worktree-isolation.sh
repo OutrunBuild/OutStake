@@ -5,7 +5,11 @@ hook_json=$(cat)
 isolation=$(jq -r '.tool_input.isolation // empty' <<<"$hook_json")
 
 if [[ "$isolation" == "worktree" ]]; then
-  jq -n \
-    --arg stopReason 'OutStakeV2 forbids Agent(isolation:"worktree") because Claude Code auto-creates .claude/worktrees/*. For isolated writes, first manually create a git worktree at .worktrees/<name>, then have the subagent cd into that absolute path. Read-only Agents should not set isolation.' \
-    '{continue: false, stopReason: $stopReason}'
+  reason='OutStakeV2 forbids Agent(isolation:"worktree") because AI coding tools (Claude Code, etc.) auto-create tool-specific isolated worktree directories (e.g. .claude/worktrees/*). For isolated writes, first manually run `git worktree add` into .worktrees/<name>, then have the subagent cd into that absolute path; read-only Agents must not set isolation.'
+  # stdout: Claude Code reads {continue:false, stopReason} as a block.
+  jq -n --arg stopReason "$reason" '{continue: false, stopReason: $stopReason}'
+  # stderr + exit 2: ZCode's PreToolUse block contract (exit 2 = deny); also
+  # gives Claude Code a fallback reason when it reads stderr on a code-2 exit.
+  printf '%s\n' "$reason" >&2
+  exit 2
 fi

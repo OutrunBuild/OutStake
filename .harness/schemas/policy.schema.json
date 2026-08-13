@@ -11,7 +11,6 @@
     "write_roles",
     "risk_rules",
     "orchestration_review_roles",
-    "delegated_review_rules",
     "full_review_matrix",
     "orchestration_rules",
     "verification_profiles",
@@ -56,11 +55,6 @@
         "prod-semantic-risk-analysis-passed": { "$ref": "#/$defs/reviewRoleArray" }
       },
       "additionalProperties": false
-    },
-    "delegated_review_rules": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/delegatedReviewRule" },
-      "uniqueItems": true
     },
     "full_review_matrix": {
       "type": "object",
@@ -161,23 +155,24 @@
       "items": { "$ref": "#/$defs/reviewRoleName" },
       "uniqueItems": true
     },
-    "delegatedReviewRule": {
-      "type": "object",
-      "required": ["id", "paths", "reviewers", "requires_human_confirmation"],
-      "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "paths": { "$ref": "#/$defs/stringArray" },
-        "exclude_paths": { "$ref": "#/$defs/stringArray" },
-        "reviewers": { "$ref": "#/$defs/reviewRoleArray" },
-        "requires_human_confirmation": { "type": "boolean" }
-      },
-      "additionalProperties": false
-    },
     "orchestrationRules": {
       "type": "object",
       "required": ["spec_paths", "scope_escalation", "surface_sensitivity"],
       "properties": {
         "spec_paths": { "$ref": "#/$defs/stringArray" },
+        "doc_round": {
+          "type": "object",
+          "required": ["trigger_change_class", "writer_role"],
+          "properties": {
+            "trigger_change_class": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1
+            },
+            "writer_role": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
         "scope_escalation": {
           "type": "object",
           "required": ["prod_solidity_max_files_before_full_review", "prod_solidity_max_semantic_lines_before_full_review"],
@@ -214,12 +209,6 @@
         "node_syntax_changed_js",
         "npm_ci_when_package_changes"
       ]
-    },
-    "commandIdArray": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/commandId" },
-      "minItems": 1,
-      "uniqueItems": true
     },
     "fastRequiredCommands": {
       "type": "array",
@@ -286,8 +275,6 @@
         "id": { "type": "string", "minLength": 1 },
         "message": { "type": "string", "minLength": 1 },
         "paths": { "$ref": "#/$defs/stringArray" },
-        "tokens": { "$ref": "#/$defs/stringArray" },
-        "commands": { "$ref": "#/$defs/commandIdArray" },
         "surfaces": { "$ref": "#/$defs/surfaceNameArray" },
         "writer_roles": {
           "type": "array",
@@ -300,18 +287,14 @@
           "items": { "$ref": "#/$defs/surfaceSet" },
           "minItems": 1,
           "uniqueItems": true
-        },
-        "legacy_roots": { "type": "boolean" }
+        }
       },
       "additionalProperties": false,
       "anyOf": [
         { "required": ["paths"] },
-        { "required": ["tokens"] },
-        { "required": ["commands"] },
         { "required": ["surfaces"] },
         { "required": ["writer_roles"] },
-        { "required": ["mixed_surface_sets"] },
-        { "required": ["legacy_roots"] }
+        { "required": ["mixed_surface_sets"] }
       ]
     },
     "testingGap": {

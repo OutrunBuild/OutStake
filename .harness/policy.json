@@ -1,105 +1,105 @@
 {
-  "version": 1,
+  "full_review_matrix": {
+    "no-op": [],
+    "non-semantic": [],
+    "prod-semantic": [
+      "logic-reviewer",
+      "security-reviewer",
+      "refinement-reviewer"
+    ],
+    "test-semantic": [
+      "logic-reviewer"
+    ]
+  },
+  "hard_blocks": [],
+  "orchestration_review_roles": {
+    "no-op": [],
+    "non-semantic": [],
+    "prod-semantic-risk-analysis-passed": [
+      "logic-reviewer"
+    ],
+    "test-semantic": [
+      "logic-reviewer"
+    ]
+  },
+  "orchestration_rules": {
+    "doc_round": {
+      "trigger_change_class": [
+        "prod-semantic"
+      ],
+      "writer_role": "process-implementer"
+    },
+    "scope_escalation": {
+      "prod_solidity_max_files_before_full_review": 1,
+      "prod_solidity_max_semantic_lines_before_full_review": 20
+    },
+    "spec_paths": [
+      "(^|.*/)(spec|specs)/.*\\.(md|mdx)$"
+    ],
+    "surface_sensitivity": {
+      "harness_control": "normal",
+      "solidity_prod": "sensitive",
+      "solidity_test": "normal"
+    }
+  },
   "repo": "OutStakeV2",
+  "risk_rules": {
+    "slither_exclude_detectors": "naming-convention,too-many-digits,unindexed-event-address,immutable-states,unimplemented-functions",
+    "slither_filter_paths": "lib|test|script|node_modules"
+  },
   "surfaces": {
+    "harness_control": [
+      "(^|.*/)(spec|specs)/.*\\.(md|mdx)$",
+      "^AGENTS\\.md$",
+      "^(src|test|script)/AGENTS\\.md$",
+      "^CLAUDE\\.md$",
+      "^README\\.md$",
+      "^\\.claude/agents/.*$",
+      "^\\.claude/rules/.*$",
+      "^\\.claude/settings\\.json$",
+      "^\\.pi/agents/.*$",
+      "^\\.pi/extensions/.*$",
+      "^\\.pi/settings\\.json$",
+      "^\\.pi/skills/.*$",
+      "^\\.codex/agents/.*$",
+      "^\\.dsh/skills/.*$",
+      "^\\.codex/skills/.*$",
+      "^\\.zcode/agents/.*$",
+      "^\\.zcode/skills/.*$",
+      "^\\.githooks/.*$",
+      "^\\.github/pull_request_template\\.md$",
+      "^\\.github/workflows/.*$",
+      "^\\.github/workflows/pr-template-check\\.yml$",
+      "^\\.gitmodules$",
+      "^\\.gitignore$",
+      "^\\.harness/policy\\.json$",
+      "^\\.harness/runtime/main-session-contract\\.md$",
+      "^\\.harness/schemas/.*$",
+      "^docs/.*$",
+      "^foundry\\.toml$",
+      "^foundry\\.lock$",
+      "^lib/ds-test$",
+      "^lib/forge-std$",
+      "^lib/layerzerolabs/devtools$",
+      "^lib/layerzerolabs/lz-evm-protocol-v2$",
+      "^lib/openzeppelin-contracts-upgradeable$",
+      "^lib/solidity-bytes-utils$",
+      "^lib/solmate$",
+      "^npm-shrinkwrap\\.json$",
+      "^package-lock\\.json$",
+      "^package\\.json$",
+      "^remappings\\.txt$",
+      "^script/harness/.*$",
+      "^\\.?solhint.*(\\.config\\.js|\\.json)$"
+    ],
     "solidity_prod": [
       "^src/.*\\.sol$",
       "^script/.*\\.sol$"
     ],
     "solidity_test": [
       "^test/.*\\.sol$"
-    ],
-    "harness_control": [
-      "^AGENTS\\.md$",
-      "^README\\.md$",
-      "^CLAUDE\\.md$",
-      "^package\\.json$",
-      "^\\.gitignore$",
-      "^\\.solhint\\.json$",
-      "^\\.solhintignore$",
-      "^\\.github/workflows/.*$",
-      "^\\.github/pull_request_template\\.md$",
-      "^\\.github/workflows/pr-template-check\\.yml$",
-      "^\\.githooks/.*$",
-      "^script/harness/.*$",
-      "^\\.harness/policy\\.json$",
-      "^\\.harness/runtime/main-session-contract\\.md$",
-      "^\\.harness/schemas/.*$",
-      "^\\.gitmodules$",
-      "^\\.claude/settings\\.json$",
-      "^\\.pi/agents/.*$",
-      "^\\.pi/extensions/.*$",
-      "^\\.pi/settings\\.json$",
-      "^\\.claude/agents/.*$",
-      "^\\.claude/rules/.*$",
-      "^(src|test|script)/AGENTS\\.md$",
-      "^\\.codex/agents/.*$",
-      "^docs/.*$",
-      "^lib/ds-test$",
-      "^lib/forge-std$",
-      "^lib/openzeppelin-contracts-upgradeable$",
-      "^lib/solmate$",
-      "^lib/solidity-bytes-utils$",
-      "^lib/layerzerolabs/devtools$",
-      "^lib/layerzerolabs/lz-evm-protocol-v2$",
-      "(^|.*/)(spec|specs)/.*\\.(md|mdx)$",
-      "^solhint.*\\.config\\.js$",
-      "^foundry\\.toml$",
-      "^remappings\\.txt$",
-      "^package-lock\\.json$",
-      "^npm-shrinkwrap\\.json$"
     ]
   },
-  "write_roles": {
-    "solidity_prod": "solidity-implementer",
-    "solidity_test": "solidity-implementer",
-    "harness_control": "process-implementer"
-  },
-  "risk_rules": {
-    "slither_filter_paths": "lib|test|script|node_modules",
-    "slither_exclude_detectors": "naming-convention,too-many-digits,unindexed-event-address,immutable-states,unimplemented-functions"
-  },
-  "orchestration_review_roles": {
-    "no-op": [],
-    "non-semantic": [],
-    "test-semantic": ["logic-reviewer"],
-    "prod-semantic-risk-analysis-passed": ["logic-reviewer"]
-  },
-  "delegated_review_rules": [
-    {
-      "id": "harness-control",
-      "paths": ["^\\.harness/.*$", "^script/harness/.*$", "^\\.github/workflows/.*$"],
-      "reviewers": [],
-      "requires_human_confirmation": false
-    },
-    {
-      "id": "non-spec-doc",
-      "paths": ["^docs/.*$"],
-      "exclude_paths": ["(^|.*/)(spec|specs)/.*\\.(md|mdx)$"],
-      "reviewers": [],
-      "requires_human_confirmation": false
-    }
-  ],
-  "full_review_matrix": {
-    "no-op": [],
-    "non-semantic": [],
-    "test-semantic": ["logic-reviewer"],
-    "prod-semantic": ["logic-reviewer", "security-reviewer", "refinement-reviewer"]
-  },
-  "orchestration_rules": {
-    "spec_paths": ["(^|.*/)(spec|specs)/.*\\.(md|mdx)$"],
-    "scope_escalation": {
-      "prod_solidity_max_files_before_full_review": 1,
-      "prod_solidity_max_semantic_lines_before_full_review": 20
-    },
-    "surface_sensitivity": {
-      "solidity_prod": "sensitive",
-      "solidity_test": "normal",
-      "harness_control": "normal"
-    }
-  },
-  "hard_blocks": [],
-  "testing_gaps": {},
   "test_mapping": {
     "assets": {
       "tests": [
@@ -256,6 +256,7 @@
       ]
     }
   },
+  "testing_gaps": {},
   "verification_profiles": {
     "ci": {
       "required_commands": [
@@ -294,5 +295,11 @@
         "npm_ci_when_package_changes"
       ]
     }
+  },
+  "version": 1,
+  "write_roles": {
+    "harness_control": "process-implementer",
+    "solidity_prod": "solidity-implementer",
+    "solidity_test": "solidity-implementer"
   }
 }

@@ -58,7 +58,7 @@ You are logic-reviewer. You review Solidity changes for semantic correctness, st
 - **minor**: code quality, readability, style
 - **info**: suggestions, non-blocking
 
-If a `docs/spec` or plan text explicitly mandates a pattern this rubric would otherwise treat as a defect, still report it at its severity and add `"label": "plan-mandated"`. The spec/plan author does not grade their own work; a human makes the final call; omit the `label` field entirely when the finding is not plan-mandated.
+If a `docs/spec` or plan text explicitly mandates a pattern this rubric would otherwise treat as a defect (for example "test asserts nothing" or "duplicate this logic block verbatim"), still report it at its severity and add `"label": "plan-mandated"`. The spec/plan author does not grade their own work; a human makes the final call; omit the `label` field entirely when the finding is not plan-mandated.
 
 ## Output
 

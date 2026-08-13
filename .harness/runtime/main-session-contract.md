@@ -25,13 +25,28 @@
 - Dispatch and review are selected by policy-derived `orchestration_profile`.
 - Derive `change_class`, `surface_sensitivity`, `orchestration_profile`, `harness_writer_roles`, `code_writer_roles`, and `code_review_roles` from policy/gate evidence before delegating.
 - For `prod-semantic` work, the main session decides whether spec/docs or other harness-control changes are needed before dispatching `harness_writer_roles`, `code_writer_roles`, or `code_review_roles`.
+- For `prod-semantic` changes the gate emits `doc_round_required=true` and fills `harness_writer_roles` with `process-implementer`. When `doc_round_required=true`, the main session MUST run the product-doc round first — grep the entire `docs/` tree (both `docs/spec/` and `docs/` root-level product docs), output a per-item update/no-update verdict, dispatch `process-implementer` for the affected `docs/` files, then dispatch `spec-reviewer` — before any code writer. The gate does not compute `affected_docs`; that semantic judgment stays with the main session.
 - If the main session decides spec/docs changes are required, complete that spec/doc writing round first and dispatch `spec-reviewer` immediately after the spec/doc changes are ready, before any code writer is dispatched.
-- `spec-reviewer` dispatch is a main-session orchestration hook, not a `gate.sh` output field. Separately, `requires_human_confirmation` remains a policy signal for spec/doc paths and does not itself decide reviewer dispatch.
+- `spec-reviewer` dispatch is a main-session orchestration hook, not a `gate.sh` output field. For `prod-semantic` work the doc round that precedes it is triggered by the gate's `doc_round_required` signal; `spec-reviewer` itself remains a hook, not a routing field.
+
+`requires_spec_authorization_evidence=true` is a path-based gate signal, not proof that authorization, approval, intent, or coverage has been validated.
+
+Before editing selected spec files after this signal, the main session records:
+1. the authorization source: the direct human task or human-approved plan;
+2. the selected spec files; and
+3. the exact approved behavior covered by that source for those files.
+
+A direct human task or human-approved plan is sufficient when the selected specs only record behavior already approved by that source and add no product semantics, permissions, invariants, or acceptance criteria. No pre-listed filename set is required. When this evidence is sufficient, do not request the same human approval again.
+
+Pause only when no authorization source exists, the authorization source does not cover the exact behavior to be recorded in the selected spec files, the requested documentation expands scope, or it introduces new product semantics, permissions, invariants, or acceptance criteria.
+
+This evidence protocol does not alter sequencing: complete the product-doc round first where required, then run spec review before code writing. Every writer still receives gate classification for its exact planned files.
 - Main session may directly modify files only for `direct` and `direct-review`.
 - Main session must not author `delegated`, `full-review`, or `full-subagent` changes except to integrate approved subagent output.
 - Do not dispatch writer or reviewer agents for `direct`.
-- Use only project agents under `.claude/agents/` or `.codex/agents/` for delegated work.
-- Do not bypass `process-implementer`, `spec-reviewer`, or human confirmation for docs/spec changes.
+- Low-risk small-change exception (an exception to the three rules above): the main session may, by its own reasoning, directly make and self-review a change it judges low-risk — dispatching no writer agent and no reviewer agent — even when gate classifies it `prod-semantic` / `full-review` / `delegated`. Low-risk = a change that alters no runtime behavior, spec truth, policy semantics, product semantics, fund flow, permissions, invariants, or reentrancy surface (e.g. view/pure functions, getters, constants, error-message text, NatSpec, comments, wording, typos, formatting). Hard-excluded (still dispatch writer + reviewer per gate profile): any change that does alter any of the above — including semantic or behavioral edits to contracts, `policy.json`, `gate.sh`, `.harness/runtime`, `docs/spec`, or `AGENTS.md`. This exception exempts only writer/reviewer dispatch — not gate verification (build / test / lint / fmt still run), not doc-round judgment, or the authorization-evidence protocol when `requires_spec_authorization_evidence=true`.
+- Use only project agents under `.claude/agents/` or `.codex/agents/` for delegated work. This clause is interpreted by the tool running the harness: all four agent trees are equivalent in nature — each is that tool's agent-definition directory (Claude Code → `.claude/agents/`, Codex → `.codex/agents/`, ZCode → `.zcode/agents/`, Pi → `.pi/agents/`). The current harness delegation flow (gate writer/reviewer role resolution, `spec-reviewer` hook) is only exercised in Claude Code and Codex sessions, so delegated writer/reviewer roles resolve from the corresponding tool tree; the remaining trees serve their tool when that tool runs the harness.
+- Do not bypass `process-implementer`, `spec-reviewer`, or the authorization-evidence protocol when `requires_spec_authorization_evidence=true`; a recorded direct human task or human-approved plan that satisfies the protocol does not require a second confirmation, and pauses remain only under the protocol's stated conditions.
 - Production Solidity semantic changes without structural escalation require a main-session Risk Analysis Record before using `direct-review`; otherwise use `full-review`.
 - README.md editorial-only direct changes require a Doc Editorial Attestation; otherwise use `delegated`.
 - `direct-review` reviewer roles come from `orchestration_review_roles`, not `full_review_matrix`.
@@ -55,7 +70,8 @@ When dispatching a reviewer, choose the diff handoff by size:
 - **Multi-file or large diff** (e.g. prod-semantic changes spanning several contracts): run `script/harness/review-package.sh BASE` and pass the printed file path. The diff content never enters the main session's context; the reviewer reads the file once.
 - **refinement-reviewer**: write the exact byte-sorted canonical `changed_files` paths to a temporary changed-files file, then generate its package with `script/harness/review-package.sh BASE [HEAD] [OUTFILE] --files <each changed_files path>`. `--files` is mandatory. The changed-files file and readable package are this reviewer's only inputs; retain the same file for response validation.
 - **Single-file small change, already read by the main session**: the diff snippet may be passed inline to save the reviewer a Read.
-- **BASE**: the commit recorded before dispatching the implementer (run `git rev-parse HEAD` at that moment); it must be an ancestor of HEAD. Never `HEAD~1` — it silently truncates a multi-commit task.
+- **REVIEW_BASE**: capture `REVIEW_BASE=$(git rev-parse HEAD)` immediately before dispatching the implementer. Use it only with `review-package.sh`; it must remain a `HEAD` ancestor.
+- Never use `HEAD~1` with `review-package.sh`; it silently truncates a multi-commit task.
 
 Never paste accumulated prior-round summaries into later dispatches — hand the reviewer its diff as a file path and the current findings list only.
 

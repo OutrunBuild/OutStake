@@ -392,6 +392,13 @@ run_single_command() {
     local scope_json="$3"
     shift 3
     local -a cmd=("$@")
+    # Route any forge subcommand through forge-serialize.sh so gate's builds/tests
+    # join the same flock queue as agent-invoked builds — prevents concurrent
+    # compiles (gate vs agent, or multiple gates) from corrupting the via_ir
+    # incremental cache. Only forge is intercepted; bash/npx/node/solhint untouched.
+    if [ "${cmd[0]}" = "forge" ]; then
+        cmd=("bash" "$repo_root/script/harness/forge-serialize.sh" "${cmd[@]:1}")
+    fi
     local command_string
     local exit_code
 
@@ -442,7 +449,7 @@ run_looped_command() {
         set +e
         case "$id" in
             targeted_tests)
-                forge test --match-path "$item" >> "$_loop_output_file" 2>&1
+                bash "$repo_root/script/harness/forge-serialize.sh" test --match-path "$item" >> "$_loop_output_file" 2>&1
                 ;;
             node_syntax_changed_js)
                 node --check "$item" >> "$_loop_output_file" 2>&1
@@ -587,7 +594,7 @@ run_targeted_tests_command() {
         return
     fi
 
-    run_looped_command "$id" "$reason" "$scope_json" "forge test --match-path" "${scope[@]}"
+    run_looped_command "$id" "$reason" "$scope_json" "bash $repo_root/script/harness/forge-serialize.sh test --match-path" "${scope[@]}"
 }
 
 slither_baseline_path() {
@@ -643,27 +650,14 @@ run_slither_with_baseline() {
         --json - \
         --json-types detectors \
         --fail-none \
-        --disable-color > "$raw_output_file" 2>/dev/null
+        --disable-color > "$raw_output_file" 2>&1
     exit_code=$?
     set -e
 
     if [ "$exit_code" -ne 0 ]; then
-        echo "[gate] slither (id=$id) exited with code $exit_code" >&2
-        # slither --json enables StandardOutputCapture (Python sys.stdout/stderr
-        # redirect). Tracebacks from uncaught exceptions are lost when the
-        # process exits before disable() flushes the buffer. Re-run without
-        # --json so the real traceback reaches fd 2.
-        echo "[gate] re-running slither without --json to surface the real error:" >&2
-        set +e
-        slither src \
-            --filter-paths "$slither_filter_paths" \
-            --exclude-dependencies \
-            --exclude "$slither_exclude_detectors" \
-            --fail-none \
-            --disable-color 2>&1 | head -n 80 >&2
-        set -e
+        filter_command_output "$raw_output_file" "$exit_code"
         verification_failed=1
-        record_command_result "$id" "failed" "$exit_code" "slither command failed (exit $exit_code; see output above)" "verifier"
+        record_command_result "$id" "failed" "$exit_code" "slither command failed" "verifier"
         append_finding blocking_findings_json "verifier" "verification command failed: $id" "$id" "error"
         return
     fi
@@ -800,8 +794,8 @@ import warnings
 with warnings.catch_warnings():
     warnings.filterwarnings(
         "ignore",
-        message=r"jsonschema\.RefResolver is deprecated.*",
         category=DeprecationWarning,
+        message=r"jsonschema\.RefResolver is deprecated.*",
     )
     from jsonschema import Draft202012Validator, RefResolver
 
@@ -834,6 +828,69 @@ if errors:
         print(f"{path}: {error.message}", file=sys.stderr)
     sys.exit(1)
 PY
+}
+
+validate_test_mapping_references() {
+    local policy_file="$1"
+    local repo_root="$2"
+    local pointer
+    local test_path
+    local reason
+    local reference_json
+    local invalid=0
+
+    while IFS=$'\t' read -r pointer test_path; do
+        [ -n "$pointer" ] || continue
+        reason=""
+
+        if [[ "$test_path" != test/*.t.sol ||
+              "$test_path" == *"*"* ||
+              "$test_path" == *"?"* ||
+              "$test_path" == *"["* ||
+              "$test_path" == *"]"* ||
+              "$test_path" == *"//"* ||
+              "$test_path" == *"/./"* ||
+              "$test_path" == *"/../"* ]]; then
+            reason="must be a concrete repository test path ending in .t.sol"
+        elif [ ! -f "$repo_root/$test_path" ]; then
+            reason="file does not exist"
+        fi
+
+        [ -n "$reason" ] || continue
+        reference_json="$(jq -cn --arg pointer "$pointer" --arg path "$test_path" --arg reason "$reason" \
+            '{pointer: $pointer, path: $path, reason: $reason}')"
+        printf '[gate] ERROR: invalid test_mapping reference %s\n' "$reference_json" >&2
+        invalid=1
+    done < <(jq -r '
+        def pointer_token: tostring | gsub("~"; "~0") | gsub("/"; "~1");
+        .test_mapping
+        | to_entries[]
+        | .key as $mapping_key
+        | .value as $mapping
+        | (
+            ($mapping.tests // []
+             | to_entries[]
+             | {pointer: ("/test_mapping/" + ($mapping_key | pointer_token) + "/tests/" + (.key | tostring)), path: .value}),
+            ($mapping.rules // []
+             | to_entries[]
+             | .key as $rule_index
+             | .value as $rule
+             | ($rule.change_tests // [])
+             | to_entries[]
+             | {pointer: ("/test_mapping/" + ($mapping_key | pointer_token) + "/rules/" + ($rule_index | tostring) + "/change_tests/" + (.key | tostring)), path: .value}),
+            ($mapping.rules // []
+             | to_entries[]
+             | .key as $rule_index
+             | .value as $rule
+             | ($rule.evidence_tests // [])
+             | to_entries[]
+             | {pointer: ("/test_mapping/" + ($mapping_key | pointer_token) + "/rules/" + ($rule_index | tostring) + "/evidence_tests/" + (.key | tostring)), path: .value})
+          )
+        | [.pointer, .path]
+        | @tsv
+    ' "$policy_file")
+
+    [ "$invalid" -eq 0 ]
 }
 
 diff_covers_changed_files() {
@@ -993,6 +1050,9 @@ policy_schema_file="$harness_schema_root/schemas/policy.schema.json"
 if ! validate_json_file_against_schema "$policy_file" "$policy_schema_file"; then
     die "policy schema validation failed"
 fi
+if ! validate_test_mapping_references "$policy_file" "$repo_root"; then
+    die "test_mapping reference validation failed"
+fi
 
 mapfile -t solidity_prod_patterns < <(jq -r '.surfaces.solidity_prod[]' "$policy_file")
 mapfile -t solidity_test_patterns < <(jq -r '.surfaces.solidity_test[]' "$policy_file")
@@ -1039,9 +1099,9 @@ if [ "$all_mode" -eq 1 ]; then
         fi
     done < <(find "$repo_root" -name '*.sol' -not -path '*/lib/*' -not -path '*/node_modules/*' -not -path '*/.git/*' -print0 2>/dev/null)
 
-    for pattern in "${harness_control_patterns[@]}"; do
-        while IFS= read -r rel; do
-            [ -n "$rel" ] || continue
+    while IFS= read -r -d '' file; do
+        rel="${file#"${repo_root}/"}"
+        if match_path_against_patterns "$rel" "${harness_control_patterns[@]}"; then
             append_unique harness_control_files "$rel"
             append_unique selected_surfaces "harness_control"
 
@@ -1064,8 +1124,8 @@ if [ "$all_mode" -eq 1 ]; then
                     append_unique package_trigger_files "$rel"
                     ;;
             esac
-        done < <(expand_repo_glob "$pattern")
-    done
+        fi
+    done < <(find "$repo_root" -type f -not -path '*/.git/*' -not -path '*/lib/*' -not -path '*/node_modules/*' -print0 2>/dev/null)
 
     mapfile -t changed_files < <(printf '%s\n' "${solidity_prod_files[@]}" "${solidity_test_files[@]}" "${harness_control_files[@]}" | awk '!seen[$0]++')
 else
@@ -1287,7 +1347,8 @@ while IFS= read -r hard_block_rule; do
         fi
     fi
 
-    if jq -e '.paths? != null and .tokens? == null' >/dev/null <<<"$hard_block_rule"; then
+    # schema forbids tokens/commands/legacy_roots on blockRule, so no combined-rule exclusion is needed here
+    if jq -e '.paths? != null' >/dev/null <<<"$hard_block_rule"; then
         mapfile -t hard_block_paths < <(jq -r '.paths[]' <<<"$hard_block_rule")
         for changed_file in "${changed_files[@]}"; do
             if match_path_against_patterns "$changed_file" "${hard_block_paths[@]}"; then
@@ -1495,7 +1556,7 @@ structural_escalation=false
 risk_analysis_summary_required=false
 requires_main_risk_analysis=false
 requires_doc_editorial_attestation=false
-requires_human_confirmation=false
+requires_spec_authorization_evidence=false
 semantic_escalation_json='null'
 default_orchestration_profile=""
 candidate_orchestration_profile=""
@@ -1508,6 +1569,7 @@ declare -a code_review_roles=()
 harness_writer_roles_json='[]'
 code_writer_roles_json='[]'
 code_review_roles_json='[]'
+doc_round_required=false
 
 append_unique orchestration_reasons "change_class=$change_class"
 append_unique orchestration_reasons "surface_sensitivity=$surface_sensitivity"
@@ -1521,7 +1583,7 @@ mapfile -t spec_paths < <(jq -r '.orchestration_rules.spec_paths[]? // empty' "$
 if [ "${#spec_paths[@]}" -gt 0 ]; then
     for changed_file in "${changed_files[@]}"; do
         if match_path_against_patterns "$changed_file" "${spec_paths[@]}"; then
-            requires_human_confirmation=true
+            requires_spec_authorization_evidence=true
             break
         fi
     done
@@ -1549,6 +1611,25 @@ if [ "$change_class" = "prod-semantic" ]; then
         structural_escalation=true
         append_unique orchestration_reasons "mixed_solidity_and_harness_control"
     fi
+fi
+
+
+# Doc round: prod-semantic changes implicitly require a product-doc round
+# (AGENTS.md step 2-4). Surface-based writer derivation only fills
+# process-implementer when docs/ are in the input, so a pure-code
+# prod-semantic change would otherwise emit harness_writer_roles=[] and the
+# main session could silently skip the doc round. Gate-emitted here to mirror
+# risk_analysis_summary_required: the main session must run the doc round
+# (grep docs/ + per-doc update/no-update) before any code writer. The gate
+# does NOT compute affected_docs -- that semantic judgment stays with the main
+# session.
+if jq -e --arg class "$change_class" \
+    'has("orchestration_rules") and (.orchestration_rules.doc_round.trigger_change_class // [] | index($class)) != null' \
+    "$policy_file" >/dev/null 2>&1; then
+    doc_round_required=true
+    doc_round_writer_role="$(jq -r '.orchestration_rules.doc_round.writer_role // "process-implementer"' "$policy_file")"
+    append_unique harness_writer_roles "$doc_round_writer_role"
+    append_unique orchestration_reasons "doc_round_required"
 fi
 
 if [ "${#changed_files[@]}" -eq 0 ] && [ "$hard_blocked" -eq 0 ]; then
@@ -1601,36 +1682,6 @@ else
         for review_role in "${review_roles[@]}"; do
             append_unique code_review_roles "$review_role"
         done
-    elif [ "$orchestration_profile" = "delegated" ]; then
-        while IFS= read -r delegated_rule; do
-            [ -n "$delegated_rule" ] || continue
-            mapfile -t delegated_paths < <(jq -r '.paths[]? // empty' <<<"$delegated_rule")
-            mapfile -t delegated_exclude_paths < <(jq -r '.exclude_paths[]? // empty' <<<"$delegated_rule")
-            if [ "${#delegated_paths[@]}" -eq 0 ]; then
-                continue
-            fi
-            rule_path_matched=0
-            for changed_file in "${changed_files[@]}"; do
-                if [ "${#delegated_paths[@]}" -gt 0 ] && ! match_path_against_patterns "$changed_file" "${delegated_paths[@]}"; then
-                    continue
-                fi
-                if [ "${#delegated_exclude_paths[@]}" -gt 0 ] && match_path_against_patterns "$changed_file" "${delegated_exclude_paths[@]}"; then
-                    continue
-                fi
-                rule_path_matched=1
-                break
-            done
-
-            [ "$rule_path_matched" -eq 1 ] || continue
-
-            mapfile -t delegated_review_roles < <(jq -r '.reviewers[]? // empty' <<<"$delegated_rule")
-            for review_role in "${delegated_review_roles[@]}"; do
-                append_unique code_review_roles "$review_role"
-            done
-            if [ "$(jq -r '.requires_human_confirmation // false' <<<"$delegated_rule")" = "true" ]; then
-                requires_human_confirmation=true
-            fi
-        done < <(jq -c '.delegated_review_rules[]? // empty' "$policy_file")
     elif [ "$orchestration_profile" = "full-review" ] || [ "$orchestration_profile" = "full-subagent" ]; then
         mapfile -t review_roles < <(jq -r --arg class "$change_class" '.full_review_matrix[$class][]? // empty' "$policy_file")
         for review_role in "${review_roles[@]}"; do
@@ -1670,7 +1721,8 @@ classification_record_json="$(jq -cn \
     --argjson risk_analysis_record_required "$risk_analysis_record_required" \
     --argjson risk_analysis_summary_required "$risk_analysis_summary_required" \
     --argjson requires_doc_editorial_attestation "$requires_doc_editorial_attestation" \
-    --argjson requires_human_confirmation "$requires_human_confirmation" \
+    --argjson doc_round_required "$doc_round_required" \
+    --argjson requires_spec_authorization_evidence "$requires_spec_authorization_evidence" \
     --arg orchestration_profile "$orchestration_profile" \
     --arg default_orchestration_profile "$default_orchestration_profile" \
     --arg candidate_orchestration_profile "$candidate_orchestration_profile" \
@@ -1707,7 +1759,8 @@ classification_record_json="$(jq -cn \
       risk_analysis_summary_required: $risk_analysis_summary_required,
       doc_editorial_attestation: null,
       requires_doc_editorial_attestation: $requires_doc_editorial_attestation,
-      requires_human_confirmation: $requires_human_confirmation,
+      doc_round_required: $doc_round_required,
+      requires_spec_authorization_evidence: $requires_spec_authorization_evidence,
       orchestration_profile: $orchestration_profile,
       verification_profile: $verification_profile,
       harness_writer_roles: $harness_writer_roles,
@@ -1792,6 +1845,18 @@ if [ "$verification_profile" = "none" ]; then
     profile_required_commands_json='[]'
 else
     mapfile -t required_command_ids < <(jq -r --arg profile "$verification_profile" '.verification_profiles[$profile].required_commands[]' "$policy_file")
+    # Skip Solidity-only commands (forge build/test, slither, coverage) when the change touches no .sol and no build-affecting config — docs/harness-rule changes must not trigger a full via_ir build.
+    if [ "${#solidity_prod_files[@]}" -eq 0 ] && [ "${#solidity_test_files[@]}" -eq 0 ]; then
+        needs_build_config=0
+        for _f in "${changed_files[@]}"; do
+            case "$_f" in
+                foundry.toml|remappings.txt|.gitmodules|lib/*) needs_build_config=1; break ;;
+            esac
+        done
+        if [ "$needs_build_config" -eq 0 ]; then
+            mapfile -t required_command_ids < <(printf '%s\n' "${required_command_ids[@]}" | grep -vE '^(forge_build|forge_test_full|targeted_tests|slither_when_required|coverage_when_required)$' || true)
+        fi
+    fi
     profile_required_commands_json="$(json_array_from_values "${required_command_ids[@]}")"
 fi
 

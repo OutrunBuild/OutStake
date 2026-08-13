@@ -6,42 +6,28 @@
       "Write",
       "Read",
       "Glob",
-      "Grep",
-      "Bash(forge build*)",
-      "Bash(forge test*)",
-      "Bash(forge fmt*)",
-      "Bash(npm run *)",
-      "Bash(git status)",
-      "Bash(git diff *)",
-      "Bash(git ls-files)",
-      "Bash(git rev-parse *)",
-      "Bash(git submodule *)",
-      "Bash(bash ./script/harness/*)",
-      "Bash(bash -n *)",
-      "Bash(node --check *)"
+      "Grep"
     ],
     "deny": [
       "Bash(git push *)",
-      "Bash(rm *)",
       "Bash(git restore *)",
       "Bash(git checkout *)",
       "Bash(git clean *)",
+      "Bash(git stash)",
+      "Bash(git stash push*)",
+      "Bash(git stash pop*)",
+      "Bash(git stash apply*)",
       "Bash(git stash drop*)",
+      "Bash(git stash clear*)",
+      "Bash(git stash save*)",
+      "Bash(git stash branch*)",
+      "Bash(git stash store*)",
       "Read(.env)",
       "Read(.env.*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ./script/harness/pre-edit-check.sh"
-          }
-        ]
-      },
       {
         "matcher": "Agent",
         "hooks": [
