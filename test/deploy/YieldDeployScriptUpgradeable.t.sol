@@ -181,7 +181,7 @@ contract YieldDeployScriptUpgradeableTest is Test {
     function _assertAUSDCSY(address sy, address usdc, address aUSDC, address pool) internal {
         OutrunAaveV3SYUpgradeable aUSDCSY = OutrunAaveV3SYUpgradeable(payable(sy));
         assertEq(aUSDCSY.owner(), owner);
-        assertEq(aUSDCSY.name(), "SY AaveE aUSDC");
+        assertEq(aUSDCSY.name(), "SY Aave aUSDC");
         assertEq(aUSDCSY.symbol(), "SY aUSDC");
         assertEq(aUSDCSY.underlying(), usdc);
         assertEq(aUSDCSY.yieldBearingToken(), aUSDC);

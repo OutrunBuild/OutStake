@@ -3,12 +3,10 @@ pragma solidity ^0.8.35;
 
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {IWETH} from "./IWETH.sol";
 import {ReentrancyGuard} from "./ReentrancyGuard.sol";
 
 error NativeAmountMismatch();
 error NativeTransferFailed();
-error ArrayLengthMismatch();
 
 /// @title TokenHelper
 /// @notice Shared helper for native-token and ERC20 transfers.
@@ -67,36 +65,12 @@ abstract contract TokenHelper is ReentrancyGuard {
         }
     }
 
-    /// @notice Batch transfer out of multiple tokens to a single receiver.
-    /// @param tokens Array of token addresses to transfer.
-    /// @param to Address to receive all tokens.
-    /// @param amounts Array of amounts corresponding to each token.
-    /// @dev Transfers each token/amount pair and requires both arrays to have the same length.
-    function _transferOut(address[] memory tokens, address to, uint256[] memory amounts) internal {
-        uint256 numTokens = tokens.length;
-        if (numTokens != amounts.length) revert ArrayLengthMismatch();
-        for (uint256 i = 0; i < numTokens;) {
-            _transferOut(tokens[i], to, amounts[i]);
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
     /// @notice Returns this contract's native balance for NATIVE, ERC20 balance otherwise.
     /// @param token Address of the token to query (NATIVE sentinel for ETH/BNB).
     /// @return The token balance held by this contract.
     /// @dev Returns this contract's native balance for the sentinel, otherwise the ERC20 balance.
     function _selfBalance(address token) internal view returns (uint256) {
         return (token == NATIVE) ? address(this).balance : IERC20(token).balanceOf(address(this));
-    }
-
-    /// @notice Returns this contract's ERC20 balance for the given token.
-    /// @param token The ERC20 token to query.
-    /// @return The ERC20 balance held by this contract.
-    /// @dev Returns this contract's ERC20 balance.
-    function _selfBalance(IERC20 token) internal view returns (uint256) {
-        return token.balanceOf(address(this));
     }
 
     /// @notice forceApprove to the given spender
@@ -119,18 +93,5 @@ abstract contract TokenHelper is ReentrancyGuard {
             _safeApprove(token, to, 0);
             _safeApprove(token, to, type(uint256).max);
         }
-    }
-
-    /// @notice Wraps native to WETH or unwraps WETH to native.
-    /// @param tokenIn Input token (NATIVE to wrap, WETH address to unwrap).
-    /// @param tokenOut Output token (WETH address when wrapping, ignored when unwrapping).
-    /// @param netTokenIn Amount of input token.
-    /// @dev Wraps native token into WETH when `tokenIn` is sentinel; otherwise unwraps `tokenIn` WETH.
-    /// Handles WETH wrap/unwrap. When tokenIn is NATIVE: wraps native ETH into the WETH-like
-    /// tokenOut. Otherwise: unwraps tokenIn (WETH) back to native ETH.
-    // solhint-disable-next-line func-name-mixedcase
-    function _wrap_unwrap_ETH(address tokenIn, address tokenOut, uint256 netTokenIn) internal {
-        if (tokenIn == NATIVE) IWETH(tokenOut).deposit{value: netTokenIn}();
-        else IWETH(tokenIn).withdraw(netTokenIn);
     }
 }

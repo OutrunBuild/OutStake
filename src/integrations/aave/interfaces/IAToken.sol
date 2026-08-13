@@ -20,8 +20,7 @@ interface IAToken {
 
     /**
      * @notice Returns a user's scaled balance together with the scaled total supply.
-     * @dev Exposed for Aave accounting reads used by integrations; no local freshness or reserve invariant is
-     * asserted here.
+     * @dev Not consumed by OutrunAaveV3SY in this repository; retained to mirror the Aave V3 aToken read surface.
      * @param user The account to query.
      * @return The user's scaled balance and the current scaled total supply.
      */
@@ -29,14 +28,14 @@ interface IAToken {
 
     /**
      * @notice Returns the total scaled supply of the aToken.
-     * @dev Exposed for integration accounting reads before applying any reserve income multiplier.
+     * @dev Not consumed by OutrunAaveV3SY in this repository; retained to mirror the Aave V3 aToken read surface.
      * @return The total scaled token supply.
      */
     function scaledTotalSupply() external view returns (uint256);
 
     /**
      * @notice Returns the previous liquidity index recorded for a user.
-     * @dev Exposed for integrations that compare user state against an upstream index.
+     * @dev Not consumed by OutrunAaveV3SY in this repository; retained to mirror the Aave V3 aToken read surface.
      * @param user The account to query.
      * @return The previously stored index for `user`.
      */

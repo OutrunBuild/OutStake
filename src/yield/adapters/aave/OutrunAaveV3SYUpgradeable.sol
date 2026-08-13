@@ -76,7 +76,8 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
             amountSharesOut = aToken.scaledBalanceOf(address(this)) - scaledBefore;
         } else {
             // Deposit aToken directly — convert to scaled shares using current liquidity index.
-            amountSharesOut = AaveAdapterLib.calcSharesFromAssetUp(amountDeposited, _getNormalizedIncome());
+            amountSharesOut =
+                AaveAdapterLib.calcSharesFromAssetHalfUp(amountDeposited, _getNormalizedIncome(_underlying, _pool));
         }
         if (amountSharesOut == 0) revert AaveZeroShares();
     }
@@ -94,16 +95,19 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
         override
         returns (uint256 amountTokenOut)
     {
+        address _underlying = underlying();
+        address _pool = aavePool();
         // Convert scaled shares back to asset amount using current liquidity index,
         // then either withdraw from Aave (if redeeming to underlying)
         // or transfer aToken directly (if redeeming to aToken).
-        amountTokenOut = AaveAdapterLib.calcSharesToAssetDown(amountSharesToRedeem, _getNormalizedIncome());
-        address _underlying = underlying();
+        amountTokenOut =
+            AaveAdapterLib.calcSharesToAssetDown(amountSharesToRedeem, _getNormalizedIncome(_underlying, _pool));
         if (tokenOut == _underlying) {
-            address _pool = aavePool();
             amountTokenOut = IAaveV3Pool(_pool).withdraw(_underlying, amountTokenOut, receiver);
         } else {
-            _transferOut(yieldBearingToken(), receiver, amountTokenOut);
+            // SYBaseUpgradeable.redeem already validated tokenOut via isValidTokenOut, so
+            // this branch implies tokenOut == yieldBearingToken().
+            _transferOut(tokenOut, receiver, amountTokenOut);
         }
     }
 
@@ -112,29 +116,37 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// Divide by 1e9 to get the standard 1e18-scaled exchange rate.
     /// @return exchange rate in 1e18 precision
     function exchangeRate() public view override returns (uint256) {
+        address _underlying = underlying();
+        address _pool = aavePool();
         // Aave's liquidity index is ray-scaled (1e27).
         // Divide by 1e9 to get the standard 1e18-scaled exchange rate.
-        return _getNormalizedIncome() / 1e9;
+        return _getNormalizedIncome(_underlying, _pool) / 1e9;
     }
 
     /// @notice Preview the scaled shares received for a given deposit.
     /// @param amountTokenToDeposit amount of token to deposit
     /// @return amountSharesOut expected scaled shares
     function _previewDeposit(address, uint256 amountTokenToDeposit) internal view override returns (uint256) {
-        return AaveAdapterLib.calcSharesFromAssetUp(amountTokenToDeposit, _getNormalizedIncome());
+        address _underlying = underlying();
+        address _pool = aavePool();
+        return AaveAdapterLib.calcSharesFromAssetHalfUp(amountTokenToDeposit, _getNormalizedIncome(_underlying, _pool));
     }
 
     /// @notice Preview the asset amount received for a given share redemption.
     /// @param amountSharesToRedeem scaled shares to redeem
     /// @return amountTokenOut expected asset amount
     function _previewRedeem(address, uint256 amountSharesToRedeem) internal view override returns (uint256) {
-        return AaveAdapterLib.calcSharesToAssetDown(amountSharesToRedeem, _getNormalizedIncome());
+        address _underlying = underlying();
+        address _pool = aavePool();
+        return AaveAdapterLib.calcSharesToAssetDown(amountSharesToRedeem, _getNormalizedIncome(_underlying, _pool));
     }
 
     /// @notice Queries the Aave pool for the current liquidity index of the underlying reserve.
+    /// @param _underlying the underlying reserve asset whose liquidity index is queried
+    /// @param _pool the Aave V3 pool contract holding the reserve
     /// @return the normalized income (liquidity index) in ray (1e27) precision
-    function _getNormalizedIncome() internal view returns (uint256) {
-        return IAaveV3Pool(aavePool()).getReserveNormalizedIncome(underlying());
+    function _getNormalizedIncome(address _underlying, address _pool) internal view returns (uint256) {
+        return IAaveV3Pool(_pool).getReserveNormalizedIncome(_underlying);
     }
 
     /// @notice Returns the list of tokens accepted for deposit.

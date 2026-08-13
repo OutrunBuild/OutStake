@@ -1,26 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0
-/*
- * MIT License
- * ===========
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
 pragma solidity ^0.8.35;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -30,13 +8,14 @@ interface IWETH is IERC20 {
     event Withdrawal(address indexed src, uint256 wad);
 
     /// @notice Wrap native ETH into WETH.
-    /// @dev TokenHelper uses this for local native/ERC20 normalization when the configured wrapped-native token
-    ///      is the output token.
+    /// @dev Wraps msg.value into WETH. Currently called only by fork tests
+    ///      (e.g. SYAdaptersFork.t.sol) to mint WETH before interacting with live SY adapters;
+    ///      no production contract in src/ calls this.
     function deposit() external payable;
 
     /// @notice Unwrap WETH into native ETH.
-    /// @dev TokenHelper uses this for local native/ERC20 normalization when the configured wrapped-native token
-    ///      is the input token.
+    /// @dev Unwraps WETH into native ETH. Currently has no caller in src/ or test/;
+    ///      retained for future wrap/unwrap integrations.
     /// @param wad Amount of WETH to burn and withdraw.
     function withdraw(uint256 wad) external;
 }

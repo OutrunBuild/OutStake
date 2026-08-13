@@ -20,6 +20,9 @@ abstract contract AutoIncrementIdUpgradeable is Initializable {
         }
     }
 
+    /// @dev No initialization state: the counter slot starts at 0 and _nextId() pre-increments,
+    /// so ids begin at 1. Kept as a convention placeholder in the init chain (same shape as
+    /// OpenZeppelin's ContextUpgradeable) so derived contracts can chain it in initialize().
     function __AutoIncrementId_init() internal onlyInitializing {}
 
     /// @notice Returns the last issued id.

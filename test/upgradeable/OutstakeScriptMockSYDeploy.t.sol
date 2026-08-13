@@ -33,6 +33,11 @@ contract OutstakeScriptMockSYDeployTest is Test {
     MockUSDC internal mockUSDC;
     MockAUSDC internal mockAUSDC;
     MockSUSDS internal mockSUSDS;
+    // Held so the deploy test can pin a recognizable oracle answer before asserting on
+    // sy.exchangeRate(). Without this, the mock SY swallows oracle failures into a 1e18
+    // fallback and an exchangeRate assertion cannot detect a broken wiring.
+    MockAUSDCOracle internal mockAUSDCOracle;
+    MockSUSDSOracle internal mockSUSDSOracle;
 
     function setUp() external {
         script = new OutstakeScriptHarness();
@@ -49,10 +54,12 @@ contract OutstakeScriptMockSYDeployTest is Test {
         vm.setEnv("MOCK_AUSDC", vm.toString(address(mockAUSDC)));
         // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("MOCK_SUSDS", vm.toString(address(mockSUSDS)));
+        mockAUSDCOracle = new MockAUSDCOracle(address(this));
+        mockSUSDSOracle = new MockSUSDSOracle(address(this));
         // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_AUSDC_ORACLE", vm.toString(address(new MockAUSDCOracle(address(this)))));
+        vm.setEnv("MOCK_AUSDC_ORACLE", vm.toString(address(mockAUSDCOracle)));
         // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_SUSDS_ORACLE", vm.toString(address(new MockSUSDSOracle(address(this)))));
+        vm.setEnv("MOCK_SUSDS_ORACLE", vm.toString(address(mockSUSDSOracle)));
     }
 
     function testDeployMockERC20SYCreatesUsableAUSDCAndSUSDSSYProxies() external {
@@ -67,14 +74,28 @@ contract OutstakeScriptMockSYDeployTest is Test {
             outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("MockSUSDSSY", nonce)))
         );
 
-        _assertUsableSY(aUSDCSY, address(mockAUSDC));
-        _assertUsableSY(sUSDSSY, address(mockSUSDS));
+        // Pin each oracle to a DISTINCT normalized rate that also differs from the mock SY's
+        // 1e18 fallback. _assertUsableSY then proves each SY reads its OWN wired oracle: a
+        // broken wiring (mis-wired address / reverting / zero oracle) falls back to 1e18 and
+        // fails; a cross-wiring (SY wired to the other oracle) returns the other oracle's
+        // rate and also fails, because the two expected rates differ.
+        // aUSDC oracle: RAW_DECIMALS=6, so raw 1_100_000 normalizes to 1.1e18.
+        // sUSDS oracle: RAW_DECIMALS=18, so raw 1.2e18 normalizes to 1.2e18.
+        mockAUSDCOracle.setLatestAnswer(1_100_000);
+        mockSUSDSOracle.setLatestAnswer(1.2e18);
+
+        _assertUsableSY(aUSDCSY, address(mockAUSDC), 1.1e18);
+        _assertUsableSY(sUSDSSY, address(mockSUSDS), 1.2e18);
     }
 
-    function _assertUsableSY(IStandardizedYield sy, address yieldToken) internal {
+    function _assertUsableSY(IStandardizedYield sy, address yieldToken, uint256 expectedExchangeRate) internal {
         assertGt(address(sy).code.length, 0);
         assertEq(sy.yieldBearingToken(), yieldToken);
-        assertGt(sy.exchangeRate(), 0);
+        // Asserts the SY propagates its wired oracle's seeded rate. The mock SY falls back to
+        // 1e18 when the oracle reverts or answers 0, and each SY's expected rate differs from
+        // both the 1e18 fallback and the other SY's rate, so this fails on broken OR
+        // cross-wired oracles.
+        assertEq(sy.exchangeRate(), expectedExchangeRate);
         assertTrue(sy.isValidTokenIn(address(mockUSDC)));
         assertTrue(sy.isValidTokenIn(yieldToken));
         assertTrue(sy.isValidTokenOut(address(mockUSDC)));

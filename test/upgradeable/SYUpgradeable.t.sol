@@ -62,7 +62,10 @@ contract SYUpgradeableTest is Test {
         sy.upgradeToAndCall(address(implementationV2), "");
     }
 
-    function testDepositRedeemStillUseTransientNonReentrantGuard() external {
+    // The deposit-phase probe below jointly anchors both entry points: removing either
+    // nonReentrant guard makes the nested redeem revert with a non-guard selector, turning
+    // this test red (see TestSYUpgradeable._deposit).
+    function testNestedRedeemDuringDepositBlockedByNonReentrantGuard() external {
         token.mint(user, 10e18);
         vm.startPrank(user);
         token.approve(address(sy), 10e18);

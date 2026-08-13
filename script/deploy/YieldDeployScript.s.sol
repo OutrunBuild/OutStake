@@ -114,7 +114,7 @@ contract YieldDeployScript is BaseScript {
             new ERC1967Proxy(
                 syImpl,
                 abi.encodeCall(
-                    OutrunAaveV3SYUpgradeable.initialize, ("SY AaveE aUSDC", "SY aUSDC", aUSDC, aavePool, owner)
+                    OutrunAaveV3SYUpgradeable.initialize, ("SY Aave aUSDC", "SY aUSDC", aUSDC, aavePool, owner)
                 )
             )
         );

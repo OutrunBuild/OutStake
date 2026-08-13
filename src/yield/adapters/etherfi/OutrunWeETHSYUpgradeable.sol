@@ -70,8 +70,9 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
             amountSharesOut = IDepositAdapter(DEPOSIT_ADAPTER()).depositETHForWeETH{value: amountDeposited}(address(0));
         } else if (tokenIn == EETH()) {
             // Wrap existing eETH into weETH via the weETH contract.
-            _safeApproveInf(EETH(), yieldBearingToken());
-            amountSharesOut = IWeETH(yieldBearingToken()).wrap(amountDeposited);
+            address _yieldBearingToken = yieldBearingToken();
+            _safeApproveInf(EETH(), _yieldBearingToken);
+            amountSharesOut = IWeETH(_yieldBearingToken).wrap(amountDeposited);
         } else {
             // Already in weETH form, 1:1 deposit.
             amountSharesOut = amountDeposited;

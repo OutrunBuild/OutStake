@@ -4,25 +4,19 @@ pragma solidity ^0.8.35;
 import {Test} from "forge-std/Test.sol";
 
 import {NativeAmountMismatch, NativeTransferFailed} from "../../src/libraries/TokenHelper.sol";
-import {TokenHelperHarness, MockERC20, MockWETH, RevertingReceiver, PausableToken} from "./TokenHelperMocks.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {TokenHelperHarness, MockERC20, RevertingReceiver} from "./TokenHelperMocks.sol";
 
 contract TokenHelperTest is Test {
     TokenHelperHarness internal harness;
     MockERC20 internal token;
-    MockWETH internal weth;
 
     address internal owner = address(0xA11CE);
     address internal user = address(0xB0B);
     address internal recipient = address(0xCAFE);
 
-    uint256 internal constant LOWER_BOUND_APPROVAL = type(uint96).max / 2;
-
     function setUp() external {
         harness = new TokenHelperHarness();
         token = new MockERC20("Test Token", "TST", 18);
-        weth = new MockWETH();
     }
 
     // ============ _transferIn tests ============
@@ -44,12 +38,13 @@ contract TokenHelperTest is Test {
     }
 
     function testTransferInNativeSucceeds() external {
-        // Native input with correct msg.value should succeed
+        // Native input with correct msg.value should succeed.
         vm.deal(user, 2 ether);
 
         vm.prank(user);
-        (bool success,) = address(harness).call{value: 1 ether}("");
-        assertTrue(success);
+        // Route through the exposed wrapper so _transferIn's native success branch actually runs.
+        // A plain empty-calldata call would only hit the harness receive() and skip _transferIn entirely.
+        harness.exposedTransferIn{value: 1 ether}(address(0), user, 1 ether);
         assertEq(address(harness).balance, 1 ether);
     }
 
@@ -144,10 +139,10 @@ contract TokenHelperTest is Test {
         token.mint(address(harness), 100 ether);
 
         // Set allowance to a value >= LOWER_BOUND_APPROVAL
-        harness.exposedSafeApprove(address(token), recipient, LOWER_BOUND_APPROVAL);
+        harness.exposedSafeApprove(address(token), recipient, harness.exposedLowerBoundApproval());
 
         uint256 allowanceBefore = token.allowance(address(harness), recipient);
-        assertEq(allowanceBefore, LOWER_BOUND_APPROVAL);
+        assertEq(allowanceBefore, harness.exposedLowerBoundApproval());
 
         // Should skip since allowance is already >= LOWER_BOUND_APPROVAL
         harness.exposedSafeApproveInf(address(token), recipient);
@@ -204,72 +199,7 @@ contract TokenHelperTest is Test {
     // ============ LOWER_BOUND_APPROVAL constant test ============
 
     function testLowerBoundApprovalValue() external {
-        assertEq(LOWER_BOUND_APPROVAL, type(uint96).max / 2);
-    }
-}
-
-contract OutrunERC20PausableTest is Test {
-    PausableToken internal token;
-
-    address internal owner = address(0xA11CE);
-    address internal user = address(0xB0B);
-    address internal recipient = address(0xCAFE);
-
-    function setUp() external {
-        vm.prank(owner);
-        token = new PausableToken();
-    }
-
-    function testTransferRevertsWhenPaused() external {
-        token.mint(user, 100 ether);
-
-        vm.prank(owner);
-        token.pause();
-
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
-        token.transfer(recipient, 50 ether);
-    }
-
-    function testTransferSucceedsAfterUnpause() external {
-        token.mint(user, 100 ether);
-
-        vm.prank(owner);
-        token.pause();
-
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
-        token.transfer(recipient, 50 ether);
-
-        vm.prank(owner);
-        token.unpause();
-
-        vm.prank(user);
-        assertTrue(token.transfer(recipient, 50 ether));
-        assertEq(token.balanceOf(recipient), 50 ether);
-        assertEq(token.balanceOf(user), 50 ether);
-    }
-
-    function testMintRevertsWhenPaused() external {
-        vm.prank(owner);
-        token.pause();
-
-        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
-        token.mint(user, 100 ether);
-    }
-
-    function testPauseOnlyOwner() external {
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
-        token.pause();
-    }
-
-    function testUnpauseOnlyOwner() external {
-        vm.prank(owner);
-        token.pause();
-
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
-        token.unpause();
+        // Anchor the production constant (exposed via the harness) to its intended value
+        assertEq(harness.exposedLowerBoundApproval(), type(uint96).max / 2);
     }
 }

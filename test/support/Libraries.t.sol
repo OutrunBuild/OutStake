@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {AaveAdapterLib} from "../../src/libraries/AaveAdapterLib.sol";
 import {WadRayMath} from "../../src/libraries/WadRayMath.sol";
 import {ArrayLib} from "../../src/libraries/ArrayLib.sol";
 import {SYUtils} from "../../src/libraries/SYUtils.sol";
@@ -22,60 +23,6 @@ contract WadRayMathTest is Test {
         helper = new WadRayMathHelper();
     }
 
-    function testWadMulReturnsCorrectResult() public {
-        uint256 a = 2e18;
-        uint256 b = 3e18;
-        uint256 result = a.wadMul(b);
-        assertEq(result, 6e18);
-    }
-
-    function testWadMulRoundsDownCorrectly() public {
-        // 1 * 3e18 / 1e18 = 3 with HALF_WAD = 5e17, so 1*3e18 + 5e17 = 3.5e18, rounds to 3
-        uint256 result = uint256(1).wadMul(3e18);
-        assertEq(result, 3);
-    }
-
-    function testWadMulRevertsOnOverflow() public {
-        vm.expectRevert();
-        helper.wadMulOverflow(type(uint256).max, 2);
-    }
-
-    function testWadDivReturnsCorrectResult() public {
-        uint256 a = 6e18;
-        uint256 b = 3e18;
-        uint256 result = a.wadDiv(b);
-        assertEq(result, 2e18);
-    }
-
-    function testWadDivRevertsOnZeroDivisor() public {
-        vm.expectRevert();
-        helper.wadDivZero(1e18);
-    }
-
-    function testWadDivRevertsOnOverflow() public {
-        // Large numerator / small divisor can overflow
-        vm.expectRevert();
-        helper.wadDivOverflow(type(uint256).max, 1);
-    }
-
-    function testRayMulReturnsCorrectResult() public {
-        uint256 a = 2e27;
-        uint256 b = 3e27;
-        uint256 result = a.rayMul(b);
-        assertEq(result, 6e27);
-    }
-
-    function testRayMulRoundsDownCorrectly() public {
-        // Small value rounding: 1 * 3e27 + HALF_RAY = 3.5e27, rounds to 3
-        uint256 result = uint256(1).rayMul(3e27);
-        assertEq(result, 3);
-    }
-
-    function testRayMulRevertsOnOverflow() public {
-        vm.expectRevert();
-        helper.rayMulOverflow(type(uint256).max, 2);
-    }
-
     function testRayDivReturnsCorrectResult() public {
         uint256 a = 6e27;
         uint256 b = 3e27;
@@ -88,22 +35,18 @@ contract WadRayMathTest is Test {
         helper.rayDivZero(1e27);
     }
 
-    function testRayToWadRoundsUp() public {
-        // 1.5e27 + 5e8: quotient = 1.5e18, remainder = 5e8 >= 5e8, so rounds up
-        uint256 result = WadRayMath.rayToWad(1.5e27 + 5e8);
-        assertEq(result, 1.5e18 + 1);
-    }
-
-    function testRayToWadTruncates() public {
-        // 1.5e27 + 4e8: quotient = 1.5e18, remainder = 4e8 < 5e8, so truncates
-        uint256 result = WadRayMath.rayToWad(1.5e27 + 4e8);
-        assertEq(result, 1.5e18);
-    }
-
-    function testWadToRayRevertsOnOverflow() public {
-        // Very large wad that overflows when multiplied by WAD_RAY_RATIO
+    function testRayDivRevertsOnOverflow() public {
+        // a > (2^256 - 1 - b / 2) / RAY silently wraps in unchecked Yul, so the guard must revert.
         vm.expectRevert();
-        helper.wadToRayOverflow(type(uint256).max / 1e9 + 1);
+        helper.rayDivOverflow(type(uint256).max, 1e27);
+    }
+
+    function testRayDivPassesAtOverflowBoundary() public {
+        // Largest a the guard allows: (2^256 - 1 - b / 2) / RAY. Since b == RAY, a * RAY is an
+        // exact multiple of b and the half-up increment does not change the quotient; the result equals a exactly.
+        uint256 b = 1e27;
+        uint256 a = (type(uint256).max - b / 2) / b;
+        assertEq(a.rayDiv(b), a);
     }
 }
 
@@ -112,141 +55,9 @@ contract WadRayMathTest is Test {
 // ============================================================================
 
 contract ArrayLibTest is Test {
-    using ArrayLib for uint256[];
-    using ArrayLib for address[];
-    using ArrayLib for bytes4[];
-
     address internal constant A = address(0x1);
     address internal constant B = address(0x2);
     address internal constant C = address(0x3);
-    address internal constant D = address(0x4);
-    address internal constant E = address(0x5);
-
-    function testSumReturnsZeroForEmptyArray() public {
-        uint256[] memory arr = new uint256[](0);
-        uint256 result = arr.sum();
-        assertEq(result, 0);
-    }
-
-    function testSumReturnsCorrectTotal() public {
-        uint256[] memory arr = new uint256[](3);
-        arr[0] = 1;
-        arr[1] = 2;
-        arr[2] = 3;
-        uint256 result = arr.sum();
-        assertEq(result, 6);
-    }
-
-    function testFindReturnsIndexWhenPresent() public {
-        address[] memory arr = new address[](3);
-        arr[0] = A;
-        arr[1] = B;
-        arr[2] = C;
-        uint256 result = arr.find(B);
-        assertEq(result, 1);
-    }
-
-    function testFindReturnsMaxUint256WhenAbsent() public {
-        address[] memory arr = new address[](2);
-        arr[0] = A;
-        arr[1] = B;
-        uint256 result = arr.find(C);
-        assertEq(result, type(uint256).max);
-    }
-
-    function testAppendAddsToEnd() public {
-        address[] memory inp = new address[](2);
-        inp[0] = A;
-        inp[1] = B;
-        address[] memory out = inp.append(C);
-        assertEq(out.length, 3);
-        assertEq(out[0], A);
-        assertEq(out[1], B);
-        assertEq(out[2], C);
-    }
-
-    function testAppendHeadAddsToStart() public {
-        address[] memory inp = new address[](2);
-        inp[0] = A;
-        inp[1] = B;
-        address[] memory out = inp.appendHead(C);
-        assertEq(out.length, 3);
-        assertEq(out[0], C);
-        assertEq(out[1], A);
-        assertEq(out[2], B);
-    }
-
-    function testMergeDeduplicates() public {
-        address[] memory a = new address[](2);
-        a[0] = A;
-        a[1] = B;
-        address[] memory b = new address[](2);
-        b[0] = B;
-        b[1] = C;
-        address[] memory out = a.merge(b);
-        assertEq(out.length, 3);
-        assertEq(out[0], A);
-        assertEq(out[1], B);
-        assertEq(out[2], C);
-    }
-
-    function testMergeFullyDisjoint() public {
-        address[] memory a = new address[](1);
-        a[0] = A;
-        address[] memory b = new address[](1);
-        b[0] = B;
-        address[] memory out = a.merge(b);
-        assertEq(out.length, 2);
-        assertEq(out[0], A);
-        assertEq(out[1], B);
-    }
-
-    function testMergeIdenticalArrays() public {
-        address[] memory a = new address[](2);
-        a[0] = A;
-        a[1] = B;
-        address[] memory b = new address[](2);
-        b[0] = A;
-        b[1] = B;
-        address[] memory out = a.merge(b);
-        assertEq(out.length, 2);
-        assertEq(out[0], A);
-        assertEq(out[1], B);
-    }
-
-    function testContainsAddressReturnsTrueForPresent() public {
-        address[] memory arr = new address[](3);
-        arr[0] = A;
-        arr[1] = B;
-        arr[2] = C;
-        bool result = arr.contains(B);
-        assertTrue(result);
-    }
-
-    function testContainsAddressReturnsFalseForAbsent() public {
-        address[] memory arr = new address[](2);
-        arr[0] = A;
-        arr[1] = B;
-        bool result = arr.contains(C);
-        assertFalse(result);
-    }
-
-    function testContainsBytes4ReturnsTrueForPresent() public {
-        bytes4[] memory arr = new bytes4[](3);
-        arr[0] = bytes4(0x11111111);
-        arr[1] = bytes4(0x22222222);
-        arr[2] = bytes4(0x33333333);
-        bool result = arr.contains(bytes4(0x22222222));
-        assertTrue(result);
-    }
-
-    function testContainsBytes4ReturnsFalseForAbsent() public {
-        bytes4[] memory arr = new bytes4[](2);
-        arr[0] = bytes4(0x11111111);
-        arr[1] = bytes4(0x22222222);
-        bool result = arr.contains(bytes4(0x33333333));
-        assertFalse(result);
-    }
 
     function testCreateVariableCount() public {
         address[] memory result1 = ArrayLib.create(A);
@@ -263,27 +74,6 @@ contract ArrayLibTest is Test {
         assertEq(result3[0], A);
         assertEq(result3[1], B);
         assertEq(result3[2], C);
-
-        address[] memory result4 = ArrayLib.create(A, B, C, D);
-        assertEq(result4.length, 4);
-        assertEq(result4[0], A);
-        assertEq(result4[1], B);
-        assertEq(result4[2], C);
-        assertEq(result4[3], D);
-
-        address[] memory result5 = ArrayLib.create(A, B, C, D, E);
-        assertEq(result5.length, 5);
-        assertEq(result5[0], A);
-        assertEq(result5[1], B);
-        assertEq(result5[2], C);
-        assertEq(result5[3], D);
-        assertEq(result5[4], E);
-    }
-
-    function testCreateWithUint256() public {
-        uint256[] memory result = ArrayLib.create(uint256(42));
-        assertEq(result.length, 1);
-        assertEq(result[0], 42);
     }
 }
 
@@ -311,12 +101,13 @@ contract SYUtilsTest is Test {
     }
 
     function testSyToAssetUpRoundsUp() public {
-        // For small values, syToAssetUp >= syToAsset
+        // rate 3, 1 wei SY: floor (1*3)/1e18 = 0, ceil (1*3 + 1e18 - 1)/1e18 = 1
         uint256 exchangeRate = 3;
         uint256 syAmount = 1;
         uint256 down = SYUtils.syToAsset(exchangeRate, syAmount);
         uint256 up = SYUtils.syToAssetUp(exchangeRate, syAmount);
-        assertGe(up, down);
+        assertEq(down, 0);
+        assertEq(up, 1);
     }
 
     function testAssetToSyReturnsCorrectValue() public {
@@ -336,30 +127,33 @@ contract SYUtilsTest is Test {
     }
 
     function testAssetToSyUpRoundsUp() public {
-        // For small values, assetToSyUp >= assetToSy
+        // rate 3, 1 wei asset: floor 1e18/3 = 333_333_333_333_333_333, ceil rounds the remainder up by 1
         uint256 exchangeRate = 3;
         uint256 assetAmount = 1;
         uint256 down = SYUtils.assetToSy(exchangeRate, assetAmount);
         uint256 up = SYUtils.assetToSyUp(exchangeRate, assetAmount);
-        assertGe(up, down);
+        assertEq(down, 333_333_333_333_333_333);
+        assertEq(up, 333_333_333_333_333_334);
     }
 
     function testSyToAssetUpAlwaysGreaterOrEqualToSyToAsset() public {
-        // For any rate, syToAssetUp >= syToAsset
+        // rate 1e18+1, 1e18-1 SY: floor = 1e18-1, ceil = 1e18 (rounds the remainder up)
         uint256 exchangeRate = 1e18 + 1; // Non-trivial rate
         uint256 syAmount = 1e18 - 1;
         uint256 down = SYUtils.syToAsset(exchangeRate, syAmount);
         uint256 up = SYUtils.syToAssetUp(exchangeRate, syAmount);
-        assertGe(up, down);
+        assertEq(down, 1e18 - 1);
+        assertEq(up, 1e18);
     }
 
     function testAssetToSyUpAlwaysGreaterOrEqualToAssetToSy() public {
-        // For any rate, assetToSyUp >= assetToSy
+        // rate 1e18+1, 1e18-1 asset: floor = 1e18-2, ceil = 1e18-1 (rounds the remainder up)
         uint256 exchangeRate = 1e18 + 1; // Non-trivial rate
         uint256 assetAmount = 1e18 - 1;
         uint256 down = SYUtils.assetToSy(exchangeRate, assetAmount);
         uint256 up = SYUtils.assetToSyUp(exchangeRate, assetAmount);
-        assertGe(up, down);
+        assertEq(down, 1e18 - 2);
+        assertEq(up, 1e18 - 1);
     }
 
     function testRoundTripIdentity() public {
@@ -400,5 +194,39 @@ contract ReentrancyGuardTest is Test {
         // Second call should also succeed (guard properly resets)
         uint256 result2 = guarded.guardedAction();
         assertEq(result2, 42);
+    }
+}
+
+// ============================================================================
+// AaveAdapterLib Tests
+// ============================================================================
+
+contract AaveAdapterLibTest is Test {
+    function testCalcSharesFromAssetHalfUpRoundsHalfUpAtExactHalf() public {
+        // 3 assets at index 2e27 -> quotient exactly 1.5. Half-up rounds to 2;
+        // a floor rounding mode would give 1, so this pins the half-up direction.
+        uint256 result = AaveAdapterLib.calcSharesFromAssetHalfUp(3, 2e27);
+        assertEq(result, 2);
+    }
+
+    function testCalcSharesFromAssetHalfUpRoundsDownBelowHalf() public {
+        // 1 asset at index 3e27 -> quotient 1/3, below half. Half-up rounds to 0;
+        // a ceiling rounding mode would give 1, so this pins the half-up direction.
+        uint256 result = AaveAdapterLib.calcSharesFromAssetHalfUp(1, 3e27);
+        assertEq(result, 0);
+    }
+
+    function testCalcSharesFromAssetHalfUpRoundsHalfUpAtHalfToEvenBoundary() public {
+        // 5 assets at index 2e27 -> quotient exactly 2.5. Half-up rounds to 3;
+        // a round-half-even (banker's) mode would give 2, so this pins the half-up direction.
+        uint256 result = AaveAdapterLib.calcSharesFromAssetHalfUp(5, 2e27);
+        assertEq(result, 3);
+    }
+
+    function testCalcSharesToAssetDownRoundsDownAtExactHalf() public {
+        // 1 share at index 1.5e27 -> quotient exactly 1.5. Rounds down to 1;
+        // a half-up rounding mode would give 2, so this pins the down direction.
+        uint256 result = AaveAdapterLib.calcSharesToAssetDown(1, 1.5e27);
+        assertEq(result, 1);
     }
 }

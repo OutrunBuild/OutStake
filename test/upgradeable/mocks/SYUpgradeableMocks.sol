@@ -28,7 +28,11 @@ contract TestSYUpgradeable is SYBaseUpgradeable {
     }
 
     function _deposit(address, uint256 amountDeposited) internal override returns (uint256) {
-        // Probe reentrancy during deposit to verify the transient guard fires.
+        // Probe reentrancy during deposit: the nested redeem below is blocked by redeem's own
+        // nonReentrant guard, so this single probe anchors both entry points. If either guard is
+        // removed, the nested call reverts with a non-guard selector (ERC20InsufficientBalance from
+        // burning while the contract holds zero SY shares -- _mint runs after _deposit returns),
+        // which sets reentryBlocked=false and fails the test.
         if (!reentryBlocked) {
             try this.redeem(address(this), 1, yieldBearingToken(), 0, true) {}
             catch (bytes memory reason) {

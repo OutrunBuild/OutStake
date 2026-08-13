@@ -19,6 +19,7 @@ import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsB
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {
+    ScaledAmountIsZero,
     MockToken,
     MockAToken,
     MockAavePool,
@@ -208,7 +209,7 @@ contract SYAdaptersUpgradeableTest is Test {
         underlying.mint(user, amount);
         vm.startPrank(user);
         underlying.approve(sy, amount);
-        vm.expectRevert();
+        vm.expectRevert(ScaledAmountIsZero.selector);
         _asSY(sy).deposit(user, address(underlying), amount, 0);
         vm.stopPrank();
     }

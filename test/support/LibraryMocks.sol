@@ -19,27 +19,11 @@ contract MockGuarded is ReentrancyGuard {
 contract WadRayMathHelper {
     using WadRayMath for uint256;
 
-    function wadMulOverflow(uint256 a, uint256 b) external pure {
-        a.wadMul(b);
-    }
-
-    function wadDivZero(uint256 a) external pure {
-        a.wadDiv(0);
-    }
-
-    function wadDivOverflow(uint256 a, uint256 b) external pure {
-        a.wadDiv(b);
-    }
-
-    function rayMulOverflow(uint256 a, uint256 b) external pure {
-        a.rayMul(b);
-    }
-
     function rayDivZero(uint256 a) external pure {
         a.rayDiv(0);
     }
 
-    function wadToRayOverflow(uint256 a) external pure {
-        WadRayMath.wadToRay(a);
+    function rayDivOverflow(uint256 a, uint256 b) external pure {
+        a.rayDiv(b);
     }
 }

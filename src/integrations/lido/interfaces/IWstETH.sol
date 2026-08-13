@@ -10,22 +10,6 @@ interface IWstETH {
     function stEthPerToken() external view returns (uint256);
 
     /**
-     * @notice Quotes wstETH output for a stETH input amount.
-     * @dev OutrunWstETHSY consumes this for stETH deposit previews.
-     * @param stETHAmount The stETH amount to convert.
-     * @return The corresponding wstETH amount.
-     */
-    function getWstETHByStETH(uint256 stETHAmount) external view returns (uint256);
-
-    /**
-     * @notice Quotes stETH output for a wstETH input amount.
-     * @dev OutrunWstETHSY consumes this for redemption previews.
-     * @param wstETHAmount The wstETH amount to convert.
-     * @return The corresponding stETH amount.
-     */
-    function getStETHByWstETH(uint256 wstETHAmount) external view returns (uint256);
-
-    /**
      * @notice Wraps stETH into wstETH.
      * @dev OutrunWstETHSY calls this after it holds stETH and consumes the return value as minted SY shares.
      * @param stETHAmount The amount of stETH to wrap.
