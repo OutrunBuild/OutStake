@@ -67,7 +67,7 @@
 
 对应的 `previewRedeem(positionId, syRedeemed, tokenOut)` 必须复用同一条 full / partial 判定：full redeem 预览全部剩余 debt，partial redeem 用 ceiling rounding，且不会返回一个执行期会因“partial consume all debt”而被拒绝的报价。这里的 debt 报价语义保持为已归一化的 `uAssetDebtUnits`；若需要反推价值或 `SY` 覆盖量，则顺序是 `uAssetDebtUnits -> canonicalAssetValue -> SY`。
 
-## 5. Wrap stake / wrap redeem 生命周期
+## 5. Wrap stake / keep wrap redeem 生命周期
 
 ### 5.1 Wrap stake
 
@@ -83,22 +83,19 @@
    - `wrapUAssetDebt += principalValue`
 6. 铸造：向 `uAssetRecipient` 铸造 `principalValue` 对应的 `uAsset`。
 
-### 5.2 Wrap redeem
+### 5.2 Keep wrap redeem
 
-`wrapRedeem(amountInUAsset, receiver, tokenOut, minTokenOut)` 当前状态机如下：
+`keepWrapRedeem(amountInUAsset, receiver)` 当前状态机如下：
 
-1. 前置状态：合约未 paused；输入合法；记 `uAssetDebtUnits = amountInUAsset`，且 `uAssetDebtUnits <= wrapUAssetDebt`。
+1. 前置状态：合约未 paused；keeper 守卫——`msg.sender != keeper()` → revert `PermissionDenied()`；输入合法；记 `uAssetDebtUnits = amountInUAsset`，且 `uAssetDebtUnits <= wrapUAssetDebt`。
 2. 份额换算：先计算 `canonicalAssetValue = uAsset -> canonical asset`，再计算 `amountInSY = canonical asset -> SY`。
-3. 分支换算：池子健康（债务等值 SY ≤ 池子 SY）时 `amountInSY = uAsset -> canonical -> SY`（down，面值兑付）；池子不足时 `amountInSY = amountInUAsset × syWrapStaking / wrapUAssetDebt`（按池子份额比例，down，不因池子不足回退）。
+3. 分支换算：池子健康（债务等值 SY ≤ 池子 SY）时 `amountInSY = uAsset -> canonical -> SY`（down，面值兑付）；池子不足时 revert `WrapPoolUndercollateralized()`（全有或全无兑付语义，keeper 可信不承担亏损兑付；不再按池子份额比例 pro-rata）。
 4. 聚合账务更新：
    - `syTotalStaking -= amountInSY`
    - `syWrapStaking -= amountInSY`
    - `wrapUAssetDebt -= uAssetDebtUnits`
-5. debt 清偿：账务更新完成后，对调用者执行 `uAsset.repay(msg.sender, uAssetDebtUnits)`。
-6. 资产输出：
-   - `tokenOut == SY` 时先检查 `amountInSY >= minTokenOut`，再直接输出 `SY`
-   - 否则通过 `SY.redeem(receiver, amountInSY, tokenOut, minTokenOut, false)` 输出目标 token
-7. 事件：资产输出完成后 `emit WrapRedeem(...)`。
+5. debt 清偿：对 keeper 执行 `uAsset.repay(msg.sender, uAssetDebtUnits)`，烧掉 keeper 自己提供的 `uAsset`。
+6. 资产输出：直接将 `amountInSY` 的 SY 转给 `receiver`（keepWrapRedeem 只直付 SY，不经过 `SY.redeem`，无 tokenOut/minTokenOut 参数）。
 
 当前 wrap 流程始终作用于共享池，不会生成或消费独立 `positionId`。
 
@@ -181,7 +178,7 @@
 - `drawUAsset`
 - `wrapStake`
 - `redeem`
-- `wrapRedeem`
+- `keepWrapRedeem`
 - `keepRedeem`
 - `harvestWrapYield`
 

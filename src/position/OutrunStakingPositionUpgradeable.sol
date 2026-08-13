@@ -231,17 +231,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         amountTokenOut = _previewTokenOut(SY(), tokenOut, syRedeemed);
     }
 
-    /// @notice Previews the tokenOut received when redeeming uAsset from the wrap pool.
-    /// Healthy pool: floor conversion from uAsset to SY (face value). Undercollateralized pool:
-    /// rate-independent pro-rata (amountInUAsset × syWrapStaking / wrapUAssetDebt).
-    /// Reverts on zero input or dust that rounds to 0 SY.
-    /// @param amountInUAsset uAsset amount to redeem from the wrap pool.
-    /// @param tokenOut Desired output token address (SY itself or another token via SY.redeem).
-    /// @return amountTokenOut Amount of tokenOut that would be received.
-    function previewWrapRedeem(uint256 amountInUAsset, address tokenOut) public view returns (uint256 amountTokenOut) {
-        address _SY = SY();
-        uint256 amountInSY = _validateWrapRedeemAmount(amountInUAsset, _SY);
-        amountTokenOut = _previewTokenOut(_SY, tokenOut, amountInSY);
+    /// @notice Previews the SY a keeper would receive from keepWrapRedeem.
+    /// @dev Quote-only. Healthy pool: face value. Undercollateralized: reverts WrapPoolUndercollateralized (mirrors keepWrapRedeem).
+    /// @param amountInUAsset uAsset amount the keeper would burn.
+    /// @return amountInSY SY amount the keeper would receive.
+    function previewWrapRedeem(uint256 amountInUAsset) public view returns (uint256 amountInSY) {
+        amountInSY = _validateWrapRedeemAmount(amountInUAsset, SY());
     }
 
     /// @notice Previews the SY split for a keeper redemption of a matured position.
@@ -369,7 +364,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @notice Stakes SY into the shared wrap pool without creating a position, minting uAsset immediately.
-    /// No lockup period applies; the caller can wrapRedeem at any time.
+    /// No lockup period applies to the deposited SY principal.
     /// Rounds down when converting SY to uAsset to avoid over-minting.
     /// @dev Increments both syTotalStaking and syWrapStaking, and also increments wrapUAssetDebt.
     /// @param amountInSY SY amount to wrap stake. Must be > 0.
@@ -456,29 +451,28 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     // slither-disable-next-line reentrancy-no-eth
-    /// @notice Redeems uAsset from the wrap pool, repaying uAsset debt to release SY and send tokenOut to the receiver.
-    /// Anyone can call; no position ownership is required. Amount must not exceed wrapUAssetDebt.
-    /// @dev Healthy pool (value >= debt face): redeem at face value, capping at 1. Undercollateralized
-    /// pool: redeem pro-rata (each uAsset gets syWrapStaking / wrapUAssetDebt SY, tracking the underlying
-    /// downside without ever reverting on pool insufficiency).
-    /// Direct SY tokenOut sends SY 1:1 to the receiver; all other tokenOut paths go through SY.redeem.
-    /// @param amountInUAsset uAsset amount to redeem. Must be > 0 and <= wrapUAssetDebt.
-    /// @param receiver Address that receives the tokenOut.
-    /// @param tokenOut Desired output token (SY itself or another token via SY.redeem).
-    /// @param minTokenOut Minimum acceptable amount of tokenOut (slippage protection).
-    /// @return amountTokenOut Amount of tokenOut sent to the receiver.
-    function wrapRedeem(uint256 amountInUAsset, address receiver, address tokenOut, uint256 minTokenOut)
+    /// @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value. Reverts if the pool is undercollateralized.
+    /// @dev Keeper-only path, mirroring keepRedeem's trust model. Replaces the public wrapRedeem closed by F-44.
+    /// Reverts WrapPoolUndercollateralized on an undercollateralized pool — the keeper is trusted and must not bear a
+    /// loss-making redemption. Consistent with keepRedeem, which also reverts (InsufficientSyCollateral) on an
+    /// undercollateralized position.
+    /// @param amountInUAsset uAsset amount the keeper burns. Must be > 0 and <= wrapUAssetDebt.
+    /// @param receiver Address receiving the SY.
+    /// @return amountInSY SY amount sent to the receiver.
+    function keepWrapRedeem(uint256 amountInUAsset, address receiver)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 amountTokenOut)
+        returns (uint256 amountInSY)
     {
+        if (msg.sender != keeper()) revert PermissionDenied();
         if (receiver == address(0) || amountInUAsset == 0) revert ZeroInput();
-        OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
 
+        OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
         address _SY = SY();
         address _uAsset = uAsset();
-        uint256 amountInSY = _validateWrapRedeemAmount(amountInUAsset, _SY);
+        // Named return: the SY amount is paid directly with no downstream SY.redeem conversion (F-44).
+        amountInSY = _validateWrapRedeemAmount(amountInUAsset, _SY);
 
         unchecked {
             $.syTotalStaking -= amountInSY;
@@ -486,19 +480,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             $.wrapUAssetDebt -= amountInUAsset;
         }
 
+        // Burn keeper-provided uAsset; repay decrements the stake manager's minter debt.
         IUniversalAssets(_uAsset).repay(msg.sender, amountInUAsset);
 
-        // If tokenOut is SY itself, send SY directly — no adapter burn or conversion is needed.
-        if (tokenOut == _SY) {
-            if (amountInSY < minTokenOut) revert InsufficientTokenOut(amountInSY, minTokenOut);
-            amountTokenOut = amountInSY;
-            _transferSY(_SY, receiver, amountInSY);
-        } else {
-            // Otherwise, redeem SY through the SY contract into the desired token.
-            amountTokenOut = IStandardizedYield(_SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, false);
-        }
+        _transferSY(_SY, receiver, amountInSY);
 
-        emit WrapRedeem(receiver, amountInUAsset, amountTokenOut, tokenOut);
+        emit KeepWrapRedeem(msg.sender, receiver, amountInUAsset, amountInSY);
     }
 
     // slither-disable-next-line reentrancy-no-eth,timestamp
@@ -773,8 +760,10 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         UAssetBurned = _computeRedeemPositionDebt(positionUAssetMinted, syRedeemed, syStaked);
     }
 
-    /// @dev Validates a wrap redemption amount and computes the SY amount to release.
-    /// The exchange rate is read once after the debt check and before the pool health test.
+    /// @dev Validates a wrap redemption amount and computes the SY amount to release at face value.
+    /// Reverts WrapPoolUndercollateralized when the wrap pool's SY is below its uAsset debt face value —
+    /// keepWrapRedeem is keeper-only and the keeper must not bear a loss-making redemption (all-or-nothing
+    /// semantics; no pro-rata partial payout). The exchange rate is read once after the debt check.
     /// @param amountInUAsset The uAsset amount to redeem.
     /// @param _SY The Standardized Yield token address.
     /// @return amountInSY The SY amount to release.
@@ -789,21 +778,14 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
         uint256 exchangeRate_ = _currentExchangeRate(_SY);
 
-        // Healthy pool: SY covers the full debt face value → redeem at face value (cap at 1).
-        // Same solvency check as harvest (debt-equivalent SY uses ceil so the pool stays covered).
-        if (_assetToSyUp(wrapUAssetDebt_, exchangeRate_) <= $.syWrapStaking) {
-            // Floor conversion: wrapRedeem never releases more SY than the repaid debt accounts for.
-            amountInSY = _assetToSy(amountInUAsset, exchangeRate_);
-        } else {
-            // Undercollateralized pool: pool value below debt face value → redeem pro-rata.
-            // Each uAsset redeems syWrapStaking / wrapUAssetDebt SY (floor), rate-independent, and
-            // never reverts on pool insufficiency. No over-release: the payout never exceeds the
-            // pool balance. Floor rounding can shift <1 SY per redemption toward later redeemers
-            // when the pool crosses back to healthy. If the oracle rate is transiently stale into
-            // this range, a redeemer could capture excess that would otherwise be harvestable —
-            // that relies on oracle freshness, not on this arithmetic (correct at the true rate).
-            amountInSY = Math.mulDiv(amountInUAsset, $.syWrapStaking, wrapUAssetDebt_, Math.Rounding.Floor);
+        // Healthy pool guard: SY must cover the full debt face value. Same solvency check as harvest
+        // (debt-equivalent SY uses ceil so the pool stays covered). Undercollateralized → revert; the
+        // keeper is trusted and must not bear a loss-making redemption (F-44 all-or-nothing semantics).
+        if (_assetToSyUp(wrapUAssetDebt_, exchangeRate_) > $.syWrapStaking) {
+            revert WrapPoolUndercollateralized();
         }
+        // Floor conversion: keepWrapRedeem never releases more SY than the repaid debt accounts for.
+        amountInSY = _assetToSy(amountInUAsset, exchangeRate_);
         // Dust uAsset inputs that round to zero SY must not burn debt without reducing staked SY.
         if (amountInSY == 0) revert DustRoundedToZero();
     }

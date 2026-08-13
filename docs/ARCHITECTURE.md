@@ -114,7 +114,7 @@ router 路径先把 SY 转入 SY 合约地址（直调路径份额留在调用�
 
 ### 2.5 Wrap Redeem
 
-调用者授权 uAsset -> router 代收 uAsset -> position.wrapRedeem() -> 换算 SY（健康池按 exchangeRate；不足池按池子份额比例 pro-rata）-> 减少池账务 -> uAsset.repay() burn debt -> 输出 SY 或目标 token 给 receiver。
+keeper 授权自有 uAsset -> position.keepWrapRedeem() -> uAsset.repay() 烧掉 keeper 的 uAsset -> 换算 SY（健康池按 exchangeRate 面值；不足池 revert WrapPoolUndercollateralized）-> 减少池账务 -> 直付 SY 给 receiver（keeper-only，不经 SY.redeem）。
 
 ### 2.6 Position Redeem (到期)
 
@@ -178,7 +178,7 @@ OutrunRouter (concrete)
   ⟶ Ownable                            ← openzeppelin
   依赖:
     → IStandardizedYield               deposit / redeem / preview*
-    → IOutrunStakeManager              stake / wrapStake / wrapRedeem / preview*
+    → IOutrunStakeManager              stake / wrapStake / preview*
     → IMemeverseLauncher               genesis
     → TokenHelper
 ```
@@ -224,9 +224,9 @@ OutrunExchangeOracleAdapter
 |redeemSy|  | redeem       |  | drawUAsset  |  | genesis          |
 |stake   |  | preview*     |  | redeem      |  └────────┬─────────┘
 |wrapStk |  | exchangeRate |  | wrapStake   |           │
-|wrapRdm |  └──────┬───────┘  │ wrapRedeem  │  ┌────────┴─────────┐
+|        |  └──────┬───────┘  │ keepWrapRdm │  ┌────────┴─────────┐
 |genesis │         │          │ keepRedeem  │  | SY token via     |
-+───┬────┘         │     ┌────┤ harvest     │  | wrapRedeem       |
++───┬────┘         │     ┌────┤ harvest     │  | redeem           |
     │              │     │    │ preview*    │  | ·redeem          |
     └──────────────┘     │    └─────┬─┬─────┘  └────────┬─────────┘
                          │          │ │                 │
@@ -250,9 +250,9 @@ OutrunExchangeOracleAdapter
 | Caller | Callee | 入口 |
 | --- | --- | --- |
 | Router | SY | `mintSYFromToken` → `SY.deposit`；`redeemSyToToken` → `SY.redeem` |
-| Router | Position | `stakeFromToken`/`stakeFromSY` → `stake`/`wrapStake`；`wrapRedeem` → `position.wrapRedeem` |
+| Router | Position | `stakeFromToken`/`stakeFromSY` → `stake`/`wrapStake` |
 | Router | Launcher | `genesisByToken`/`genesisBySY` → `launcher.genesis` |
-| Position | uAsset | `stake`/`wrapStake` → `mint`；`redeem`/`keepRedeem` → `repay` |
+| Position | uAsset | `stake`/`wrapStake` → `mint`；`redeem`/`keepRedeem`/`keepWrapRedeem` → `repay` |
 | Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`；redeem → `withdraw`/`unwrap`/`release` |
 | OutrunOFT | LayerZero | `_toSD` 编码消息；`_debit` burn 本链；`_credit` mint 远端 |
 
@@ -300,10 +300,9 @@ Wrap Stake (资金进入共享池):
     → repay(burn)
     → transfer SY or external redeem → token to receiver
 
-  User uAsset ──approve──► Position (wrapRedeem)
+  Keeper uAsset ──approve──► Position ──repay(burn)──► Position (keepWrapRedeem)
     → reduce syTotalStaking / syWrapStaking / wrapUAssetDebt
-    → repay(burn)
-    → transfer SY or external redeem → token to receiver
+    → transfer SY directly to receiver (undercollateralized pool reverts WrapPoolUndercollateralized)
 
 Keeper 代偿:
 
@@ -319,7 +318,7 @@ Harvest:
 ### 3.4 设计约束
 
 - Router **不承担**独立资金池角色，所有资金来自调用者（caller-funded pull 模式）。
-- 用户也**可直接调用** SY.deposit/redeem 与 Position.stake/wrapStake/wrapRedeem，无需经过 Router。
+- 用户也**可直接调用** SY.deposit/redeem 与 Position.stake/wrapStake，无需经过 Router；wrap 池赎回为 keeper-only `keepWrapRedeem`，不经 Router。
 - uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造。
 - Position 合约本身必须先在 uAsset 上被授予 mintingCap，才能继续铸造。
 

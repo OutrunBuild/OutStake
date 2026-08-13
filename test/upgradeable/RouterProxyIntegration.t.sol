@@ -98,17 +98,15 @@ contract RouterProxyIntegrationTest is Test {
         assertEq(position.syTotalStaking(), 0);
     }
 
-    function testRouterWrapStakeAndWrapRedeemUseProxyBackedContracts() external {
+    function testRouterWrapStakeFromTokenUsesProxyBackedContracts() external {
         vm.startPrank(user);
         token.approve(address(router), type(uint256).max);
         uint256 minted = router.wrapStakeFromToken(address(position), address(token), 10e18, 0, user, 0);
-        uAsset.approve(address(router), minted);
-        uint256 amountOut = router.wrapRedeem(address(position), minted, user, address(token), 0);
         vm.stopPrank();
 
         assertEq(minted, 10e18);
-        assertEq(amountOut, 10e18);
-        assertEq(position.syWrapStaking(), 0);
-        assertEq(position.wrapUAssetDebt(), 0);
+        assertEq(uAsset.balanceOf(user), 10e18);
+        assertEq(position.syWrapStaking(), 10e18);
+        assertEq(position.wrapUAssetDebt(), 10e18);
     }
 }

@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
-import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset, RouterMockLauncher} from "./mocks/RouterMocks.sol";
@@ -227,14 +226,6 @@ contract OutrunRouterTest is Test {
         assertEq(sy.getZeroApproveCount(), 0);
         assertEq(uAsset.getZeroApproveCount(), 0);
         vm.stopPrank();
-
-        vm.startPrank(owner);
-        router.wrapStakeFromSY(address(position), 1e18, owner, 0);
-        router.wrapRedeem(address(position), 1e18, owner, address(sy), 0);
-        assertEq(uAsset.allowance(address(router), address(position)), 0);
-        assertEq(sy.getZeroApproveCount(), 0);
-        assertEq(uAsset.getZeroApproveCount(), 0);
-        vm.stopPrank();
     }
 
     function testMintSYFromTokenRevertsWhenApprovalAmountIsUint256Max() external {
@@ -246,67 +237,6 @@ contract OutrunRouterTest is Test {
         vm.prank(owner);
         vm.expectRevert(INVALID_PARAM_SELECTOR);
         router.mintSYFromToken(address(freshSy), address(underlying), owner, maxDepositAmount, 0);
-    }
-
-    function testPreviewWrapRedeemMatchesStakeManagerPreview() external {
-        vm.prank(owner);
-        position.wrapStake(100e18, owner);
-
-        sy.setExchangeRate(15e17);
-
-        // solhint-disable-next-line avoid-low-level-calls
-        (bool ok, bytes memory data) = address(router)
-            .staticcall(
-                abi.encodeWithSelector(IOutrunRouter.previewWrapRedeem.selector, address(position), 40e18, address(sy))
-            );
-
-        assertTrue(ok, "previewWrapRedeem missing");
-        uint256 amountOut = abi.decode(data, (uint256));
-
-        assertEq(amountOut, 26_666666666666666666);
-    }
-
-    function testWrapRedeemPullsUAssetAndTransfersSYToReceiver() external {
-        vm.prank(owner);
-        position.wrapStake(100e18, owner);
-
-        sy.setExchangeRate(15e17);
-
-        vm.prank(owner);
-        // solhint-disable-next-line avoid-low-level-calls
-        (bool ok, bytes memory data) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapRedeem.selector,
-                    address(position),
-                    40e18,
-                    owner,
-                    address(sy),
-                    26_666666666666666666
-                )
-            );
-
-        assertTrue(ok, "wrapRedeem missing");
-        uint256 syOut = abi.decode(data, (uint256));
-
-        assertEq(syOut, 26_666666666666666666);
-        assertEq(uAsset.balanceOf(owner), 60e18);
-        assertEq(sy.balanceOf(owner), 926_666666666666666666);
-    }
-
-    function testWrapRedeemRevertsWhenTokenOutBelowMinimum() external {
-        vm.prank(owner);
-        position.wrapStake(100e18, owner);
-
-        sy.setExchangeRate(15e17);
-
-        vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IOutrunStakeManager.InsufficientTokenOut.selector, 26_666666666666666666, 26_666666666666666667
-            )
-        );
-        router.wrapRedeem(address(position), 40e18, owner, address(sy), 26_666666666666666667);
     }
 
     function testGenesisBySYUsesLockedStakeInsteadOfWrapStake() external {

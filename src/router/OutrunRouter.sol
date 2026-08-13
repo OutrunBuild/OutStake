@@ -247,22 +247,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     }
 
     /**
-     * @notice Quotes the token output from redeeming wrapped uAsset.
-     * @dev Reads the stake-manager wrap-redeem preview without consuming uAsset.
-     * @param SP Stake manager handling the wrap redemption.
-     * @param amountInUAsset Amount of uAsset to redeem.
-     * @param tokenOut Token requested on redemption.
-     * @return amountTokenOut Estimated amount of `tokenOut` returned.
-     */
-    function previewWrapRedeem(address SP, uint256 amountInUAsset, address tokenOut)
-        external
-        view
-        returns (uint256 amountTokenOut)
-    {
-        amountTokenOut = IOutrunStakeManager(SP).previewWrapRedeem(amountInUAsset, tokenOut);
-    }
-
-    /**
      * @notice Approves SY to the stake manager and creates a locked staking position.
      * @param SY Standardized yield token address.
      * @param SP Stake position manager address.
@@ -318,28 +302,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     function _setMemeverseLauncher(address _memeverseLauncher) internal {
         if (_memeverseLauncher.code.length == 0) revert InvalidMemeverseLauncher(_memeverseLauncher);
         memeverseLauncher = _memeverseLauncher;
-    }
-
-    /**
-     * @notice Redeems wrapped uAsset into an output token.
-     * @dev Burns wrapped uAsset through the stake manager and forwards the redeemed token to `receiver`.
-     * @param SP Stake manager handling the wrap redemption.
-     * @param amountInUAsset Amount of uAsset to redeem.
-     * @param receiver Recipient of the redeemed token output.
-     * @param tokenOut Token requested on redemption.
-     * @param minTokenOut Minimum acceptable token output from redemption.
-     * @return amountTokenOut Amount of `tokenOut` sent to `receiver`.
-     */
-    function wrapRedeem(address SP, uint256 amountInUAsset, address receiver, address tokenOut, uint256 minTokenOut)
-        external
-        returns (uint256 amountTokenOut)
-    {
-        address uAsset = IOutrunStakeManager(SP).uAsset();
-        _transferFrom(IERC20(uAsset), msg.sender, address(this), amountInUAsset);
-        _approveExact(uAsset, SP, amountInUAsset);
-
-        // Burns caller's uAsset through SP.wrapRedeem and receives tokenOut — this redeems from the shared wrap pool.
-        amountTokenOut = IOutrunStakeManager(SP).wrapRedeem(amountInUAsset, receiver, tokenOut, minTokenOut);
     }
 
     /**

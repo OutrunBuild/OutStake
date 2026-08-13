@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
+import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
 import {SYUtils} from "../../src/libraries/SYUtils.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
@@ -347,7 +348,9 @@ contract OutrunStakingPositionFuzzTest is Test {
 
     function testFuzz_WrapStakeRedeemRoundtrip(uint256 amountInSY, uint256 redeemUAsset, uint256 newRate) public {
         amountInSY = _boundAmount(amountInSY);
-        newRate = bound(newRate, RATE_MIN, RATE_MAX);
+        // Rate >= 1e18 keeps the pool healthy (wrap SY value covers debt face), so keepWrapRedeem
+        // redeems at face value instead of reverting WrapPoolUndercollateralized.
+        newRate = bound(newRate, 1e18, RATE_MAX);
 
         // WrapStake at initial rate 1e18
         vm.prank(owner);
@@ -360,28 +363,20 @@ contract OutrunStakingPositionFuzzTest is Test {
         // Change rate
         sy.setExchangeRate(newRate);
 
-        // Redeem amount is bounded by the debt face value; the contract picks pro-rata vs face-value
-        // redemption from pool health, so it never reverts on pool insufficiency.
         redeemUAsset = bound(redeemUAsset, 1, uAssetMinted);
 
-        // Independent expectation, not the contract's own preview: healthy pool redeems at face
-        // value (_assetToSy), undercollateralized pool redeems pro-rata by pool share. Computing
-        // this separately from `_validateWrapRedeemAmount` means a wrong pro-rata formula or a
-        // regression back to the pool-balance revert cannot silently pass.
-        uint256 rate = sy.exchangeRate();
-        uint256 poolSy = position.syWrapStaking();
-        uint256 poolDebt = position.wrapUAssetDebt();
-        uint256 expectedSYOut;
-        if (_assetToSyUp(poolDebt, rate) <= poolSy) {
-            expectedSYOut = _assetToSy(redeemUAsset, rate);
-        } else {
-            expectedSYOut = Math.mulDiv(redeemUAsset, poolSy, poolDebt, Math.Rounding.Floor);
-        }
+        // Independent expectation, not the contract's own preview: a healthy pool redeems at face
+        // value (_assetToSy). Undercollateralized pools now revert (covered separately).
+        uint256 expectedSYOut = _assetToSy(redeemUAsset, newRate);
         vm.assume(expectedSYOut > 0);
 
-        // WrapRedeem
+        // The depositor hands the wrap-minted uAsset to the keeper, who burns it on redemption.
         vm.prank(owner);
-        uint256 syOut = position.wrapRedeem(redeemUAsset, owner, address(sy), 0);
+        uAsset.transfer(keeper, redeemUAsset);
+
+        // KeepWrapRedeem (keeper-only)
+        vm.prank(keeper);
+        uint256 syOut = position.keepWrapRedeem(redeemUAsset, owner);
 
         assertEq(syOut, expectedSYOut, "wrap redeem SY out incorrect");
 
@@ -440,7 +435,9 @@ contract OutrunStakingPositionFuzzTest is Test {
 
     function testFuzz_PreviewWrapRedeemMatchesActual(uint256 amountInSY, uint256 redeemUAsset, uint256 newRate) public {
         amountInSY = _boundAmount(amountInSY);
-        newRate = bound(newRate, RATE_MIN, RATE_MAX);
+        // Rate >= 1e18 keeps the pool healthy so preview and execution both succeed at face value;
+        // below 1e18 the pool is undercollateralized and both preview and keepWrapRedeem revert.
+        newRate = bound(newRate, 1e18, RATE_MAX);
 
         // WrapStake at rate 1e18
         vm.prank(owner);
@@ -449,26 +446,20 @@ contract OutrunStakingPositionFuzzTest is Test {
         // Change rate
         sy.setExchangeRate(newRate);
 
-        // Calculate max redeemable uAsset:
-        // syOut = uAsset * 1e18 / rate
-        // We need syOut <= syWrapStaking (which is amountInSY)
-        // So: uAsset <= amountInSY * rate / 1e18
-        uint256 maxRedeemUAsset = Math.mulDiv(amountInSY, newRate, 1e18);
-        if (maxRedeemUAsset > uAssetMinted) maxRedeemUAsset = uAssetMinted;
-
-        // Skip if max redeem is 0
-        vm.assume(maxRedeemUAsset > 0);
-
-        redeemUAsset = bound(redeemUAsset, 1, maxRedeemUAsset);
+        redeemUAsset = bound(redeemUAsset, 1, uAssetMinted);
         uint256 expectedSYOut = _assetToSy(redeemUAsset, newRate);
         vm.assume(expectedSYOut > 0);
 
-        // Preview
-        uint256 previewed = position.previewWrapRedeem(redeemUAsset, address(sy));
+        // Preview (quote-only, mirrors keepWrapRedeem including the undercollateralized revert).
+        uint256 previewed = position.previewWrapRedeem(redeemUAsset);
 
-        // Actual
+        // The depositor hands the wrap-minted uAsset to the keeper for burning.
         vm.prank(owner);
-        uint256 actual = position.wrapRedeem(redeemUAsset, owner, address(sy), 0);
+        uAsset.transfer(keeper, redeemUAsset);
+
+        // Actual (keeper-only)
+        vm.prank(keeper);
+        uint256 actual = position.keepWrapRedeem(redeemUAsset, owner);
 
         assertEq(actual, previewed, "preview wrap redeem should match actual");
     }
@@ -670,21 +661,16 @@ contract OutrunStakingPositionFuzzTest is Test {
         vm.prank(owner);
         uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
 
-        // Drop rate below 1: pool value < debt face → pro-rata branch.
+        // Drop rate below 1: pool value < debt face → undercollateralized, keepWrapRedeem reverts
+        // (F-44 all-or-nothing semantics; previously this paid pro-rata).
         sy.setExchangeRate(lowRate);
 
-        // Partial redeem: pro-rata share = syWrapStaking/wrapUAssetDebt (= 1 since minted at rate 1e18).
         uint256 redeemUAsset = Math.mulDiv(uAssetMinted, redeemBp, 100, Math.Rounding.Floor);
         vm.assume(redeemUAsset > 0); // skip dust redeem amounts (floor to zero)
-        uint256 expectedSYOut = Math.mulDiv(redeemUAsset, amountInSY, uAssetMinted, Math.Rounding.Floor);
-        vm.assume(expectedSYOut > 0);
 
-        vm.prank(owner);
-        uint256 syOut = position.wrapRedeem(redeemUAsset, owner, address(sy), 0);
-
-        assertEq(syOut, expectedSYOut, "low-rate redemption prorates by pool share");
-        assertEq(position.syWrapStaking(), amountInSY - expectedSYOut, "pool reduced by redeemed SY");
-        assertEq(position.wrapUAssetDebt(), amountInSY - redeemUAsset, "debt reduced by burned uAsset");
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
+        position.keepWrapRedeem(redeemUAsset, keeper);
     }
 
     // ============================================

@@ -343,20 +343,24 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         assertEq(mixedUAsset.balanceOf(user), 15e17);
     }
 
-    function testMixedDecimalsWrapRedeemConvertsEighteenDecimalsUAssetToSixDecimalsSY() external {
+    function testMixedDecimalsKeepWrapRedeemConvertsEighteenDecimalsUAssetToSixDecimalsSY() external {
         _setupMixedDecimalsPosition();
 
         vm.prank(user);
         uint256 minted = mixedPosition.wrapStake(1e6, user);
 
         assertEq(minted, 1e18);
-        assertEq(mixedPosition.previewWrapRedeem(1e18, address(mixedSy)), 1e6);
+        assertEq(mixedPosition.previewWrapRedeem(1e18), 1e6);
 
+        // The depositor hands the wrap-minted uAsset to the keeper, who burns it on redemption.
         vm.prank(user);
+        mixedUAsset.transfer(keeper, 1e18);
+
+        vm.prank(keeper);
         mixedUAsset.approve(address(mixedPosition), 1e18);
 
-        vm.prank(user);
-        uint256 amountOut = mixedPosition.wrapRedeem(1e18, user, address(mixedSy), 1e6);
+        vm.prank(keeper);
+        uint256 amountOut = mixedPosition.keepWrapRedeem(1e18, user);
 
         assertEq(amountOut, 1e6);
         assertEq(mixedSy.balanceOf(user), 10e6);
@@ -370,10 +374,10 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         position.wrapStake(100e18, user);
 
         vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExceedsWrapDebt.selector, 101e18, 100e18));
-        position.previewWrapRedeem(101e18, address(sy));
+        position.previewWrapRedeem(101e18);
     }
 
-    function testPreviewWrapRedeemProratesWhenPoolSYIsInsufficient() external {
+    function testPreviewWrapRedeemRevertsWhenPoolSYIsInsufficient() external {
         _setupMixedDecimalsPosition();
 
         vm.prank(user);
@@ -382,8 +386,9 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         mixedSy.setExchangeRate(5e17);
 
         // Rate 0.5: pool 1e6 SY (worth 5e5) < debt 1e18 uAsset (face 1e6 canonical).
-        // Pro-rata: 1e18 × 1e6 / 1e18 = 1e6 SY — no revert.
-        assertEq(mixedPosition.previewWrapRedeem(1e18, address(mixedSy)), 1e6);
+        // Undercollateralized pools now revert instead of paying pro-rata (F-44 all-or-nothing).
+        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
+        mixedPosition.previewWrapRedeem(1e18);
     }
 
     function testPreviewWrapRedeemRevertsWhenDustUAssetRoundsToZeroSY() external {
@@ -393,10 +398,10 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         mixedPosition.wrapStake(1e6, user);
 
         vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
-        mixedPosition.previewWrapRedeem(1, address(mixedSy));
+        mixedPosition.previewWrapRedeem(1);
     }
 
-    function testMixedDecimalsWrapRedeemRevertsWhenDustUAssetRoundsToZeroSY() external {
+    function testMixedDecimalsKeepWrapRedeemRevertsWhenDustUAssetRoundsToZeroSY() external {
         _setupMixedDecimalsPosition();
 
         vm.prank(user);
@@ -408,12 +413,11 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         uint256 userSYBefore = mixedSy.balanceOf(user);
         uint256 userUAssetBefore = mixedUAsset.balanceOf(user);
 
-        vm.prank(user);
-        mixedUAsset.approve(address(mixedPosition), 1);
-
-        vm.prank(user);
+        // Dust check (1 uAsset → 0 SY after decimal downscale) reverts before any state change;
+        // the keeper therefore needs no uAsset balance for this revert path.
+        vm.prank(keeper);
         vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
-        mixedPosition.wrapRedeem(1, user, address(mixedSy), 0);
+        mixedPosition.keepWrapRedeem(1, keeper);
 
         assertEq(minted, 1e18);
         assertEq(syWrapStakingBefore, 1e6);
@@ -455,16 +459,30 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         mixedPosition.wrapStake(1e6, user);
 
-        vm.prank(user);
-        mixedUAsset.approve(address(mixedPosition), 5e17);
+        // The probe reads wrap-pool state during the repay() callback inside keepWrapRedeem.
         mixedUAsset.probePositionDuringRepay(mixedPosition, 0);
 
+        // Depositor transfers the wrap-minted uAsset to the keeper, who burns 5e17 on redemption.
         vm.prank(user);
-        mixedPosition.wrapRedeem(5e17, user, address(mixedSy), 5e5);
+        mixedUAsset.transfer(keeper, 5e17);
+        vm.prank(keeper);
+        mixedUAsset.approve(address(mixedPosition), 5e17);
+
+        vm.prank(keeper);
+        mixedPosition.keepWrapRedeem(5e17, keeper);
 
         assertEq(mixedUAsset.syTotalStakingDuringRepay(), 5e5);
         assertEq(mixedUAsset.syWrapStakingDuringRepay(), 5e5);
         assertEq(mixedUAsset.wrapUAssetDebtDuringRepay(), 5e17);
+    }
+
+    function testKeepWrapRedeemRevertsWhenCallerIsNotKeeper() external {
+        vm.prank(user);
+        position.wrapStake(100e18, user);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.PermissionDenied.selector);
+        position.keepWrapRedeem(100e18, user);
     }
 
     function testMixedDecimalsKeepRedeemSplitsKeeperPrincipalAndOwnerExcessInSYUnits() external {

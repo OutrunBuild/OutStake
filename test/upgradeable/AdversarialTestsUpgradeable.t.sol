@@ -375,9 +375,9 @@ contract AdversarialTests is Test {
     // ============================================================
 
     /**
-     * @notice Wrap redeem checks wrap debt cap but relies on caller's uAsset balance
-     * @dev The check `amountInUAsset > wrapUAssetDebt` prevents exceeding total debt
-     *      The repay() call will fail if caller doesn't have enough uAsset
+     * @notice Keeper wrap redemption succeeds at face value on a healthy pool
+     * @dev Replaces the public wrapRedeem drain closed by F-44. The keeper burns wrap-minted
+     *      uAsset (transferred by depositors) and receives SY at face value.
      */
     function test_Adversarial_WrapRedeemCannotExceedWrapDebt() external {
         // Alice wrap stakes 100e18
@@ -393,225 +393,32 @@ contract AdversarialTests is Test {
         // Total wrap debt = 200e18
         assertEq(position.wrapUAssetDebt(), 200e18);
 
+        // Depositors hand their wrap-minted uAsset to the keeper, who burns it on redemption.
         vm.prank(alice);
+        uAsset.transfer(keeper, 100e18);
+        vm.prank(bob);
+        uAsset.transfer(keeper, 100e18);
+        vm.prank(keeper);
         uAsset.approve(address(position), type(uint256).max);
 
-        // Alice tries to redeem more than her balance (200e18 when she only has 100)
-        // This will fail because repay() checks her uAsset balance
-        vm.prank(alice);
-        vm.expectRevert(); // ERC20InsufficientBalance
-        position.wrapRedeem(200e18, alice, address(sy), 0);
-
-        // Alice can redeem her 100e18
-        vm.prank(alice);
-        uint256 syOut = position.wrapRedeem(100e18, alice, address(sy), 0);
-        assertEq(syOut, 100e18, "Alice should get 100 SY");
+        // Keeper redeems 100e18 of the 200e18 debt at face value (healthy pool at rate 1e18).
+        vm.prank(keeper);
+        uint256 syOut = position.keepWrapRedeem(100e18, keeper);
+        assertEq(syOut, 100e18, "Keeper should get 100 SY");
         assertEq(position.wrapUAssetDebt(), 100e18, "Wrap debt should be 100");
     }
 
     /**
-     * @notice Wrap redeem cannot burn more uAsset than the wrap pool owes
+     * @notice Keeper wrap redemption cannot burn more uAsset than the wrap pool owes
      */
     function test_Adversarial_WrapRedeemCannotExceedTotalWrapDebt() external {
         vm.prank(alice);
         position.wrapStake(100e18, alice);
 
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(alice);
+        // The debt guard runs before the keeper must hold any uAsset, so no transfer is needed.
+        vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExceedsWrapDebt.selector, 101e18, 100e18));
-        position.wrapRedeem(101e18, alice, address(sy), 0);
-    }
-
-    /**
-     * @notice uAsset is transferable - anyone holding it can redeem from wrap pool
-     * @dev This is BY DESIGN - uAsset represents a claim on the wrap pool
-     */
-    function test_Adversarial_WrapRedeemByUAssetHolder() external {
-        // Record initial balances
-        uint256 bobSYBefore = sy.balanceOf(bob);
-        uint256 aliceSYBefore = sy.balanceOf(alice);
-
-        // Alice wrap stakes
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // Alice transfers uAsset to Bob
-        vm.prank(alice);
-        assertTrue(uAsset.transfer(bob, 100e18));
-
-        // Bob can now redeem from wrap pool (this is intended behavior)
-        vm.prank(bob);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(bob);
-        uint256 syOut = position.wrapRedeem(100e18, bob, address(sy), 0);
-
-        // Bob got the SY (his balance increased by 100e18)
-        assertEq(syOut, 100e18, "Bob should get 100 SY");
-        assertEq(sy.balanceOf(bob), bobSYBefore + 100e18, "Bob SY balance should increase by 100");
-        // Alice's SY balance decreased by 100e18 (used for wrapStake)
-        assertEq(sy.balanceOf(alice), aliceSYBefore - 100e18, "Alice SY balance should decrease by 100");
-        // Bob has the uAsset now (which he burned to redeem)
-        assertEq(uAsset.balanceOf(bob), 0, "Bob should have 0 uAsset after redeem");
-        assertEq(uAsset.balanceOf(alice), 0, "Alice should have 0 uAsset after transfer");
-
-        // Document: This is by design - uAsset is a transferable claim
-    }
-
-    /**
-     * @notice Wrap redeem prorates when pool is undercollateralized (no revert)
-     * @dev Rate drops to 0.5x: pool 100 SY (worth 50) < debt 100 uAsset (face 100). Redeeming
-     *      100 uAsset returns 100×100/100 = 100 SY pro-rata instead of reverting.
-     */
-    function test_Adversarial_WrapRedeemProratesWhenPoolInsufficient() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // Rate drops to 0.5x
-        sy.setExchangeRate(5e17);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // At rate 0.5 the pool cannot cover the full debt at face value (needs 200 SY, has 100).
-        // Pro-rata: each uAsset redeems syWrapStaking/wrapUAssetDebt = 1 SY → 100 SY.
-        vm.prank(alice);
-        uint256 syOut = position.wrapRedeem(100e18, alice, address(sy), 0);
-
-        assertEq(syOut, 100e18, "Alice gets all 100 SY pro-rata");
-        assertEq(position.syWrapStaking(), 0, "Pool emptied");
-        assertEq(position.wrapUAssetDebt(), 0, "Debt cleared");
-        assertEq(uAsset.balanceOf(alice), 0, "uAsset burned");
-    }
-
-    /**
-     * @notice Pro-rata redemption is fair: early redeemer gains no advantage
-     * @dev Alice and Bob each wrap 100 SY → pool 200 SY, debt 200 uAsset. Rate drops to 0.5.
-     *      Alice redeems first (100 SY pro-rata), Bob redeems second (100 SY pro-rata).
-     *      Both get the same pro-rata value; no one is blocked or front-runs the other.
-     */
-    function test_Adversarial_WrapRedeemProrataFairAcrossHolders() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-        vm.prank(bob);
-        position.wrapStake(100e18, bob);
-
-        sy.setExchangeRate(5e17);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(bob);
-        uAsset.approve(address(position), type(uint256).max);
-
-        uint256 aliceSYBefore = sy.balanceOf(alice);
-        uint256 bobSYBefore = sy.balanceOf(bob);
-
-        // Alice redeems first: 100 uAsset → 100×200/200 = 100 SY pro-rata.
-        vm.prank(alice);
-        uint256 aliceOut = position.wrapRedeem(100e18, alice, address(sy), 0);
-        assertEq(aliceOut, 100e18, "Alice redeems 100 SY pro-rata");
-
-        // Bob redeems after: pool still covers his share pro-rata, no revert.
-        vm.prank(bob);
-        uint256 bobOut = position.wrapRedeem(100e18, bob, address(sy), 0);
-        assertEq(bobOut, 100e18, "Bob redeems 100 SY pro-rata");
-
-        assertEq(position.syWrapStaking(), 0, "Pool fully distributed");
-        assertEq(position.wrapUAssetDebt(), 0, "Debt cleared");
-        assertEq(sy.balanceOf(alice) - aliceSYBefore, 100e18, "Alice got 100 SY");
-        assertEq(sy.balanceOf(bob) - bobSYBefore, 100e18, "Bob got 100 SY");
-    }
-
-    /**
-     * @notice Pro-rata redemptions recover the anchor when the rate returns
-     * @dev Rate 1.0 → 0.5: pool 100 SY (worth 50) < debt 100. Alice redeems half pro-rata
-     *      (50 uAsset → 50 SY). Rate recovers to 1.0: pool value = debt, remaining uAsset
-     *      redeems 1:1 again.
-     */
-    function test_Adversarial_WrapRedeemRecoversWhenRateReturns() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // Rate drops to 0.5: pool 100 SY (worth 50) < debt 100 uAsset.
-        sy.setExchangeRate(5e17);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // Alice redeems half pro-rata: 50 uAsset → 50×100/100 = 50 SY.
-        vm.prank(alice);
-        uint256 out1 = position.wrapRedeem(50e18, alice, address(sy), 0);
-        assertEq(out1, 50e18, "First redemption prorates");
-        assertEq(position.syWrapStaking(), 50e18, "Pool has 50 SY left");
-        assertEq(position.wrapUAssetDebt(), 50e18, "Debt 50 uAsset left");
-
-        // Rate recovers to 1.0: pool value = debt, anchor restored.
-        sy.setExchangeRate(1e18);
-
-        vm.prank(alice);
-        uint256 out2 = position.wrapRedeem(50e18, alice, address(sy), 0);
-        assertEq(out2, 50e18, "Second redemption at face value after recovery");
-        assertEq(position.syWrapStaking(), 0, "Pool empty");
-        assertEq(position.wrapUAssetDebt(), 0, "Debt cleared");
-    }
-
-    /**
-     * @notice Pro-rata applies after harvest when the rate falls below the harvest level
-     * @dev Alice wraps 100 SY at rate 1.0 → pool 100 SY, debt 100 uAsset. Rate rises to 2.0,
-     *      owner harvests the 50 SY excess (pool → 50 SY, debt still 100). Rate falls back to
-     *      1.0: pool value (50) < debt (100) → pro-rata at 0.5. Redeeming all 100 uAsset
-     *      returns 100×50/100 = 50 SY (worth 50), no revert.
-     */
-    function test_Adversarial_WrapRedeemProrataAfterHarvestAndRateFall() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // Rate rises 2x; owner harvests the excess (50 SY), pool → 50 SY, debt stays 100.
-        sy.setExchangeRate(2e18);
-        vm.prank(owner);
-        uint256 harvested = position.harvestWrapYield(address(sy), 0);
-        assertEq(harvested, 50e18, "harvest removes excess above debt-equivalent");
-        assertEq(position.syWrapStaking(), 50e18, "pool trimmed to debt-equivalent");
-
-        // Rate falls back to 1.0: pool value 50 < debt 100 → pro-rata 0.5.
-        sy.setExchangeRate(1e18);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(alice);
-        uint256 syOut = position.wrapRedeem(100e18, alice, address(sy), 0);
-
-        assertEq(syOut, 50e18, "redeem prorates to pool share after harvest + rate fall");
-        assertEq(position.syWrapStaking(), 0, "pool emptied");
-        assertEq(position.wrapUAssetDebt(), 0, "Debt cleared");
-    }
-
-    /**
-     * @notice Pro-rata floors a non-integer pool share
-     * @dev Alice wraps 100 SY at rate 1.0 (S=100, D=100), Bob wraps 100 SY at rate 0.5
-     *      (S=200, D=150, share 4/3). Pool value 100 < debt 150 → pro-rata. Redeeming 100 uAsset
-     *      → floor(100×200/150) = floor(133.33) = 133 SY, never 134 (ceil would over-release).
-     */
-    function test_Adversarial_WrapRedeemProrataNonIntegerShare() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice); // rate 1.0 → S=100, D=100
-
-        sy.setExchangeRate(5e17);
-        vm.prank(bob);
-        position.wrapStake(100e18, bob); // rate 0.5 → S=200, D=150
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(alice);
-        uint256 syOut = position.wrapRedeem(100e18, alice, address(sy), 0);
-
-        assertEq(syOut, 133333333333333333333, "pro-rata floors the non-integer share (133.33 -> 133)");
-        assertEq(position.syWrapStaking(), 200e18 - 133333333333333333333, "pool residue after floor");
-        assertEq(position.wrapUAssetDebt(), 50e18, "debt 50 uAsset left");
+        position.keepWrapRedeem(101e18, keeper);
     }
 
     // ============================================================
@@ -889,12 +696,10 @@ contract AdversarialTests is Test {
         vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
         position.wrapStake(100e18, bob);
 
-        // WrapRedeem should revert
-        vm.prank(bob);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(bob);
+        // KeepWrapRedeem should revert when paused (whenNotPaused runs before the keeper check).
+        vm.prank(keeper);
         vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.wrapRedeem(50e18, bob, address(sy), 0);
+        position.keepWrapRedeem(50e18, keeper);
 
         // KeepRedeem should revert
         sy.mintShares(address(position), 100e18);
@@ -971,9 +776,10 @@ contract AdversarialTests is Test {
         vm.prank(alice);
         position.wrapStake(100e18, alice);
 
-        vm.prank(alice);
+        // Keeper check passes; the zero-amount guard then reverts before any state change.
+        vm.prank(keeper);
         vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.wrapRedeem(0, alice, address(sy), 0);
+        position.keepWrapRedeem(0, keeper);
     }
 
     /**

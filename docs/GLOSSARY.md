@@ -3,7 +3,7 @@
 - **uAsset (Universal Asset)**：统一债务与流通资产层代币，按 minter 维度的 mint cap 约束铸造，通过 repay 路径回收对应债务。
 - **SY (Standardized Yield)**：标准化收益份额代币，将不同外部收益资产包装为统一的 deposit / redeem / preview / exchangeRate 接口。
 - **SY Adapter**：针对特定外部收益协议（Aave、Lido、Etherfi 等）的 SY 适配器实现，负责将协议份额映射到统一的 SY 份额语义。
-- **OutrunStakingPositionUpgradeable**：当前仓位管理合约，维护锁仓仓位账本与公共 wrap 池，支持 stake、draw、redeem、keepRedeem、wrapStake、wrapRedeem、harvestWrapYield。
+- **OutrunStakingPositionUpgradeable**：当前仓位管理合约，维护锁仓仓位账本与公共 wrap 池，支持 stake、draw、redeem、keepRedeem、wrapStake、keepWrapRedeem、harvestWrapYield。
 - **OutrunRouter**：聚合路由入口，把 token <-> SY <-> position/uAsset 的组合路径收敛为单次调用。
 - **Underlying**：SY adapter 对应的基础资产，如 USDS（Sky）、USDC（Aave）、USDE（Ethena）。
 - **Yield Bearing Token**：SY adapter 对应的收益产生型代币，如 sUSDS、aUSDC、wstETH。
@@ -15,16 +15,17 @@
 - **SYUtils.assetToSyUp**：按 exchangeRate 将资产值换算为 SY 份额（向上取整）。
 - **Position**：锁仓仓位记录，包含 owner（仓位控制权）、syStaked（质押 SY 数量）、UAssetMinted（已铸造 uAsset 债务）、startTime、deadline。
 - **principalValue**：仓位初始资产值，由 syStaked 通过 exchangeRate 按 syToAsset 折算。
-- **Wrap Pool**：公共 wrap 池，不建立独立 positionId，维护全池聚合账务（syTotalStaking、syWrapStaking、wrapUAssetDebt）。
+- **Wrap Pool**：公共 wrap 池，不建立独立 positionId，维护全池聚合账务（syTotalStaking、syWrapStaking、wrapUAssetDebt）；退出由 keeper 经 keepWrapRedeem 托管，无协议内自助赎回。
 - **syTotalStaking**：position 合约中所有 SY 质押总量（含锁仓仓位与 wrap 池）。
 - **syWrapStaking**：wrap 池中的 SY 本金量。
 - **wrapUAssetDebt**：wrap 池的 uAsset 总债务。
 - **drawUAsset**：提取仓位升值部分对应的 uAsset 债务。
 - **keepRedeem**：keeper 代偿已到期的锁仓仓位债务。
+- **keepWrapRedeem**：keeper-only 入口；keeper 烧自己的 uAsset 兑换 wrap 池 SY（仅直付 SY），池子抵押不足时 revert WrapPoolUndercollateralized（全有或全无兑付，不再 pro-rata）。
 - **harvestWrapYield**：提取 wrap 池中超出债务等值 SY 的超额收益至 revenuePool。
 - **NATIVE**：address(0) 的别名，用于统一标识 chain native coin（如 ETH、BNB）。
 - **Position Owner**：锁仓仓位的拥有者，拥有 drawUAsset 和 redeem 权限。注意：仓位 owner 和初始 uAsset receiver 可以是不同地址。
-- **Keeper**：由 owner 设置的单一地址，拥有 keepRedeem 权限。
+- **Keeper**：由 owner 设置的单一地址，拥有 keepRedeem 与 keepWrapRedeem 权限。
 - **Revenue Pool**：接收 wrap 池超额收益的地址。
 - **Minter**：在 uAsset 合约中被 owner 授予 mintingCap 的地址，可在额度内铸造 uAsset。
 - **mintingCap**：minter 的铸造上限。

@@ -37,6 +37,11 @@ interface IOutrunStakeManager {
     /// redemption would pay the keeper more SY than the position's proportional share covers.
     error InsufficientSyCollateral();
     error ExceedsWrapDebt(uint256 requested, uint256 available);
+    /// @dev Reverts when the wrap pool's SY is below its uAsset debt face value at the current exchange
+    /// rate, so a keeper wrap redemption would pay out more SY than the pool holds. Keeper-only wrap
+    /// redemptions use all-or-nothing semantics (no pro-rata partial payout): the keeper is trusted and
+    /// must not bear a loss-making redemption.
+    error WrapPoolUndercollateralized();
     error NothingToDraw();
     error PartialRedeemMustLeaveDebt();
     error InsufficientTokenOut(uint256 actual, uint256 minExpected);
@@ -142,15 +147,14 @@ interface IOutrunStakeManager {
         returns (uint256 UAssetBurned, uint256 amountTokenOut);
 
     /**
-     * @notice Previews a wrap-pool redemption into SY or another output token.
-     * @dev Quote-only. Healthy pool: converts uAsset debt to SY at the current exchange rate.
-     * Undercollateralized pool: rate-independent pro-rata (amountInUAsset × syWrapStaking / wrapUAssetDebt).
-     * Then previews optional SY redemption into `tokenOut`.
-     * @param amountInUAsset Amount of uAsset to redeem.
-     * @param tokenOut Token requested on redemption.
-     * @return amountTokenOut Amount of output token expected to be received.
+     * @notice Previews the SY a keeper would receive from keepWrapRedeem.
+     * @dev Quote-only. Healthy pool: face value. Undercollateralized: reverts WrapPoolUndercollateralized
+     * (mirrors keepWrapRedeem). Does not check keeper permission; callers pranking as keeper can match this
+     * quote against keepWrapRedeem execution.
+     * @param amountInUAsset uAsset amount the keeper would burn.
+     * @return amountInSY SY amount the keeper would receive.
      */
-    function previewWrapRedeem(uint256 amountInUAsset, address tokenOut) external view returns (uint256 amountTokenOut);
+    function previewWrapRedeem(uint256 amountInUAsset) external view returns (uint256 amountInSY);
 
     /**
      * @notice Previews the SY split for a keeper redemption of a matured position.
@@ -220,18 +224,16 @@ interface IOutrunStakeManager {
         returns (uint256 UAssetBurned, uint256 amountTokenOut);
 
     /**
-     * @notice Redeems wrap-pool uAsset into SY or another token.
-     * @dev Burns caller-provided uAsset through the stake manager minter account, reduces shared wrap debt and
-     * principal, then sends direct SY or redeemed `tokenOut` to `receiver`.
-     * @param amountInUAsset Amount of uAsset to redeem.
-     * @param receiver Address receiving the redemption proceeds.
-     * @param tokenOut Token requested on redemption.
-     * @param minTokenOut Minimum acceptable token output from redemption.
-     * @return amountTokenOut Amount of output token delivered to the receiver.
+     * @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value, paid out in SY only.
+     * @dev Keeper-only path; reverts PermissionDenied for any other caller. Reverts WrapPoolUndercollateralized
+     * on an undercollateralized pool — the keeper is trusted and must not bear a loss-making redemption
+     * (consistent with keepRedeem's InsufficientSyCollateral revert). Replaces the public wrapRedeem closed
+     * by F-44. Output is always SY: no downstream SY.redeem conversion and no minTokenOut slippage guard.
+     * @param amountInUAsset uAsset amount the keeper burns. Must be > 0 and <= wrapUAssetDebt.
+     * @param receiver Address receiving the SY.
+     * @return amountInSY SY amount sent to the receiver.
      */
-    function wrapRedeem(uint256 amountInUAsset, address receiver, address tokenOut, uint256 minTokenOut)
-        external
-        returns (uint256 amountTokenOut);
+    function keepWrapRedeem(uint256 amountInUAsset, address receiver) external returns (uint256 amountInSY);
 
     /**
      * @notice Lets the keeper redeem a matured position by burning keeper-provided uAsset.
@@ -304,9 +306,7 @@ interface IOutrunStakeManager {
 
     event WrapStake(uint256 amountInSY, uint256 amountInUAsset, address indexed uAssetRecipient);
 
-    event WrapRedeem(
-        address indexed receiver, uint256 amountInUAsset, uint256 amountTokenOut, address indexed tokenOut
-    );
+    event KeepWrapRedeem(address indexed keeper, address indexed receiver, uint256 amountInUAsset, uint256 amountInSY);
 
     event KeepRedeem(
         uint256 indexed positionId,

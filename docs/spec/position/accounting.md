@@ -69,13 +69,17 @@ wrap 池当前使用三组聚合账务变量：
 - 用 principal value 增加 `wrapUAssetDebt`
 - 铸造等额 `uAsset`
 
-`wrapRedeem` 时：
+`keepWrapRedeem` 时（keeper-only，仅直付 SY）：
 
+- keeper 守卫：`msg.sender != keeper()` → revert `PermissionDenied()`
 - 先检查 `uAssetDebtUnits = amountInUAsset` 且 `uAssetDebtUnits <= wrapUAssetDebt`
 - 先计算 `canonicalAssetValue = uAsset -> canonical asset`，再计算 `amountInSY = canonical asset -> SY`
+- 池子不足（债务等值 SY > 池子 SY）时 revert `WrapPoolUndercollateralized()`（不再按 pro-rata 部分兑付）
 - 减少 `syTotalStaking`
 - 减少 `syWrapStaking`
 - 减少 `wrapUAssetDebt` 中对应的 `uAssetDebtUnits`
+- 烧掉 keeper 自己提供的 `uAsset`（`uAsset.repay(msg.sender, uAssetDebtUnits)`）
+- 直接将 `amountInSY` 的 SY 转给 `receiver`（不经 `SY.redeem`，无 tokenOut/minTokenOut）
 
 当前测试已经说明 wrap 池按 principal accounting 运行，不会因为汇率上涨而自动增加用户的 `uAsset` debt。
 
@@ -107,7 +111,7 @@ rounding matrix：
 - wrap redeem（健康池，债务等值 SY ≤ 池子 SY）：
   - `uAsset -> canonical asset` 用 down
   - `canonical asset -> SY` 用 down
-- wrap redeem（不足池，池值 < 债务面值）：按比例 `amountInSY = amountInUAsset × syWrapStaking / wrapUAssetDebt`（down），不经过 exchangeRate，不因池子不足回退
+- wrap redeem（不足池，池值 < 债务面值）：revert `WrapPoolUndercollateralized()`（keeper-only keepWrapRedeem 不再 pro-rata）
 - keeper redeem：
   - `uAsset -> canonical asset` 用 down
   - `canonical asset -> SY` 用 down
@@ -116,7 +120,7 @@ rounding matrix：
   - full redeem 直接返回全部剩余 `position.UAssetMinted`
   - partial redeem 对 `position.UAssetMinted * syRedeemed / syStaked` 用 up
   - 若 partial 结果会耗尽剩余 debt，则 preview 必须拒绝该报价
-- `previewWrapRedeem(amountInUAsset, tokenOut)`：健康池同上 down 双段换算；不足池按 `amountInUAsset × syWrapStaking / wrapUAssetDebt`（down）
+- `previewWrapRedeem(amountInUAsset)`：健康池同上 down 双段换算；不足池 revert `WrapPoolUndercollateralized()`（镜像 keepWrapRedeem）
 - harvest coverage：
   - `uAsset -> canonical asset` 用 up
   - `canonical asset -> SY` 用 up

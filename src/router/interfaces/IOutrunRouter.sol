@@ -155,34 +155,6 @@ interface IOutrunRouter {
         returns (uint256 UAssetMinted);
 
     /**
-     * @notice Quotes the token output from redeeming wrapped uAsset.
-     * @dev Reads the stake-manager wrap-redeem preview without consuming uAsset or enforcing `minTokenOut`.
-     * @param SP Stake manager handling the wrap redemption.
-     * @param amountInUAsset Amount of uAsset to redeem.
-     * @param tokenOut Token requested on redemption.
-     * @return amountTokenOut Estimated amount of `tokenOut` returned.
-     */
-    function previewWrapRedeem(address SP, uint256 amountInUAsset, address tokenOut)
-        external
-        view
-        returns (uint256 amountTokenOut);
-
-    /**
-     * @notice Redeems wrapped uAsset into an output token.
-     * @dev Caller-funded path. Pulls uAsset from `msg.sender`, approves the stake manager to burn it via repay,
-     * and sends direct SY or redeemed `tokenOut` to `receiver`.
-     * @param SP Stake manager handling the wrap redemption.
-     * @param amountInUAsset Amount of uAsset to redeem.
-     * @param receiver Recipient of the redeemed token output.
-     * @param tokenOut Token requested on redemption.
-     * @param minTokenOut Minimum acceptable token output from redemption.
-     * @return amountTokenOut Amount of `tokenOut` sent to `receiver`.
-     */
-    function wrapRedeem(address SP, uint256 amountInUAsset, address receiver, address tokenOut, uint256 minTokenOut)
-        external
-        returns (uint256 amountTokenOut);
-
-    /**
      * @notice Creates a genesis position starting from an input token.
      * @dev Caller-funded path. Derives canonical SY from `SP.SY()`, creates a locked position for `genesisUser`,
      * mints uAsset to the router, then forwards that uAsset into launcher genesis.

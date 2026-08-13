@@ -164,27 +164,30 @@ contract PositionHandler is Test {
     }
 
     /**
-     * @notice Redeem uAsset from wrap pool
+     * @notice Keeper redeems uAsset from the wrap pool (F-44 keeper-only keepWrapRedeem)
+     * @dev Multi-participant wrap-redemption coverage is reduced because only the keeper can
+     *      call keepWrapRedeem. The keeper must hold enough uAsset to burn; the handler tops it
+     *      up from its mint authority (mirroring the keepRedeem handler). An undercollateralized
+     *      pool reverts WrapPoolUndercollateralized (all-or-nothing after F-44), caught here.
      */
-    function wrapRedeem(uint256 actorIndex, uint256 amountRaw) external {
-        address actor = _getActor(actorIndex);
+    function keepWrapRedeem(uint256 amountRaw) external {
         uint256 wrapDebt = position.wrapUAssetDebt();
-
         if (wrapDebt == 0) return;
 
-        // Bound amount to available debt and actor's uAsset balance
-        uint256 maxRedeem = min3(wrapDebt, uAsset.balanceOf(actor), type(uint256).max);
-        if (maxRedeem == 0) return;
+        uint256 amount = bound(amountRaw, 1, wrapDebt);
 
-        uint256 amount = bound(amountRaw, 1, maxRedeem);
+        // Keeper must hold enough uAsset to burn on redemption.
+        if (uAsset.balanceOf(keeper) < amount) {
+            uAsset.mint(keeper, amount - uAsset.balanceOf(keeper) + 1e18);
+        }
 
-        vm.prank(actor);
-        try position.wrapRedeem(amount, actor, address(sy), 0) {
+        vm.prank(keeper);
+        try position.keepWrapRedeem(amount, keeper) {
         // Redemption succeeded
         }
             catch {
-            // Redemption can fail on dust rounding or debt ceiling, not pool insufficiency
-            // (pro-rata redemption always clears within the pool balance).
+            // keepWrapRedeem can revert on dust rounding or when the pool is undercollateralized
+            // (WrapPoolUndercollateralized — all-or-nothing semantics after F-44).
         }
     }
 
@@ -317,12 +320,6 @@ contract PositionHandler is Test {
         }
     }
 
-    // Helper: min of three values
-    function min3(uint256 a, uint256 b, uint256 c) internal pure returns (uint256) {
-        uint256 min = a < b ? a : b;
-        return min < c ? min : c;
-    }
-
     // View functions for invariant checks
     function getActivePositionCount() external view returns (uint256) {
         return activePositionIds.length;
@@ -406,12 +403,12 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
     /**
      * @notice Invariant 2: Wrap pool accounting bounds (rate-independent)
-     * @dev The wrap pool can be temporarily undercollateralized when the exchange rate
-     * drops — wrapRedeem then pays pro-rata (each uAsset redeems syWrapStaking/wrapUAssetDebt
-     * SY) instead of reverting, and harvestWrapYield only removes excess SY above the debt
-     * ceiling. A collateral ratio is therefore NOT a valid invariant (it tracks the external
-     * rate). We assert only that the two accounting quantities stay within legal,
-     * non-wrapped-around bounds.
+     * @dev The wrap pool can be temporarily undercollateralized when the exchange rate drops.
+     * keepWrapRedeem is keeper-only and reverts WrapPoolUndercollateralized on an
+     * undercollateralized pool (all-or-nothing semantics after F-44), while harvestWrapYield
+     * only removes excess SY above the debt ceiling. A collateral ratio is therefore NOT a
+     * valid invariant (it tracks the external rate). We assert only that the two accounting
+     * quantities stay within legal, non-wrapped-around bounds.
      */
     function invariant_wrapPoolAccountingBounded() public view {
         uint256 syWrap = position.syWrapStaking();

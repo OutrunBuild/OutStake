@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset, RouterMockLauncher} from "./mocks/RouterMocks.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
-import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
@@ -365,48 +364,6 @@ contract OutrunRouterFuzzTest is Test {
     }
 
     /// forge-config: default.fuzz.runs = 256
-    function testFuzz_WrapStakeRedeemRoundtrip(uint256 amount, uint256 redeemAmount) public {
-        amount = bound(amount, 1, 1000e18);
-        redeemAmount = bound(redeemAmount, 1, amount);
-
-        // First wrap stake
-        vm.prank(user);
-        (bool stakeOk,) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapStakeFromToken.selector,
-                    address(position),
-                    address(underlying),
-                    amount,
-                    0,
-                    user,
-                    0
-                )
-            );
-        assertTrue(stakeOk, "wrapStakeFromToken call failed");
-
-        uint256 userUAssetBefore = uAsset.balanceOf(user);
-        uint256 userSYBefore = sy.balanceOf(user);
-
-        // Then wrap redeem
-        vm.prank(user);
-        (bool redeemOk, bytes memory redeemData) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapRedeem.selector, address(position), redeemAmount, user, address(sy), 0
-                )
-            );
-        assertTrue(redeemOk, "wrapRedeem call failed");
-        uint256 syOut = abi.decode(redeemData, (uint256));
-
-        // Verify accounting
-        assertEq(syOut, redeemAmount, "syOut mismatch (1:1 rate)");
-        assertEq(uAsset.balanceOf(user), userUAssetBefore - redeemAmount, "user uAsset should be reduced");
-        assertEq(sy.balanceOf(user), userSYBefore + redeemAmount, "user should receive SY");
-        assertEq(position.syWrapStaking(), amount - redeemAmount, "syWrapStaking should be reduced");
-    }
-
-    /// forge-config: default.fuzz.runs = 256
     function testFuzz_WrapStakeFromTokenWithNative(uint256 amount) public {
         amount = bound(amount, 1, 1000e18);
 
@@ -492,42 +449,6 @@ contract OutrunRouterFuzzTest is Test {
         uint256 actualUAsset = abi.decode(data, (uint256));
 
         assertEq(preview, actualUAsset, "preview should match actual");
-    }
-
-    /// forge-config: default.fuzz.runs = 256
-    function testFuzz_PreviewWrapRedeemMatchesActual(uint256 amount, uint256 redeemAmount) public {
-        amount = bound(amount, 1, 1000e18);
-        redeemAmount = bound(redeemAmount, 1, amount);
-
-        // First wrap stake
-        vm.prank(user);
-        (bool stakeOk,) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapStakeFromToken.selector,
-                    address(position),
-                    address(underlying),
-                    amount,
-                    0,
-                    user,
-                    0
-                )
-            );
-        assertTrue(stakeOk, "wrapStakeFromToken call failed");
-
-        uint256 preview = router.previewWrapRedeem(address(position), redeemAmount, address(sy));
-
-        vm.prank(user);
-        (bool redeemOk, bytes memory redeemData) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapRedeem.selector, address(position), redeemAmount, user, address(sy), 0
-                )
-            );
-        assertTrue(redeemOk, "wrapRedeem call failed");
-        uint256 actualSyOut = abi.decode(redeemData, (uint256));
-
-        assertEq(preview, actualSyOut, "preview should match actual");
     }
 
     // ==================== Genesis Flow Tests ====================
@@ -730,55 +651,5 @@ contract OutrunRouterFuzzTest is Test {
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.InsufficientUAssetMinted.selector, amount, amount + 1));
         router.stakeFromToken(address(position), address(underlying), amount, stakeParamFail);
-    }
-
-    /// forge-config: default.fuzz.runs = 256
-    function testFuzz_WrapRedeemSlippageBoundary(uint256 amount, uint256 redeemAmount) public {
-        amount = bound(amount, 1, 1000e18);
-        redeemAmount = bound(redeemAmount, 1, amount);
-
-        vm.prank(user);
-        (bool stakeOk,) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapStakeFromToken.selector,
-                    address(position),
-                    address(underlying),
-                    amount,
-                    0,
-                    user,
-                    0
-                )
-            );
-        assertTrue(stakeOk, "wrapStakeFromToken call failed");
-
-        uint256 expectedOut = router.previewWrapRedeem(address(position), redeemAmount, address(sy));
-
-        vm.prank(user);
-        uint256 actualOut = router.wrapRedeem(address(position), redeemAmount, user, address(sy), expectedOut);
-        assertEq(actualOut, expectedOut, "wrapRedeem should accept exact minTokenOut");
-
-        if (redeemAmount == amount) return;
-
-        vm.prank(user);
-        (stakeOk,) = address(router)
-            .call(
-                abi.encodeWithSelector(
-                    IOutrunRouter.wrapStakeFromToken.selector,
-                    address(position),
-                    address(underlying),
-                    redeemAmount,
-                    0,
-                    user,
-                    0
-                )
-            );
-        assertTrue(stakeOk, "second wrapStakeFromToken call failed");
-
-        vm.prank(user);
-        vm.expectRevert(
-            abi.encodeWithSelector(IOutrunStakeManager.InsufficientTokenOut.selector, expectedOut, expectedOut + 1)
-        );
-        router.wrapRedeem(address(position), redeemAmount, user, address(sy), expectedOut + 1);
     }
 }
