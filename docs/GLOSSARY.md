@@ -28,22 +28,21 @@
 - **Revenue Pool**：接收 wrap 池超额收益的地址。
 - **Minter**：在 uAsset 合约中被 owner 授予 mintingCap 的地址，可在额度内铸造 uAsset。
 - **mintingCap**：minter 的铸造上限。
-- **amountInMinted**：minter 的已铸造债务。
+- **amountInMinted**：minter 的已铸造债务。OFT 跨链铸烧不触碰此台账。
 - **repay**：冲减 minter 自身的 amountInMinted，同时从目标账户转移 uAsset 并 burn。
 - **Genesis**：通过 router 将 locked position 生成的 uAsset 授权并交给 memeverseLauncher 的集成路径。
 - **OFT (Omnichain Fungible Token)**：基于 LayerZero 的跨链代币标准，OutrunOFT 继承 OFTCore 实现跨链铸烧。
 - **_toSD**：将本地精度数量压缩到 uint64 共享精度的转换函数，溢出时回退 AmountSDOverflowed。
-- **_debit**：OFT 源链侧 burn 本地 token 的函数。
-- **_credit**：OFT 目标链侧 mint 本地 token 的函数。
+- **_debit**：OFT 源链侧 burn 本地 token 的函数，且不触碰 minter 债务台账。
+- **_credit**：OFT 目标链侧 mint 本地 token 的函数；且不触碰 minter 债务台账；零地址收款人重映射为 `0xdead`。
 - **L2 Oracle-backed Adapter**：通过外部 oracle 读取 exchangeRate 的 L2 SY adapter，deposit/redeem 严格 1:1，不进行 wrap/unwrap/swap。
 - **Upgradeable Variant**：当前产品真源使用 `Upgradeable` 后缀的 implementation；旧非 upgradeable 合约不再作为当前产品表面保留。
 - **ERC1967Proxy**：当前 upgradeable implementation 使用的 proxy 部署壳，部署时携带 initializer calldata 并把 proxy address 作为产品地址。
 - **UUPS**：当前 upgradeable implementation 使用的 upgrade pattern；upgrade authority 位于 implementation 的 `_authorizeUpgrade(address)`，由 owner 控制。
 - **SYBaseUpgradeable**：当前所有 SY adapters 的共享 upgradeable base，统一持有 UUPS authority。
-- **Multisig Owner**：当前 upgradeable implementation 的单一 protocol owner；无 timelock、无新增 governance module。
+- **Multisig Owner**：当前 upgradeable implementation 的单一 protocol owner（部署期 owner 必须等于广播者 EOA，部署完成后通过 `transferOwnership` 转交 multisig，详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
 - **Initializer**：upgradeable variant 替代 constructor 的初始化入口；通过 proxy deployment 调用一次，写入 owner 与原构造依赖。
 - **exchangeRateOracle**：oracle-backed SY upgradeable variants 中存储 oracle adapter 地址的 mutable storage 字段，通过 owner-only `setExchangeRateOracle(address)` 更新。
-- **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter；负责读取 `latestAnswer()` 并标准化精度，不提供 freshness、bounds、fallback 或多源聚合保证。
+- **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter；通过 `latestRoundData()`（非 `latestAnswer()`）读取，在精度归一化前做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验；不提供 bounds、fallback 或多源聚合保证。
 - **OutrunOFTUpgradeable**：当前 custom OFT base，使用 LayerZero 官方 `OFTCoreUpgradeable` / `OAppUpgradeable` 路径并保留自定义 ERC20 metadata/decimals；需要自定义 metadata/decimals 时不继承默认 `OFTUpgradeable`。
-- **ReentrancyGuardTransientUpgradeable**：当前 upgradeable helper 使用的 OpenZeppelin transient reentrancy guard；部署链需要支持 EIP-1153 transient storage。
-- **DAY (测试时间单位)**：部分部署脚本中的时间常量单位可能以秒计，不等同于自然日 86400 秒。
+- **ReentrancyGuard**：当前 upgradeable helper 使用的项目自研 transient reentrancy guard（`src/libraries/ReentrancyGuard.sol`，经 `TokenHelper` 继承）；部署链需要支持 EIP-1153 transient storage。

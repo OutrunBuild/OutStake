@@ -13,11 +13,10 @@
 ### assets
 
 当前资产层以 `OutrunUniversalAssetsUpgradeable` 为中心，并通过 `OutrunOFTUpgradeable` 提供跨链扩展。
-`OutrunOFTUpgradeable` 的 pause 阻断本地用户主动发起的 ERC20 路径和 pause 之后新发起的 outbound send；LayerZero inbound `_credit` 为避免阻塞已经在跨链流程中的代币，按设计不受 `whenNotPaused` 阻断。
+`OutrunOFTUpgradeable` 的 pause 阻断本地用户主动发起的 ERC20 路径与 pause 之后新发起的 outbound send，但 inbound `_credit` 为不阻塞已在跨链流程中的代币而不受 `whenNotPaused` 阻断；完整执行边界以 `docs/spec/common-foundations.md`「Pause 与跨链 OFT 执行边界」为准。
 `uAsset` 的 minter 债务账本与流通供应分离：`revokeMinter(minter)` 只把该 minter 的 `mintingCap` 置零以禁止未来 mint，不清除既有 `amountInMinted`，未偿债务仍需后续 repay。
-`transferMinterDebt(from, to, amount)` 当前已实现为 owner-only debt migration：要求 `from`、`to` 均非零、彼此不同、`amount` 非零；仅迁移未偿 minter 债务，用于运维修复或迁移，不用于用户债务豁免。
-该操作不 mint、不 burn、不 transfer，也不改变 `totalSupply` 或任一账户 `balance`；执行时减少 `from.amountInMinted`、增加 `to.amountInMinted`，并要求来源 minter 具备足额未偿债务、目标 minter 具备足够 `mintingCap` headroom。
-`uAsset` 只迁移 minter 级债务归属；若该 minter 还对应 position debt、wrap debt 或其他模块账本，操作方必须把 `transferMinterDebt` 作为协调迁移的一部分使用，不能把它当作自动同步 position/wrap 台账的单独手段。
+OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收款人重映射为 `0xdead` 的设计语义以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
+`transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定、与 position/wrap 台账的协调迁移关系）以 `docs/spec/common-foundations.md`「基础规则」为准。
 
 ### position
 

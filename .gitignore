@@ -47,7 +47,8 @@ node_modules/
 # Claude Code agent worktrees (must never be created here — project uses .worktrees/)
 .claude/worktrees/
 
-.pi-subagents/
+# Pi agent runtime artifacts
+.pi/subagents/
 .pi-glla/
 
 skills/

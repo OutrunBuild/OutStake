@@ -65,7 +65,7 @@
 - `src/integrations/lista/interfaces/IListaStakeManager.sol`
 - `src/integrations/sky/interfaces/IPSM3.sol`
 - `src/libraries/oracle/OutrunExchangeOracleAdapter.sol`
-- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 作为薄层标准化精度归一化。
+- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 做精度归一化前校验 raw answer 正性、新鲜度与可选 sequencer。
 - `OutrunExchangeOracleAdapter` 不部署在 proxy 后；需要更换 oracle normalization 规则时部署新 adapter，再由 oracle-backed SY proxy 的 owner 更新 `exchangeRateOracle`。
 - 后续执行 adapter / integration 相关任务时，以 `find src -type f` 得到的当前文件树和 `.harness/policy.json` 分类为准；本文件提供架构背景，不覆盖实际文件存在性与 harness surface 分类。
 
@@ -89,7 +89,7 @@
 - proxy-backed：`OutrunUniversalAssetsUpgradeable`、`OutrunStakingPositionUpgradeable`、全部 SY adapter upgradeable variants。
 - non-upgradeable / redeployable：`OutrunRouter`、`OutrunExchangeOracleAdapter`、interfaces、pure libraries、外部协议 interface。
 - deployment flow：部署 implementation，编码 initializer calldata，部署 `ERC1967Proxy(implementation, initData)`，把 proxy address 作为产品地址写入后续 wiring。
-- owner：单一 protocol owner 为 multisig；无 timelock、无新增 governance module。
+- owner：单一 protocol owner 为 multisig（部署期 owner 必须等于广播者 EOA，即 `OWNER` 环境变量等于 `PRIVATE_KEY` 派生地址；部署完成后通过 `transferOwnership` 转交 multisig，详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
 - upgrade authority：每个 UUPS product 的 `_authorizeUpgrade(address)` 由 `onlyOwner` 保护，只暴露 UUPS base 的 `upgradeToAndCall`。
 - initializer boundary：构造参数迁移到 `initialize(...)` / `__..._init(...)`，implementation constructor 禁用 initializers。LayerZero endpoint 与 local decimals 是 `OutrunOFTUpgradeable` 继承官方 upgradeable OFT/OApp 路径所需的 implementation-level constructor 参数，每个 endpoint / local-decimal 配置部署一个 implementation。
 - legacy boundary：旧非 upgradeable SY 合约、测试与部署 helper 已退出当前产品真源；当前清理任务会删除对应源码与测试表面。
@@ -195,12 +195,14 @@ Concrete Adapter (e.g. OutrunAaveV3SYUpgradeable)
       ⟶ OwnableUpgradeable              ← openzeppelin-upgradeable
     ⟶ TokenHelper
     ⟶ UUPSUpgradeable                   ← openzeppelin-upgradeable
-Concrete Adapter (e.g. OutrunL2WstETHSYUpgradeable)
+Concrete Adapter (e.g. OutrunL2StakedTokenSYUpgradeable / OutrunL2WstETHSYUpgradeable)
+  ⟶ OutrunL2OracleBackedSYUpgradeable (abstract)   ← L2 oracle 接线 + 1:1 helpers + assetInfo
+    ⟶ SYBaseUpgradeable (abstract)                 ← 子链同上方 Aave 条目
   依赖:
     → IExchangeRateOracle              getExchangeRate()
 
 OutrunExchangeOracleAdapter
-  → AggregatorInterface                latestAnswer()
+  → AggregatorInterface                latestRoundData()
   → IExchangeRateOracle
 ```
 
@@ -382,5 +384,5 @@ Harvest:
 - Genesis 当前走的是 locked stake 路径，不是 wrap stake 路径。
 - Wrap 池按 principal debt 记账，不会因为汇率上涨自动给用户补发更多 uAsset。
 - 多个 SY adapter 的 deposit/redeem 核心路径缺少独立测试，当前更多依赖源码表面证据。
-- Oracle adapter 是薄层精度归一化器，不实现 freshness check、deviation bounds 或 fallback。
+- Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验；不实现 deviation bounds 或 fallback。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。
