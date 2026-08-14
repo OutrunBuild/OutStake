@@ -662,7 +662,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
 
         // Drop rate below 1: pool value < debt face → undercollateralized, keepWrapRedeem reverts
-        // (F-44 all-or-nothing semantics; previously this paid pro-rata).
+        // (all-or-nothing semantics; previously this paid pro-rata).
         sy.setExchangeRate(lowRate);
 
         uint256 redeemUAsset = Math.mulDiv(uAssetMinted, redeemBp, 100, Math.Rounding.Floor);

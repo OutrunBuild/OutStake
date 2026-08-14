@@ -452,7 +452,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
     // slither-disable-next-line reentrancy-no-eth
     /// @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value. Reverts if the pool is undercollateralized.
-    /// @dev Keeper-only path, mirroring keepRedeem's trust model. Replaces the public wrapRedeem closed by F-44.
+    /// @dev Keeper-only path, mirroring keepRedeem's trust model. Replaces the former public wrapRedeem,
+    /// which was removed in favor of this keeper-only all-or-nothing redemption.
     /// Reverts WrapPoolUndercollateralized on an undercollateralized pool — the keeper is trusted and must not bear a
     /// loss-making redemption. Consistent with keepRedeem, which also reverts (InsufficientSyCollateral) on an
     /// undercollateralized position.
@@ -471,7 +472,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
         address _SY = SY();
         address _uAsset = uAsset();
-        // Named return: the SY amount is paid directly with no downstream SY.redeem conversion (F-44).
+        // Named return: the SY amount is paid directly with no downstream SY.redeem conversion.
         amountInSY = _validateWrapRedeemAmount(amountInUAsset, _SY);
 
         unchecked {
@@ -780,7 +781,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
         // Healthy pool guard: SY must cover the full debt face value. Same solvency check as harvest
         // (debt-equivalent SY uses ceil so the pool stays covered). Undercollateralized → revert; the
-        // keeper is trusted and must not bear a loss-making redemption (F-44 all-or-nothing semantics).
+        // keeper is trusted and must not bear a loss-making redemption (all-or-nothing semantics).
         if (_assetToSyUp(wrapUAssetDebt_, exchangeRate_) > $.syWrapStaking) {
             revert WrapPoolUndercollateralized();
         }

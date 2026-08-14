@@ -227,8 +227,9 @@ interface IOutrunStakeManager {
      * @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value, paid out in SY only.
      * @dev Keeper-only path; reverts PermissionDenied for any other caller. Reverts WrapPoolUndercollateralized
      * on an undercollateralized pool — the keeper is trusted and must not bear a loss-making redemption
-     * (consistent with keepRedeem's InsufficientSyCollateral revert). Replaces the public wrapRedeem closed
-     * by F-44. Output is always SY: no downstream SY.redeem conversion and no minTokenOut slippage guard.
+     * (consistent with keepRedeem's InsufficientSyCollateral revert). Replaces the former public wrapRedeem,
+     * which was removed in favor of this keeper-only all-or-nothing redemption. Output is always SY: no
+     * downstream SY.redeem conversion and no minTokenOut slippage guard.
      * @param amountInUAsset uAsset amount the keeper burns. Must be > 0 and <= wrapUAssetDebt.
      * @param receiver Address receiving the SY.
      * @return amountInSY SY amount sent to the receiver.

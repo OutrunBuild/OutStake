@@ -10,7 +10,7 @@ import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
 
 /**
  * @title KeepWrapRedeemAccess
- * @notice F-44 closure regression. The public wrap-pool drain (`wrapRedeem`) is sealed; wrap-pool
+ * @notice Closure regression for the public wrap-pool drain (`wrapRedeem`), which was sealed; wrap-pool
  *         SY exits only through the keeper-only `keepWrapRedeem` at face value, which reverts
  *         `WrapPoolUndercollateralized` on an undercollateralized pool.
  * @dev The keeper does not mint its own uAsset — it acts as redemption payer, burning uAsset

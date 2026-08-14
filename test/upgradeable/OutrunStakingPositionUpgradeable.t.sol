@@ -386,7 +386,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         mixedSy.setExchangeRate(5e17);
 
         // Rate 0.5: pool 1e6 SY (worth 5e5) < debt 1e18 uAsset (face 1e6 canonical).
-        // Undercollateralized pools now revert instead of paying pro-rata (F-44 all-or-nothing).
+        // Undercollateralized pools now revert instead of paying pro-rata (all-or-nothing).
         vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
         mixedPosition.previewWrapRedeem(1e18);
     }

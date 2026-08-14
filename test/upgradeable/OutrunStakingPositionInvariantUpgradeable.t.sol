@@ -164,11 +164,11 @@ contract PositionHandler is Test {
     }
 
     /**
-     * @notice Keeper redeems uAsset from the wrap pool (F-44 keeper-only keepWrapRedeem)
+     * @notice Keeper redeems uAsset from the wrap pool (keeper-only keepWrapRedeem)
      * @dev Multi-participant wrap-redemption coverage is reduced because only the keeper can
      *      call keepWrapRedeem. The keeper must hold enough uAsset to burn; the handler tops it
      *      up from its mint authority (mirroring the keepRedeem handler). An undercollateralized
-     *      pool reverts WrapPoolUndercollateralized (all-or-nothing after F-44), caught here.
+     *      pool reverts WrapPoolUndercollateralized (all-or-nothing), caught here.
      */
     function keepWrapRedeem(uint256 amountRaw) external {
         uint256 wrapDebt = position.wrapUAssetDebt();
@@ -187,7 +187,7 @@ contract PositionHandler is Test {
         }
             catch {
             // keepWrapRedeem can revert on dust rounding or when the pool is undercollateralized
-            // (WrapPoolUndercollateralized — all-or-nothing semantics after F-44).
+            // (WrapPoolUndercollateralized — all-or-nothing semantics).
         }
     }
 
@@ -405,7 +405,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
      * @notice Invariant 2: Wrap pool accounting bounds (rate-independent)
      * @dev The wrap pool can be temporarily undercollateralized when the exchange rate drops.
      * keepWrapRedeem is keeper-only and reverts WrapPoolUndercollateralized on an
-     * undercollateralized pool (all-or-nothing semantics after F-44), while harvestWrapYield
+     * undercollateralized pool (all-or-nothing semantics), while harvestWrapYield
      * only removes excess SY above the debt ceiling. A collateral ratio is therefore NOT a
      * valid invariant (it tracks the external rate). We assert only that the two accounting
      * quantities stay within legal, non-wrapped-around bounds.

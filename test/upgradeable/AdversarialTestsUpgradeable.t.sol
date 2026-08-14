@@ -376,7 +376,8 @@ contract AdversarialTests is Test {
 
     /**
      * @notice Keeper wrap redemption succeeds at face value on a healthy pool
-     * @dev Replaces the public wrapRedeem drain closed by F-44. The keeper burns wrap-minted
+     * @dev Replaces the former public wrapRedeem drain, which was closed in favor of
+     *      keeper-only redemption. The keeper burns wrap-minted
      *      uAsset (transferred by depositors) and receives SY at face value.
      */
     function test_Adversarial_WrapRedeemCannotExceedWrapDebt() external {
