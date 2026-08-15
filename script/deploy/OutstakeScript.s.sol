@@ -48,6 +48,7 @@ contract OutstakeScript is BaseScript {
     error InvalidOwner();
     error InvalidKeeper();
     error InvalidAddress();
+    error InvalidDeployer();
 
     address internal ueth;
     address internal uusd;
@@ -74,8 +75,10 @@ contract OutstakeScript is BaseScript {
         outrunRouter = vm.envAddress("OUTRUN_ROUTER");
         memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
 
-        // _deployOutrunDeployer(1);
+        uint256 deployerNonce = 1;
+        // _deployOutrunDeployer(deployerNonce);
 
+        _assertOutrunDeployer(deployerNonce);
         _chainsInit();
         // _crossChainOFT();
         // _deployUETH(1);
@@ -96,6 +99,23 @@ contract OutstakeScript is BaseScript {
             Create2.deploy(0, salt, abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner)));
 
         console.log("OutrunDeployer deployed on %s", outrunDeployerAddr);
+    }
+
+    /// @dev Fails closed unless `OUTRUN_DEPLOYER` is the address `_deployOutrunDeployer` would
+    /// CREATE2-deploy. The creator is the script contract (`address(this)`): Foundry deploys the
+    /// script contract itself deterministically (special nonce) before broadcast, and an EOA cannot
+    /// execute CREATE2. Cross-chain same-address deployment depends on the script contract holding
+    /// the same address on every chain, so a mismatch here would silently scatter the
+    /// OutrunDeployer/peer=own-address design across divergent addresses.
+    function _assertOutrunDeployer(uint256 nonce) internal view {
+        // Deployer must equal owner (mirrors `_validateUAssetDeploymentConfig` / docs OWNER==broadcaster).
+        if (owner != deployer) revert InvalidOwner();
+
+        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
+        bytes memory initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
+        address expected = Create2.computeAddress(salt, keccak256(initcode));
+
+        if (outrunDeployer != expected) revert InvalidDeployer();
     }
 
     function _chainsInit() internal {
@@ -143,8 +163,10 @@ contract OutstakeScript is BaseScript {
         return IOutrunDeployer(outrunDeployer).deploy(salt, proxyCode);
     }
 
-    function _deployUETH(uint256 nonce) internal {
-        uint32[] memory omnichainIds = new uint32[](9);
+    /// @dev Shared chain list for the three uAsset deploys: one definition site, so the
+    /// omnichain peer/rate-limit set can never drift between UETH/UUSD/UBNB.
+    function _sharedOmnichainIds() internal pure returns (uint32[] memory omnichainIds) {
+        omnichainIds = new uint32[](9);
         omnichainIds[0] = 97; // BSC Testnet
         omnichainIds[1] = 84532; // Base Sepolia
         omnichainIds[2] = 421614; // Arbitrum Sepolia
@@ -159,6 +181,10 @@ contract OutstakeScript is BaseScript {
         // omnichainIds[11] = 59141;    // Linea Sepolia
         // omnichainIds[12] = 11155420; // Optimistic Sepolia
         // omnichainIds[13] = 300;      // ZKsync Sepolia
+    }
+
+    function _deployUETH(uint256 nonce) internal {
+        uint32[] memory omnichainIds = _sharedOmnichainIds();
 
         (uint192 outboundRateLimit, uint64 outboundRateWindow) =
             _outboundRateLimitConfig("UETH_OUTBOUND_RATE_LIMIT", string.concat("UETH_OUTBOUND_RATE_", "WINDOW_SECONDS"));
@@ -182,21 +208,7 @@ contract OutstakeScript is BaseScript {
     }
 
     function _deployUUSD(uint256 nonce) internal {
-        uint32[] memory omnichainIds = new uint32[](9);
-        omnichainIds[0] = 97; // BSC Testnet
-        omnichainIds[1] = 84532; // Base Sepolia
-        omnichainIds[2] = 421614; // Arbitrum Sepolia
-        omnichainIds[3] = 43113; // Avalanche Fuji C-Chain
-        omnichainIds[4] = 80002; // Polygon Amoy
-        omnichainIds[5] = 57054; // Sonic Blaze
-        omnichainIds[6] = 168587773; // Blast Sepolia
-        omnichainIds[7] = 534351; // Scroll Sepolia
-        omnichainIds[8] = 11155111; // Sepolia
-        // omnichainIds[9] = 10143;     // Monad Testnet
-        // omnichainIds[10] = 80069;    // Bera Sepolia
-        // omnichainIds[11] = 59141;    // Linea Sepolia
-        // omnichainIds[12] = 11155420; // Optimistic Sepolia
-        // omnichainIds[13] = 300;      // ZKsync Sepolia
+        uint32[] memory omnichainIds = _sharedOmnichainIds();
 
         (uint192 outboundRateLimit, uint64 outboundRateWindow) =
             _outboundRateLimitConfig("UUSD_OUTBOUND_RATE_LIMIT", string.concat("UUSD_OUTBOUND_RATE_", "WINDOW_SECONDS"));
@@ -220,21 +232,7 @@ contract OutstakeScript is BaseScript {
     }
 
     function _deployUBNB(uint256 nonce) internal {
-        uint32[] memory omnichainIds = new uint32[](9);
-        omnichainIds[0] = 97; // BSC Testnet
-        omnichainIds[1] = 84532; // Base Sepolia
-        omnichainIds[2] = 421614; // Arbitrum Sepolia
-        omnichainIds[3] = 43113; // Avalanche Fuji C-Chain
-        omnichainIds[4] = 80002; // Polygon Amoy
-        omnichainIds[5] = 57054; // Sonic Blaze
-        omnichainIds[6] = 168587773; // Blast Sepolia
-        omnichainIds[7] = 534351; // Scroll Sepolia
-        omnichainIds[8] = 11155111; // Sepolia
-        // omnichainIds[9] = 10143;     // Monad Testnet
-        // omnichainIds[10] = 80069;    // Bera Sepolia
-        // omnichainIds[11] = 59141;    // Linea Sepolia
-        // omnichainIds[12] = 11155420; // Optimistic Sepolia
-        // omnichainIds[13] = 300;      // ZKsync Sepolia
+        uint32[] memory omnichainIds = _sharedOmnichainIds();
 
         (uint192 outboundRateLimit, uint64 outboundRateWindow) =
             _outboundRateLimitConfig("UBNB_OUTBOUND_RATE_LIMIT", string.concat("UBNB_OUTBOUND_RATE_", "WINDOW_SECONDS"));

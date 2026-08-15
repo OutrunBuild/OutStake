@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {IOAppCore} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
 
 import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
@@ -59,6 +60,10 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
 
     function exposedUpdateRouterLauncher() external {
         _updateRouterLauncher();
+    }
+
+    function exposedAssertOutrunDeployer(uint256 nonce) external {
+        _assertOutrunDeployer(nonce);
     }
 
     function _rawOutboundRateLimitConfig(string memory, string memory)
@@ -219,6 +224,30 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.exposedUpdateRouterLauncher();
 
         assertEq(router.memeverseLauncher(), address(launcher));
+    }
+
+    function testAssertOutrunDeployerPassesWhenOutrunDeployerMatchesExpectedAddress() external {
+        uint256 nonce = 1;
+
+        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
+        bytes memory initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
+        script.configure(owner, owner, Create2.computeAddress(salt, keccak256(initcode), address(script)));
+
+        script.exposedAssertOutrunDeployer(nonce);
+    }
+
+    function testAssertOutrunDeployerRevertsWhenOutrunDeployerDoesNotMatchExpectedAddress() external {
+        script.configure(owner, owner, address(0xDEAD));
+
+        vm.expectRevert(OutstakeScript.InvalidDeployer.selector);
+        script.exposedAssertOutrunDeployer(1);
+    }
+
+    function testAssertOutrunDeployerRevertsWhenOwnerDoesNotMatchDeployer() external {
+        script.configure(address(0xA11CE), address(0xB0B), address(0xDEAD));
+
+        vm.expectRevert(OutstakeScript.InvalidOwner.selector);
+        script.exposedAssertOutrunDeployer(1);
     }
 
     function _deployAndAssertUAsset(
