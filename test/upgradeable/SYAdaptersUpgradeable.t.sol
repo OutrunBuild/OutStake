@@ -53,16 +53,7 @@ contract SYAdaptersUpgradeableTest is Test {
     function testAllAdaptersInitializeBehindProxy() external {
         _assertSY(_deployL2Staked(), "SY Generic", "SYG", address(token));
 
-        MockToken underlying = new MockToken("Underlying", "UND", 18);
-        MockAToken aToken = new MockAToken(address(underlying));
-        MockAavePool aavePool = new MockAavePool();
-        OutrunAaveV3SYUpgradeable aaveImpl = new OutrunAaveV3SYUpgradeable();
-        address aave = ProxyTestHelper.deploy(
-            address(aaveImpl),
-            abi.encodeCall(
-                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
-            )
-        );
+        (address aave,, MockAToken aToken) = _deployAave(1e27);
         _assertSY(aave, "SY Aave", "SYA", address(aToken));
 
         _assertSY(_deployWeETH(), "SY Etherfi weETH", "SY weETH", address(token));
@@ -102,6 +93,11 @@ contract SYAdaptersUpgradeableTest is Test {
 
         assertEq(_storedAddress(sy, storageSlot), address(stETH));
         assertEq(_storedAddress(sy, bytes32(uint256(storageSlot) + 1)), address(underlyingOnEth));
+
+        // Raw storage pins the ERC-7201 layout; the getter pins assetInfo()'s tuple assembly, which the
+        // skipped Optimism fork setUp cannot cover.
+        (, address assetAddress,) = _asSY(sy).assetInfo();
+        assertEq(assetAddress, address(underlyingOnEth));
     }
 
     function testOracleSetterIsOwnerOnlyAndAffectsExchangeRate() external {
@@ -125,15 +121,7 @@ contract SYAdaptersUpgradeableTest is Test {
     }
 
     function testAaveATokenRoundtripMatchesPreviewAndExchangeRate() external {
-        MockToken underlying = new MockToken("Underlying", "UND", 18);
-        MockAToken aToken = new MockAToken(address(underlying));
-        MockAavePool aavePool = new MockAavePool();
-        address sy = ProxyTestHelper.deploy(
-            address(new OutrunAaveV3SYUpgradeable()),
-            abi.encodeCall(
-                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
-            )
-        );
+        (address sy,, MockAToken aToken) = _deployAave(1e27);
 
         _assertYieldTokenRoundtrip(sy, aToken, AMOUNT);
         assertEq(_asSY(sy).exchangeRate(), 1e18);
@@ -141,16 +129,7 @@ contract SYAdaptersUpgradeableTest is Test {
 
     function testAaveUnderlyingDepositMatchesAaveRayDivScaledDelta() external {
         uint256 amount = 3;
-        MockToken underlying = new MockToken("Underlying", "UND", 18);
-        MockAToken aToken = new MockAToken(address(underlying));
-        MockAavePool aavePool = new MockAavePool();
-        aavePool.setReserve(address(underlying), aToken, 2e27);
-        address sy = ProxyTestHelper.deploy(
-            address(new OutrunAaveV3SYUpgradeable()),
-            abi.encodeCall(
-                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
-            )
-        );
+        (address sy, MockToken underlying, MockAToken aToken) = _deployAave(2e27);
 
         underlying.mint(user, amount);
         vm.startPrank(user);
@@ -169,16 +148,7 @@ contract SYAdaptersUpgradeableTest is Test {
 
     function testAaveATokenDepositUsesAaveRayDivRounding() external {
         uint256 amount = 3;
-        MockToken underlying = new MockToken("Underlying", "UND", 18);
-        MockAToken aToken = new MockAToken(address(underlying));
-        MockAavePool aavePool = new MockAavePool();
-        aavePool.setReserve(address(underlying), aToken, 2e27);
-        address sy = ProxyTestHelper.deploy(
-            address(new OutrunAaveV3SYUpgradeable()),
-            abi.encodeCall(
-                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
-            )
-        );
+        (address sy,, MockAToken aToken) = _deployAave(2e27);
 
         aToken.mintScaled(user, amount);
         vm.startPrank(user);
@@ -196,16 +166,7 @@ contract SYAdaptersUpgradeableTest is Test {
 
     function testAaveUnderlyingDepositThatRoundsToZeroReverts() external {
         uint256 amount = 1;
-        MockToken underlying = new MockToken("Underlying", "UND", 18);
-        MockAToken aToken = new MockAToken(address(underlying));
-        MockAavePool aavePool = new MockAavePool();
-        aavePool.setReserve(address(underlying), aToken, 3e27);
-        address sy = ProxyTestHelper.deploy(
-            address(new OutrunAaveV3SYUpgradeable()),
-            abi.encodeCall(
-                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
-            )
-        );
+        (address sy, MockToken underlying,) = _deployAave(3e27);
 
         underlying.mint(user, amount);
         vm.startPrank(user);
@@ -216,16 +177,7 @@ contract SYAdaptersUpgradeableTest is Test {
     }
 
     function testAdapterMatrixTokensPreviewExchangeRateAndInvalidTokenReverts() external {
-        MockToken underlying = new MockToken("Underlying", "UND", 18);
-        MockAToken aToken = new MockAToken(address(underlying));
-        MockAavePool aavePool = new MockAavePool();
-        aavePool.setReserve(address(underlying), aToken, 1e27);
-        address aave = ProxyTestHelper.deploy(
-            address(new OutrunAaveV3SYUpgradeable()),
-            abi.encodeCall(
-                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
-            )
-        );
+        (address aave, MockToken underlying, MockAToken aToken) = _deployAave(1e27);
         _assertAdapterMatrix(
             aave, _tokens(address(underlying), address(aToken)), _tokens(address(underlying), address(aToken))
         );
@@ -402,6 +354,60 @@ contract SYAdaptersUpgradeableTest is Test {
         assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
+    function testWeEtheEthDepositPinsFloorRounding() external {
+        uint256 amount = 5;
+        uint256 rate = 2e18;
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        MockLiquidityPool pool = new MockLiquidityPool();
+        weETH.setShareRate(rate);
+        pool.setShareRate(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(new MockDepositAdapter()), address(pool))
+            )
+        );
+
+        eETH.mint(user, amount);
+        vm.startPrank(user);
+        eETH.approve(sy, amount);
+        uint256 previewShares = _asSY(sy).previewDeposit(address(eETH), amount);
+        uint256 sharesOut = _asSY(sy).deposit(user, address(eETH), amount, 0);
+        vm.stopPrank();
+
+        // 5 / 2 rounds down to 2; a ceil implementation would return 3.
+        assertEq(previewShares, 2);
+        assertEq(sharesOut, 2);
+        assertEq(weETH.balanceOf(sy), 2);
+    }
+
+    function testWstEthStEthDepositPinsFloorRounding() external {
+        uint256 amount = 5;
+        uint256 rate = 2e18;
+        MockStETH stETH = new MockStETH();
+        MockWstETH wstETH = new MockWstETH(address(stETH));
+        stETH.setPooledEthPerShare(rate);
+        wstETH.setStEthPerToken(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWstETHSYUpgradeable()),
+            abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+        );
+
+        stETH.mint(user, amount);
+        vm.startPrank(user);
+        stETH.approve(sy, amount);
+        uint256 previewShares = _asSY(sy).previewDeposit(address(stETH), amount);
+        uint256 sharesOut = _asSY(sy).deposit(user, address(stETH), amount, 0);
+        vm.stopPrank();
+
+        // 5 / 2 rounds down to 2; a ceil implementation would return 3.
+        assertEq(previewShares, 2);
+        assertEq(sharesOut, 2);
+        assertEq(wstETH.balanceOf(sy), 2);
+    }
+
     function testMockL2StEthUsesShareBalancesForTransfersAndTokenAllowances() external {
         MockToken l2WstEth = new MockToken("wstETH", "wstETH", 18);
         MockL2StETH l2StEth = new MockL2StETH(address(l2WstEth), 2 ether);
@@ -512,6 +518,34 @@ contract SYAdaptersUpgradeableTest is Test {
         assertEq(skyL2Redeemed, AMOUNT);
         assertEq(l2Usds.balanceOf(user), AMOUNT);
         assertEq(_asSY(skyL2).exchangeRate(), rate);
+    }
+
+    function testSkyL2PsmUsdsDepositPinsFloorRounding() external {
+        uint256 amount = 5;
+        uint256 rate = 2e18;
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockToken sUSDS = new MockToken("sUSDS", "sUSDS", 18);
+        MockPSM3 psm = new MockPSM3();
+        psm.setRate(address(sUSDS), rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunL2StakedUsdsSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usds), address(usds), address(sUSDS), address(psm))
+            )
+        );
+
+        usds.mint(user, amount);
+        vm.startPrank(user);
+        usds.approve(sy, amount);
+        uint256 previewShares = _asSY(sy).previewDeposit(address(usds), amount);
+        uint256 sharesOut = _asSY(sy).deposit(user, address(usds), amount, 0);
+        vm.stopPrank();
+
+        // 5 / 2 rounds down to 2; a ceil implementation would return 3.
+        assertEq(previewShares, 2);
+        assertEq(sharesOut, 2);
+        assertEq(sUSDS.balanceOf(sy), 2);
     }
 
     function testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate() external {
@@ -791,6 +825,24 @@ contract SYAdaptersUpgradeableTest is Test {
 
     function _erc7201(string memory id) internal pure returns (bytes32) {
         return keccak256(abi.encode(uint256(keccak256(bytes(id))) - 1)) & ~bytes32(uint256(0xff));
+    }
+
+    // Variation point across call sites: `liquidityIndex` (ray) is the pool reserve index that
+    // drives Aave's rounding math. Rounding-focused callers pass 2e27 or 3e27; identity callers pass 1e27.
+    function _deployAave(uint256 liquidityIndex)
+        internal
+        returns (address sy, MockToken underlying, MockAToken aToken)
+    {
+        underlying = new MockToken("Underlying", "UND", 18);
+        aToken = new MockAToken(address(underlying));
+        MockAavePool aavePool = new MockAavePool();
+        aavePool.setReserve(address(underlying), aToken, liquidityIndex);
+        sy = ProxyTestHelper.deploy(
+            address(new OutrunAaveV3SYUpgradeable()),
+            abi.encodeCall(
+                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
+            )
+        );
     }
 
     function _deployL2Staked() internal returns (address) {
