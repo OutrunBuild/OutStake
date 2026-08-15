@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-// Rate limiter for cross-chain transfers. Uses a linear decay model:
-// capacity refills proportionally over time.
-// When no window is configured, the limit is infinite.
-
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
+/// @title Outrun cross-chain transfer rate limiter
+/// @notice Rate limiter for cross-chain transfers. Uses a linear decay model: capacity refills proportionally
+///      over time. When no window is configured, the limit is infinite.
 abstract contract OutrunRateLimiterUpgradeable is Initializable {
     struct RateLimit {
         // Packed layout follows current LayerZero OApp RateLimiter.

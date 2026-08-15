@@ -3,6 +3,9 @@ pragma solidity ^0.8.35;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
+/// @title Auto-increment id counter (upgradeable)
+/// @notice ERC-7201-namespaced monotonic id counter; `_nextId` pre-increments so issued ids start at 1 and never
+///      repeat. Consumed by OutrunStakingPositionUpgradeable to issue staking position ids.
 abstract contract AutoIncrementIdUpgradeable is Initializable {
     /// @dev ERC-7201 namespace dedicated to the monotonically increasing id counter.
     /// @custom:storage-location erc7201:outrun.storage.AutoIncrementId

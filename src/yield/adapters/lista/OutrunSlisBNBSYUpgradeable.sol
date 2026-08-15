@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// SY adapter for Lista slisBNB (BSC). The yield-bearing token is slisBNB.
-// Deposit path: native BNB → deposit into Lista StakeManager to receive slisBNB.
-// Exchange rate from StakeManager.convertSnBnbToBnb.
-
 import {IListaStakeManager} from "../../../integrations/lista/interfaces/IListaStakeManager.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 
+/// @title Outrun Lista slisBNB SY adapter
+/// @notice SY adapter for Lista slisBNB (BSC). The yield-bearing token is slisBNB. Deposit path: native BNB →
+///      deposit into Lista StakeManager to receive slisBNB. Exchange rate from StakeManager.convertSnBnbToBnb.
 contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlisBNBSY") is SYBaseUpgradeable {
     struct OutrunSlisBNBSYStorage {
         address STAKE_MANAGER;

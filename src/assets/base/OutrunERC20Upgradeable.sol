@@ -7,6 +7,13 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
+/// @title Outrun upgradeable ERC20 base contract
+/// @notice Minimal upgradeable ERC20 implementation holding name, symbol, decimals, balances, allowances, and
+///      totalSupply in ERC-7201 namespaced storage; state is set through `__OutrunERC20_init` guarded by
+///      `onlyInitializing`, never a constructor. Every mint, burn, and transfer funnels through the virtual
+///      `_update` hook — the single override point for subclasses. Root base of the Outrun token family:
+///      inherited by OutrunERC20PausableUpgradeable and, through it, by every SY adapter (SYBaseUpgradeable)
+///      and the omnichain OutrunOFTUpgradeable/uAsset contracts.
 abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, IERC20, IERC20Metadata, IERC20Errors {
     /// @custom:storage-location erc7201:outrun.storage.OutrunERC20
     // forge-lint: disable-next-line(pascal-case-struct)
@@ -87,8 +94,6 @@ abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, I
     }
 
     function _update(address from, address to, uint256 value) internal virtual {
-        _beforeTokenTransfer(from, to, value);
-
         OutrunERC20Storage storage $ = _getOutrunERC20Storage();
         if (from == address(0)) {
             $.totalSupply += value;
@@ -110,7 +115,6 @@ abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, I
             }
         }
 
-        _afterTokenTransfer(from, to, value);
         emit Transfer(from, to, value);
     }
 
@@ -145,10 +149,4 @@ abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, I
             }
         }
     }
-
-    // solhint-disable-next-line no-empty-blocks
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual {}
-
-    // solhint-disable-next-line no-empty-blocks
-    function _afterTokenTransfer(address from, address to, uint256 amount) internal virtual {}
 }

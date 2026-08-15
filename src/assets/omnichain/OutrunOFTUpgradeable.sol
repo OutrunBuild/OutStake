@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
-// LayerZero Omnichain Fungible Token (OFT) base.
-// Combines ERC20 with cross-chain transfer capability.
-// Users can send tokens to other blockchains via LayerZero's messaging protocol.
-
 // solhint-disable-next-line import-path-check
 import {OFTCoreUpgradeable} from "@layerzerolabs/oft-evm-upgradeable/contracts/oft/OFTCoreUpgradeable.sol";
 import {OFTFeeDetail, OFTLimit, OFTReceipt, SendParam} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
@@ -13,6 +9,9 @@ import {OutrunERC20PausableUpgradeable} from "../base/OutrunERC20PausableUpgrade
 import {OutrunERC20Upgradeable} from "../base/OutrunERC20Upgradeable.sol";
 import {OutrunRateLimiterUpgradeable} from "./OutrunRateLimiterUpgradeable.sol";
 
+/// @title LayerZero Omnichain Fungible Token (OFT) base
+/// @notice Combines ERC20 with cross-chain transfer capability: users can send tokens to other blockchains via
+///      LayerZero's messaging protocol.
 abstract contract OutrunOFTUpgradeable is
     OutrunERC20PausableUpgradeable,
     OFTCoreUpgradeable,
@@ -138,6 +137,10 @@ abstract contract OutrunOFTUpgradeable is
         // Outbound transfer: (1) compute amounts, (2) apply rate limit outflow,
         // (3) burn tokens from sender. Must respect pause state.
         // _amountLD means "amount in local decimals".
+        // _debitView removes dust on the source chain: amountSentLD == amountReceivedLD ==
+        // _removeDust(_amountLD), and that dust-free value is what gets SD-encoded onto the
+        // wire. Dust stays in the sender's balance — never burned, never bridged — so the
+        // target chain _credit must not remove dust again.
         _update(_from, address(0), amountSentLD);
     }
 
@@ -156,6 +159,9 @@ abstract contract OutrunOFTUpgradeable is
         // Uses direct parent _update to bypass pause — cross-chain delivery
         // must not revert during pause, otherwise tokens would be permanently lost.
         // Sends to dead address if receiver is zero.
+        // Mints the wire amount unchanged: dust truncation happens once on the source chain
+        // in _debitView, and _lzReceive passes _toLD(amountSD) = amountSD * decimalConversionRate
+        // — already a DCR multiple — so no _removeDust here (re-applying it would be a no-op).
         if (_to == address(0)) _to = address(0xdead);
         OutrunERC20Upgradeable._update(address(0), _to, _amountLD);
         return _amountLD;
@@ -182,6 +188,12 @@ abstract contract OutrunOFTUpgradeable is
         return uint256(type(uint64).max) * decimalConversionRate;
     }
 
+    /// @dev Returns the constructor-frozen local decimals for the equality checks. The OFT
+    ///      conversion math (decimalConversionRate, _removeDust granularity) derives only from this
+    ///      immutable value, while the ERC20 storage `decimals` drives the `decimals()` metadata
+    ///      getter. initialize() forces the two equal (DecimalsMismatch) and _authorizeUpgrade()
+    ///      re-checks new implementations, so ERC20 metadata can never disagree with OFT conversion
+    ///      math.
     function _localDecimalsForValidation() internal view returns (uint8) {
         return _localDecimals;
     }

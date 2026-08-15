@@ -1,6 +1,11 @@
 //SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+/**
+ * @title Lido wstETH interface
+ * @notice Lido's non-rebasing wrapper over stETH; OutrunWstETHSY wraps stETH into wstETH on deposit, unwraps
+ *      to stETH on redemption, and reads `stEthPerToken` as its exchange-rate source.
+ */
 interface IWstETH {
     /**
      * @notice Returns the stETH amount represented by one wstETH.

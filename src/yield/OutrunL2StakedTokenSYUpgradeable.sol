@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.35;
 
-// L2 SY adapter where the yield-bearing token itself is the SY. Deposit and redeem are 1:1
-// with the underlying token. The exchange rate comes from a configured oracle (since the
-// staking yield accrues on L1/Ethereum mainnet and the L2 token balance doesn't reflect it).
-// Shared oracle-backed behavior lives in OutrunL2OracleBackedSYUpgradeable.
-
 import {OutrunL2OracleBackedSYUpgradeable} from "./OutrunL2OracleBackedSYUpgradeable.sol";
 
+/// @title Outrun L2 staked token SY adapter
+/// @notice L2 SY adapter where the yield-bearing token itself is the SY. Deposit and redeem are 1:1 with the
+///      underlying token. The exchange rate comes from a configured oracle (since the staking yield accrues on
+///      L1/Ethereum mainnet and the L2 token balance doesn't reflect it). Shared oracle-backed behavior lives in
+///      OutrunL2OracleBackedSYUpgradeable.
 // solhint-disable-next-line gas-small-strings
 contract OutrunL2StakedTokenSYUpgradeable is OutrunL2OracleBackedSYUpgradeable {
     /// @notice Initializes the L2 staked token SY adapter.

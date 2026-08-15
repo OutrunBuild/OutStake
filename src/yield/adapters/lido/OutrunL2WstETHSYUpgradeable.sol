@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// L2 wstETH SY adapter. On L2, wstETH balance doesn't accrue staking rewards
-// (rewards accrue on Ethereum mainnet). The exchange rate comes from an oracle
-// that tracks what wstETH is worth on L1. Deposit/redeem are 1:1 with wstETH
-// since wrapping happens at the L2 bridge level. Shared oracle-backed behavior
-// lives in OutrunL2OracleBackedSYUpgradeable.
-// Production Lido L2 wstETH/stETH rate adapters should use maxStaleness = 2 days
-// and enable the L2 sequencer uptime feed with a post-recovery grace period.
-// Evidence: Lido cross-chain token guide says stETH rate data should not be
-// outdated by more than 2 days.
-// https://docs.lido.fi/token-guides/cross-chain-tokens-guide/
-
 import {OutrunL2OracleBackedSYUpgradeable} from "../../OutrunL2OracleBackedSYUpgradeable.sol";
 
+/// @title Outrun L2 wstETH SY adapter
+/// @notice L2 wstETH SY adapter. On L2, wstETH balance doesn't accrue staking rewards (rewards accrue on
+///      Ethereum mainnet). The exchange rate comes from an oracle that tracks what wstETH is worth on L1.
+///      Deposit/redeem are 1:1 with wstETH since wrapping happens at the L2 bridge level. Shared oracle-backed
+///      behavior lives in OutrunL2OracleBackedSYUpgradeable.
+///      Production Lido L2 wstETH/stETH rate adapters should use maxStaleness = 2 days and enable the L2
+///      sequencer uptime feed with a post-recovery grace period. Evidence: Lido cross-chain token guide says
+///      stETH rate data should not be outdated by more than 2 days.
+///      https://docs.lido.fi/token-guides/cross-chain-tokens-guide/
 contract OutrunL2WstETHSYUpgradeable is OutrunL2OracleBackedSYUpgradeable {
     /// @notice Initializes the L2 wstETH SY adapter with the fixed Lido name and symbol.
     /// @param owner_ Address that will be granted the owner role.

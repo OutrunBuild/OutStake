@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// SY adapter for Ethena sUSDe. The yield-bearing token is sUSDe (staked USDe — an ERC4626 vault).
-// Deposit paths: (a) USDe → deposit into 4626 vault to get sUSDe shares, (b) existing sUSDe directly.
-// Exchange rate from ERC4626 convertToAssets.
-
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 
+/// @title Outrun Ethena sUSDe SY adapter
+/// @notice SY adapter for Ethena sUSDe. The yield-bearing token is sUSDe (staked USDe — an ERC4626 vault).
+///      Deposit paths: (a) USDe → deposit into 4626 vault to get sUSDe shares, (b) existing sUSDe directly.
+///      Exchange rate from ERC4626 convertToAssets.
 // solhint-disable-next-line gas-small-strings
 contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunStakedUSDeSY") is SYBaseUpgradeable {
     struct OutrunStakedUSDeSYStorage {
@@ -35,7 +35,7 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
 
     /// @param tokenIn The input token address (USDe or sUSDe).
     /// @param amountDeposited The amount of the input token deposited.
-    /// @return amountSharesOut The amount of sUSDe shares received.
+    /// @return amountSharesOut The amount of sUSDe shares received (minted 1:1 as SY shares; 1 SY = 1 sUSDe).
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _USDE = USDE();
         address _yieldBearingToken = yieldBearingToken();
@@ -52,7 +52,7 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     // Redeem by transferring sUSDe directly. Note: this does NOT withdraw from the 4626 vault —
     // the receiver gets sUSDe which they can redeem for USDe on their own.
     /// @param receiver The address receiving the sUSDe tokens.
-    /// @param amountSharesToRedeem The amount of sUSDe shares to redeem.
+    /// @param amountSharesToRedeem The amount of sUSDe shares to redeem (1 SY = 1 sUSDe).
     /// @return The amount of sUSDe sent to the receiver.
     function _redeem(address receiver, address, uint256 amountSharesToRedeem) internal override returns (uint256) {
         _transferOut(yieldBearingToken(), receiver, amountSharesToRedeem);

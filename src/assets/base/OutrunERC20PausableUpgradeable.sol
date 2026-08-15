@@ -6,6 +6,10 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 
 import {OutrunERC20Upgradeable} from "./OutrunERC20Upgradeable.sol";
 
+/// @title Outrun pausable ERC20 base contract
+/// @notice Upgradeable ERC20 base combining the Outrun ERC20 implementation with OpenZeppelin's Pausable and
+///      Ownable; `_update` blocks every transfer while paused and only the owner may pause/unpause. Inherited by
+///      SYBaseUpgradeable (base of every SY adapter) and by the omnichannel OutrunOFTUpgradeable.
 abstract contract OutrunERC20PausableUpgradeable is OutrunERC20Upgradeable, PausableUpgradeable, OwnableUpgradeable {
     function __OutrunERC20Pausable_init(string memory name_, string memory symbol_, uint8 decimals_, address owner_)
         internal

@@ -3,6 +3,12 @@ pragma solidity ^0.8.35;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/**
+ * @title Canonical WETH interface
+ * @notice WETH9-style wrapped native token interface. In this repository it is consumed only by fork tests
+ *      (test/upgradeable/SYAdaptersFork.t.sol), which use it to mint WETH before interacting with live SY
+ *      adapters; no production contract in src/ consumes it.
+ */
 interface IWETH is IERC20 {
     event Deposit(address indexed dst, uint256 wad);
     event Withdrawal(address indexed src, uint256 wad);

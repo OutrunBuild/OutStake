@@ -1,6 +1,11 @@
 //SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+/**
+ * @title Ether.fi weETH interface
+ * @notice Ether.fi's wrapped eETH token; OutrunWeETHSY wraps eETH into weETH on deposit and unwraps back to
+ *      eETH on redemption.
+ */
 interface IWeETH {
     /**
      * @notice Wraps eETH into weETH.

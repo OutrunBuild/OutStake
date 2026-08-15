@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// L2 SY adapter for Sky sUSDS. Uses PSM3 (Peg Stability Module) to swap between USDC, USDS, and sUSDS.
-// Deposit paths: USDC → swap to sUSDS via PSM3, USDS → swap to sUSDS via PSM3, or sUSDS directly.
-// Exchange rate from PSM3.previewSwapExactIn(sUSDS→USDS).
-
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {IPSM3} from "../../../integrations/sky/interfaces/IPSM3.sol";
 
+/// @title Outrun L2 Sky sUSDS SY adapter
+/// @notice L2 SY adapter for Sky sUSDS. Uses PSM3 (Peg Stability Module) to swap between USDC, USDS, and sUSDS.
+///      Deposit paths: USDC → swap to sUSDS via PSM3, USDS → swap to sUSDS via PSM3, or sUSDS directly.
+///      Exchange rate from PSM3.previewSwapExactIn(sUSDS→USDS).
 // solhint-disable-next-line gas-small-strings
 contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunL2StakedUsdsSY") is SYBaseUpgradeable {
     struct OutrunL2StakedUsdsSYStorage {

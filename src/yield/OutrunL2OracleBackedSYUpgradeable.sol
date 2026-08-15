@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.35;
 
-// L2 SY abstract base where the yield-bearing token itself is the SY. Deposit and redeem are 1:1
-// with the underlying token. The exchange rate comes from a configured oracle because yield
-// accrues on L1/Ethereum mainnet and the L2 token balance does not reflect it.
-
 import {ArrayLib} from "../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "./SYBaseUpgradeable.sol";
 import {IExchangeRateOracle} from "../libraries/oracle/interfaces/IExchangeRateOracle.sol";
 
+/// @title Outrun L2 oracle-backed SY abstract base
+/// @notice L2 SY abstract base where the yield-bearing token itself is the SY. Deposit and redeem are 1:1 with
+///      the underlying token. The exchange rate comes from a configured oracle because yield accrues on
+///      L1/Ethereum mainnet and the L2 token balance does not reflect it.
 abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     // Abstract contracts cannot use the `layout at` syntax (solc error 7587), so this base
     // sets its ERC-7201 location the classic way — same pattern as SYBaseUpgradeable.

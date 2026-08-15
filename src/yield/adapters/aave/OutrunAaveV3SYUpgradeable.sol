@@ -9,13 +9,11 @@ import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {AaveAdapterLib} from "../../../libraries/AaveAdapterLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 
-// SY adapter for Aave V3.
-// The yield-bearing token is the aToken (e.g., aUSDC).
-// Deposit paths:
-//   (a) deposit the underlying asset into Aave to receive aToken shares,
-//   (b) deposit existing aToken directly as SY.
-// Exchange rate uses Aave's liquidity index (ray-scaled) divided by 1e9
-// to get the 1e18-scaled rate.
+/// @title Outrun Aave V3 SY adapter
+/// @notice SY adapter for Aave V3. The yield-bearing token is the aToken (e.g., aUSDC). Deposit paths:
+///      (a) deposit the underlying asset into Aave to receive aToken shares,
+///      (b) deposit existing aToken directly as SY.
+///      Exchange rate uses Aave's liquidity index (ray-scaled) divided by 1e9 to get the 1e18-scaled rate.
 contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV3SY") is SYBaseUpgradeable {
     struct OutrunAaveV3SYStorage {
         address underlying;
@@ -58,7 +56,7 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// @notice Deposit: supply underlying to Aave or wrap aToken.
     /// @param tokenIn the asset being deposited (underlying or aToken)
     /// @param amountDeposited amount of tokenIn to deposit
-    /// @return amountSharesOut scaled shares credited
+    /// @return amountSharesOut scaled shares credited (minted 1:1 as SY shares; 1 SY = 1 scaled share)
     // slither-disable-next-line reentrancy-no-eth
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _underlying = underlying();
@@ -81,7 +79,7 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
 
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset being redeemed (underlying or aToken)
-    /// @param amountSharesToRedeem scaled shares to redeem
+    /// @param amountSharesToRedeem scaled shares to redeem (1 SY = 1 scaled share)
     /// @return amountTokenOut amount of tokenOut received
     function _redeem(address receiver, address tokenOut, uint256 amountSharesToRedeem)
         internal

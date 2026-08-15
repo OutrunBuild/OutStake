@@ -1,6 +1,12 @@
 //SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+/**
+ * @title Aster asBNB minter interface (BSC)
+ * @notice asBNB is Aster's yield-bearing token minted from slisBNB, Lista's liquid-staked BNB token.
+ * @dev "token"/"token-side" throughout this interface means the slisBNB input asset returned by `token()`,
+ *      never the asBNB minted output.
+ */
 interface IAsBnbMinter {
     /**
      * @notice Returns the asBNB token wired to the minter.
@@ -44,14 +50,14 @@ interface IAsBnbMinter {
      * @notice Quotes the token-side asset value represented by an asBNB amount.
      * @dev OutrunAsBNBSY combines this with Lista conversion quotes for local preview and exchange-rate reads.
      * @param asBNBAmount The asBNB amount to convert.
-     * @return The corresponding token-side amount.
+     * @return The corresponding slisBNB amount (the asset returned by `token()`).
      */
     function convertToTokens(uint256 asBNBAmount) external view returns (uint256);
 
     /**
      * @notice Quotes the asBNB amount represented by a token-side amount.
      * @dev OutrunAsBNBSY consumes this for slisBNB deposit previews and does not assert the upstream rate source.
-     * @param tokenAmount The token-side amount to convert.
+     * @param tokenAmount The slisBNB amount to convert (the asset returned by `token()`).
      * @return The corresponding asBNB amount.
      */
     function convertToAsBnb(uint256 tokenAmount) external view returns (uint256);

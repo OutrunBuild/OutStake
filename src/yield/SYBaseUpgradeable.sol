@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// SY (Standardized Yield) is a wrapper token that represents a yield-bearing position.
-// Users deposit input tokens and receive SY shares. The exchange rate between SY and the
-// underlying asset grows over time as yield accrues.
-
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -12,6 +8,10 @@ import {NativeAmountMismatch, TokenHelper} from "../libraries/TokenHelper.sol";
 import {IStandardizedYield} from "./interfaces/IStandardizedYield.sol";
 import {OutrunERC20PausableUpgradeable} from "../assets/base/OutrunERC20PausableUpgradeable.sol";
 
+/// @title Outrun Standardized Yield (SY) abstract base contract
+/// @notice SY (Standardized Yield) is a wrapper token that represents a yield-bearing position. Users deposit
+///      input tokens and receive SY shares. The exchange rate between SY and the underlying asset grows over
+///      time as yield accrues.
 abstract contract SYBaseUpgradeable is
     IStandardizedYield,
     OutrunERC20PausableUpgradeable,
@@ -45,6 +45,8 @@ abstract contract SYBaseUpgradeable is
         onlyInitializing
     {
         require(yieldBearingToken_ != address(0), SYZeroAddress());
+        // SY decimals intentionally match the yield-bearing token's decimals: _deposit returns an amount in
+        // the yield-bearing token's own domain and deposit mints that amount 1:1 as SY (see _deposit below).
         __OutrunERC20Pausable_init(name_, symbol_, IERC20Metadata(yieldBearingToken_).decimals(), owner_);
         _getSYBaseStorage().yieldBearingToken = yieldBearingToken_;
     }
@@ -129,15 +131,22 @@ abstract contract SYBaseUpgradeable is
     }
 
     /// @notice Adapter-specific deposit logic — converts input tokens into SY shares.
+    /// @dev Unit convention every adapter must follow: the returned amount is minted 1:1 as SY ERC20 units
+    ///      (deposit calls `_mint(receiver, amountSharesOut)`), so 1 SY unit == 1 unit of the yield-bearing
+    ///      token's own domain — aToken scaled shares for Aave, wstETH for Lido, weETH for EtherFi, etc.
+    ///      This 1:1 identity is a deliberate design invariant (SY decimals are wired to the yield-bearing
+    ///      token's decimals in __SYBase_init), not a numerical coincidence, and each adapter's exchangeRate()
+    ///      must quote the canonical asset per that same unit.
     /// @param tokenIn The token being deposited.
     /// @param amountDeposited Amount of tokenIn deposited.
-    /// @return amountSharesOut Number of SY shares to mint.
+    /// @return amountSharesOut Number of SY shares to mint (numerically the yield-bearing-token-domain amount).
     function _deposit(address tokenIn, uint256 amountDeposited) internal virtual returns (uint256 amountSharesOut);
 
     /// @notice Adapter-specific redeem logic — converts SY shares into output tokens.
     /// @param receiver Address that receives the output tokens.
     /// @param tokenOut The token to deliver to the receiver.
-    /// @param amountSharesToRedeem Number of SY shares to redeem.
+    /// @param amountSharesToRedeem Number of SY shares to redeem (1 SY unit == 1 yield-bearing-token-domain
+    ///      unit; see the unit convention on _deposit).
     /// @return amountTokenOut Amount of tokenOut to transfer.
     function _redeem(address receiver, address tokenOut, uint256 amountSharesToRedeem)
         internal

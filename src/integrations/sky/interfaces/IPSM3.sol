@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.35;
 
+/**
+ * @title Sky Peg Stability Module (PSM3) interface
+ * @notice Sky's Peg Stability Module that swaps between USDC, USDS, and sUSDS; OutrunL2StakedUsdsSY swaps
+ *      through it for deposits and redemptions and reads `previewSwapExactIn` for its exchange rate and
+ *      previews.
+ */
 interface IPSM3 {
     /// @notice Swaps an exact amount of `assetIn` for as much `assetOut` as the PSM returns.
     /// @dev OutrunL2StakedUsdsSY calls this with `minAmountOut = 0`; slippage is enforced by the

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// Conversion helpers between SY (Standardized Yield) shares and canonical asset amounts.
-// canonical asset: the SY's underlying asset, in assetInfo().assetDecimals.
-// uAsset: the borrowed debt token, in uAsset.decimals().
-// All conversions use the exchange rate scaled by 1e18 (ONE).
-// Rounding direction is chosen by the caller: round down when over-counting would
-// over-mint or over-release value, and round up when enough value must remain to
-// cover debt or required backing.
+/// @title SY (Standardized Yield) conversion helpers
+/// @notice Conversion helpers between SY (Standardized Yield) shares and canonical asset amounts: canonical asset
+///      is the SY's underlying asset in assetInfo().assetDecimals, uAsset is the borrowed debt token in
+///      uAsset.decimals(). All conversions use the exchange rate scaled by 1e18 (ONE). Rounding direction is
+///      chosen by the caller: round down when over-counting would over-mint or over-release value, and round up
+///      when enough value must remain to cover debt or required backing.
 library SYUtils {
     // Exchange rates are always scaled by 1e18 for precision, matching DeFi convention.
     uint256 internal constant ONE = 1e18;
@@ -29,6 +28,8 @@ library SYUtils {
     /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale into uAsset
     /// decimals.
     // Rounds up — use when an asset value must be counted without leaving fractional dust behind.
+    // The ceil term (+ ONE - 1) moves the checked-add overflow threshold to syAmount * rate > 2^256 - ONE,
+    // slightly narrower than the floor variant's 2^256 - 1. Real supplies and rates stay far below it.
     function syToAssetUp(uint256 exchangeRate, uint256 syAmount) internal pure returns (uint256) {
         return (syAmount * exchangeRate + ONE - 1) / ONE;
     }
@@ -51,6 +52,8 @@ library SYUtils {
     /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale from uAsset
     /// decimals.
     // Rounds up — use when enough SY must remain to cover an asset-denominated debt.
+    // The ceil term (+ rate - 1) moves the checked-add overflow threshold to asset * ONE > 2^256 - rate,
+    // slightly narrower than the floor variant's 2^256 - 1. Real debt and rates stay far below it.
     function assetToSyUp(uint256 exchangeRate, uint256 assetAmount) internal pure returns (uint256) {
         return (assetAmount * ONE + exchangeRate - 1) / exchangeRate;
     }

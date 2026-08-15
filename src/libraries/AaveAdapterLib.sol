@@ -3,9 +3,10 @@ pragma solidity ^0.8.35;
 
 import {WadRayMath} from "./WadRayMath.sol";
 
-// Conversion helpers for Aave V3's ray-scaled (1e27) liquidity index.
-// Aave tracks balances as "scaled shares" and converts to actual asset amounts
-// using the liquidity index. The index is always ray-scaled (1e27 = WadRayMath.RAY).
+/// @title Aave V3 share/asset conversion helpers
+/// @notice Conversion helpers for Aave V3's ray-scaled (1e27) liquidity index. Aave tracks balances as "scaled
+///      shares" and converts to actual asset amounts using the liquidity index. The index is always ray-scaled
+///      (1e27 = WadRayMath.RAY).
 library AaveAdapterLib {
     /// @notice Converts Aave shares to assets using a ray-scaled liquidity index, rounded down.
     /// @param amountShares Amount of Aave shares to convert.

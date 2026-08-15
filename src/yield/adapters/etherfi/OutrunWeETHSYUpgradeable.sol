@@ -7,13 +7,12 @@ import {IWeETH} from "../../../integrations/etherfi/interfaces/IWeETH.sol";
 import {ILiquidityPool} from "../../../integrations/etherfi/interfaces/ILiquidityPool.sol";
 import {IDepositAdapter} from "../../../integrations/etherfi/interfaces/IDepositAdapter.sol";
 
-// SY adapter for EtherFi weETH.
-// The yield-bearing token is weETH (wrapped eETH).
-// Deposit paths:
-//   (a) native ETH → DepositAdapter → weETH,
-//   (b) eETH → wrap to weETH,
-//   (c) existing weETH directly.
-// Exchange rate comes from LiquidityPool.amountForShare.
+/// @title Outrun EtherFi weETH SY adapter
+/// @notice SY adapter for EtherFi weETH. The yield-bearing token is weETH (wrapped eETH). Deposit paths:
+///      (a) native ETH → DepositAdapter → weETH,
+///      (b) eETH → wrap to weETH,
+///      (c) existing weETH directly.
+///      Exchange rate comes from LiquidityPool.amountForShare.
 contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHSY") is SYBaseUpgradeable {
     struct OutrunWeETHSYStorage {
         address EETH;
@@ -60,7 +59,7 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
 
     /// @param tokenIn the asset being deposited (NATIVE, eETH, or weETH)
     /// @param amountDeposited amount of tokenIn to deposit
-    /// @return amountSharesOut amount of weETH shares credited
+    /// @return amountSharesOut amount of weETH shares credited (minted 1:1 as SY shares; 1 SY = 1 weETH)
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         if (tokenIn == NATIVE) {
             // Route native ETH through EtherFi's DepositAdapter which handles staking and mints weETH.
@@ -78,7 +77,7 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
 
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset to redeem (eETH or weETH)
-    /// @param amountSharesToRedeem amount of weETH shares to redeem
+    /// @param amountSharesToRedeem amount of weETH shares to redeem (1 SY = 1 weETH)
     /// @return amountTokenOut amount of tokenOut received
     function _redeem(address receiver, address tokenOut, uint256 amountSharesToRedeem)
         internal

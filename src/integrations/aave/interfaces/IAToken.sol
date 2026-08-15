@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
+/**
+ * @title Aave V3 aToken interface
+ * @notice Aave's interest-bearing receipt for a supplied reserve; OutrunAaveV3SY holds it as the adapter's
+ *      yield-bearing token and measures pool-supply deposits via scaled-balance deltas.
+ */
 interface IAToken {
     /**
      * @notice Returns the underlying asset tracked by this aToken.

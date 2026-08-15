@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// SY adapter for Sky (Maker) sUSDS on Ethereum mainnet. The yield-bearing token is sUSDS (an ERC4626 vault for USDS).
-// Deposit paths: (a) USDS → deposit into 4626 vault for sUSDS shares, (b) existing sUSDS directly.
-// Redeem can withdraw USDS from vault or send sUSDS to receiver. Exchange rate from ERC4626 convertToAssets.
-
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 
+/// @title Outrun Sky sUSDS SY adapter
+/// @notice SY adapter for Sky (Maker) sUSDS on Ethereum mainnet. The yield-bearing token is sUSDS (an ERC4626
+///      vault for USDS). Deposit paths: (a) USDS → deposit into 4626 vault for sUSDS shares, (b) existing sUSDS
+///      directly. Redeem can withdraw USDS from vault or send sUSDS to receiver. Exchange rate from ERC4626
+///      convertToAssets.
 // solhint-disable-next-line gas-small-strings
 contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunStakedUsdsSY") is SYBaseUpgradeable {
     struct OutrunStakedUsdsSYStorage {

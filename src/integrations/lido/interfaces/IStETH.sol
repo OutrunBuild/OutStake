@@ -1,6 +1,11 @@
 //SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+/**
+ * @title Lido stETH interface
+ * @notice Lido's liquid-staked ETH on Ethereum mainnet; OutrunWstETHSY stakes native ETH via `submit` and
+ *      quotes share/pooled-ETH conversions for deposit and redemption previews.
+ */
 interface IStETH {
     /**
      * @notice Quotes shares for a pooled ETH amount.

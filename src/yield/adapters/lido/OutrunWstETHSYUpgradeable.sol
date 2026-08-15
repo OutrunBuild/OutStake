@@ -8,13 +8,13 @@ import {IWstETH} from "../../../integrations/lido/interfaces/IWstETH.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 
-// SY adapter for Lido wstETH on Ethereum mainnet.
-// The yield-bearing token is wstETH (wrapped stETH).
-// Deposit paths:
-//   (a) native ETH → stETH via Lido submit → wrap to wstETH,
-//   (b) existing stETH → wrap to wstETH,
-//   (c) existing wstETH directly.
-// Exchange rate from wstETH.stEthPerToken().
+/// @title Outrun Lido wstETH SY adapter
+/// @notice SY adapter for Lido wstETH on Ethereum mainnet. The yield-bearing token is wstETH (wrapped stETH).
+///      Deposit paths:
+///      (a) native ETH → stETH via Lido submit → wrap to wstETH,
+///      (b) existing stETH → wrap to wstETH,
+///      (c) existing wstETH directly.
+///      Exchange rate from wstETH.stEthPerToken().
 contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstETHSY") is SYBaseUpgradeable {
     struct OutrunWstETHSYStorage {
         address STETH;

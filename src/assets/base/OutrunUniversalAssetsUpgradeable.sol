@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// uAsset (universal asset) — a receipt token minted by staking positions.
-// Each minter (a StakeManager contract) has its own debt tracking:
-// mintingCap is the ceiling, amountInMinted is outstanding debt.
-// Minters repay by burning uAsset, which reduces their outstanding debt.
-// amountInMinted is a minter debt ledger, not a same-chain totalSupply invariant:
-// OFT cross-chain sends burn on the source chain and mint on the destination chain
-// without changing this minter debt ledger.
-
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {IUniversalAssets} from "../interfaces/IUniversalAssets.sol";
 import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
 
+/// @title Outrun universal asset (uAsset) token
+/// @notice uAsset is a receipt token minted by staking positions. Each minter (a StakeManager contract) has its
+///      own debt tracking: mintingCap is the ceiling, amountInMinted is outstanding debt. Minters repay by
+///      burning uAsset, which reduces their outstanding debt. amountInMinted is a minter debt ledger, not a
+///      same-chain totalSupply invariant: OFT cross-chain sends burn on the source chain and mint on the
+///      destination chain without changing this minter debt ledger.
 contract OutrunUniversalAssetsUpgradeable 
     // solhint-disable-next-line gas-small-strings
     layout at erc7201("outrun.storage.OutrunUniversalAssets")
@@ -45,6 +43,10 @@ contract OutrunUniversalAssetsUpgradeable
         external
         initializer
     {
+        // First of two defense layers binding the two decimal sources: OFT conversion math
+        // (decimalConversionRate, _removeDust granularity) derives only from the constructor-frozen
+        // _localDecimals, while decimals_ becomes the ERC20 `decimals()` metadata. Forcing the two
+        // equal keeps ERC20 metadata and cross-chain amount conversion consistent.
         uint8 expectedDecimals = _localDecimalsForValidation();
         if (decimals_ != expectedDecimals) {
             revert DecimalsMismatch(expectedDecimals, decimals_);
@@ -74,6 +76,10 @@ contract OutrunUniversalAssetsUpgradeable
     }
 
     /// @notice Sets the minting cap for a minter. Owner-only.
+    /// @dev The cap may be lowered below the minter's current amountInMinted: mint then reverts
+    ///      ReachMintCap until repay reduces amountInMinted below the new cap. For a nonzero cap
+    ///      this transient over-cap state is expected and self-heals through repay; a zero cap
+    ///      blocks mint until the cap is raised again (see revokeMinter).
     /// @param minter Address of the minter
     /// @param mintingCap New maximum number of uAsset this minter can mint
     function setMintingCap(address minter, uint256 mintingCap) public override onlyOwner {
@@ -168,7 +174,14 @@ contract OutrunUniversalAssetsUpgradeable
     }
 
     /// @notice Validates that a new implementation preserves the LayerZero OFT configuration.
-    /// @dev Ensures endpoint, decimal conversion rate, and local decimals match the current values.
+    /// @dev Second defense layer over the constructor-frozen immutables of a new implementation;
+    ///      initialize() is the first (see DecimalsMismatch). Each field must stay unchanged because:
+    ///      - endpoint: routes all cross-chain messages; a different endpoint would send through a
+    ///        wrong or unconfigured LayerZero messaging layer.
+    ///      - decimalConversionRate: drives every LD<->SD amount conversion; a different rate would
+    ///        silently corrupt cross-chain amounts.
+    ///      - localDecimals: binds the ERC20 `decimals()` metadata to the OFT conversion math; a
+    ///        different value would make metadata and cross-chain amounts disagree.
     /// @param newImplementation Address of the new implementation contract
     function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
         OutrunUniversalAssetsUpgradeable implementation = OutrunUniversalAssetsUpgradeable(newImplementation);

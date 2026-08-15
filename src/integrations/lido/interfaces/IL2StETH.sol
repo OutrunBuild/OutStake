@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+/**
+ * @title Lido L2 stETH interface
+ * @notice Lido's L2 stETH token that converts between stETH token units and wrappable wstETH share units;
+ *      OutrunL2WrappableWstETHSY wraps and unwraps through it and consumes its quotes for deposit previews,
+ *      redemption previews, and `exchangeRate()`.
+ */
 interface IL2StETH {
     /**
      * @notice Converts wrappable/share units into L2 stETH token units.

@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// L2 SY adapter where stETH exists natively on the L2 and can be wrapped/unwrapped
-// against wstETH locally. Unlike OutrunL2WstETHSY, this adapter performs actual
-// wrap/unwrap of stETH ↔ wstETH on-chain. The exchange rate comes from the L2
-// stETH contract.
-
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {IL2StETH} from "../../../integrations/lido/interfaces/IL2StETH.sol";
 
+/// @title Outrun L2 wrappable wstETH SY adapter
+/// @notice L2 SY adapter where stETH exists natively on the L2 and can be wrapped/unwrapped against wstETH
+///      locally. Unlike OutrunL2WstETHSY, this adapter performs actual wrap/unwrap of stETH ↔ wstETH on-chain.
+///      The exchange rate comes from the L2 stETH contract.
 // solhint-disable-next-line gas-small-strings
 contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunL2WrappableWstETHSY")
     is
@@ -56,7 +55,7 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     // If depositing wstETH: 1:1 (already the yield-bearing token).
     /// @param tokenIn The input token address (stETH or wstETH).
     /// @param amountDeposited The amount of the input token deposited.
-    /// @return amountSharesOut The amount of wstETH shares received.
+    /// @return amountSharesOut The amount of wstETH shares received (minted 1:1 as SY shares; 1 SY = 1 wstETH).
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _STETH = STETH();
         if (tokenIn == _STETH) amountSharesOut = IL2StETH(_STETH).unwrap(amountDeposited);
@@ -68,7 +67,7 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     // If redeeming to wstETH: transfer directly.
     /// @param receiver The address receiving the output tokens.
     /// @param tokenOut The output token address (stETH or wstETH).
-    /// @param amountSharesToRedeem The amount of wstETH shares to redeem.
+    /// @param amountSharesToRedeem The amount of wstETH shares to redeem (1 SY = 1 wstETH).
     /// @return amountTokenOut The amount of output tokens sent to the receiver.
     function _redeem(address receiver, address tokenOut, uint256 amountSharesToRedeem)
         internal

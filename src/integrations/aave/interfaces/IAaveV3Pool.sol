@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.35;
 
+/**
+ * @title Aave V3 Pool interface
+ * @notice Aave's lending pool for supplying and withdrawing reserves; OutrunAaveV3SY deposits and redeems the
+ *      underlying through it and reads `getReserveNormalizedIncome` as its exchange-rate source.
+ */
 interface IAaveV3Pool {
     /**
      * @notice Supplies an `amount` of underlying asset into the reserve, receiving in return overlying aTokens.

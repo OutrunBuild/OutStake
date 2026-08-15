@@ -3,6 +3,13 @@ pragma solidity ^0.8.35;
 
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
+/**
+ * @title Standardized Yield (SY) core interface
+ * @notice ERC20-compatible yield wrapper: `deposit` mints SY shares from a supported input token, `redeem` burns
+ *      shares for a supported output token, and `exchangeRate` reports the 1e18-scaled canonical asset per SY
+ *      used for position accounting. Implemented by SYBaseUpgradeable (base of every Outrun SY adapter) and
+ *      consumed by OutrunRouter and OutrunStakingPositionUpgradeable.
+ */
 interface IStandardizedYield is IERC20Metadata {
     /**
      * @notice Reverts when a deposit uses a token outside the adapter's supported input set.
