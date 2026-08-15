@@ -49,7 +49,8 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
     /**
      * @notice Returns the latest oracle exchange rate scaled to the fixed 1e18 (SYUtils) scale.
      * @dev Reverts when an L2 sequencer uptime feed is configured and the sequencer is down or still in its
-     * post-recovery grace window, when the underlying oracle answer is non-positive, or when the answer is stale.
+     * post-recovery grace window, when the underlying oracle answer is non-positive, when the answer is stale,
+     * or when normalization truncates the answer to zero (a non-standard feed with more than 18 decimals and a small answer).
      * Does not apply bounds checks, fallback oracle logic, or multi-source aggregation.
      * @return The normalized exchange rate value.
      */
@@ -64,7 +65,11 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
         // Normalize: (rawAnswer * SYUtils.ONE) / _rawScale.
         // Example: raw=1.05e8 (8 decimals), fixed 1e18 scale -> 1.05e8 * 1e18 / 1e8 -> 1.05e18.
         // forge-lint: disable-next-line(unsafe-typecast)
-        return (uint256(answer) * SYUtils.ONE) / _rawScale;
+        uint256 rate = (uint256(answer) * SYUtils.ONE) / _rawScale;
+        // A feed with more than 18 decimals and a small answer normalizes to zero; fail closed with a
+        // named error instead of leaking rate == 0 (downstream divide-by-zero) to position accounting.
+        if (rate == 0) revert ZeroNormalizedRate();
+        return rate;
     }
 
     function _validateSequencer() internal view {

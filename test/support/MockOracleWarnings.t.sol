@@ -14,6 +14,7 @@ contract MockOracleWarningsTest is Test {
     bytes4 internal constant SEQUENCER_DOWN_SELECTOR = bytes4(keccak256("SequencerDown()"));
     bytes4 internal constant SEQUENCER_GRACE_PERIOD_NOT_OVER_SELECTOR =
         bytes4(keccak256("SequencerGracePeriodNotOver()"));
+    bytes4 internal constant ZERO_NORMALIZED_RATE_SELECTOR = bytes4(keccak256("ZeroNormalizedRate()"));
 
     address internal owner = address(0xA11CE);
 
@@ -132,6 +133,39 @@ contract MockOracleWarningsTest is Test {
 
         // Same-scale feed passes through unchanged.
         assertEq(adapter18.getExchangeRate(), 1.1e18);
+    }
+
+    function testExchangeOracleAdapterRevertsWhenNormalizedRateIsZero() external {
+        // rawDecimals=19 passes the construction overflow guard (it only fails at >= 78), but answer=1
+        // truncates to zero after normalization: 1 * 1e18 / 1e19 == 0.
+        MockAggregator aggregator19 = new MockAggregator(19);
+        aggregator19.setLatestAnswer(1);
+        OutrunExchangeOracleAdapter adapter19 =
+            new OutrunExchangeOracleAdapter(address(aggregator19), 2 days, address(0), 0);
+
+        vm.expectRevert(ZERO_NORMALIZED_RATE_SELECTOR);
+        adapter19.getExchangeRate();
+    }
+
+    function testExchangeOracleAdapterNormalizes19DecimalAnswerWhenLargeEnough() external {
+        // A 19-decimal feed with an answer large enough to survive normalization still works: the new
+        // zero check must not reject non-zero rates.
+        MockAggregator aggregator19 = new MockAggregator(19);
+        aggregator19.setLatestAnswer(10 ether); // 1e19: 1e19 * 1e18 / 1e19 == 1e18
+        OutrunExchangeOracleAdapter adapter19 =
+            new OutrunExchangeOracleAdapter(address(aggregator19), 2 days, address(0), 0);
+
+        assertEq(adapter19.getExchangeRate(), 1e18);
+    }
+
+    function testExchangeOracleAdapterNormalizes19DecimalAnswerAtThreshold() external {
+        // Threshold: answer == 10^(rawDecimals-18) keeps the normalized rate non-zero (10 * 1e18 / 1e19 == 1).
+        MockAggregator aggregator19 = new MockAggregator(19);
+        aggregator19.setLatestAnswer(10);
+        OutrunExchangeOracleAdapter adapter19 =
+            new OutrunExchangeOracleAdapter(address(aggregator19), 2 days, address(0), 0);
+
+        assertEq(adapter19.getExchangeRate(), 1);
     }
 
     function testExchangeOracleAdapterConstructorRevertsWhenRawDecimalsPowerOverflows() external {
