@@ -6,7 +6,7 @@ import {AaveAdapterLib} from "../../src/libraries/AaveAdapterLib.sol";
 import {WadRayMath} from "../../src/libraries/WadRayMath.sol";
 import {ArrayLib} from "../../src/libraries/ArrayLib.sol";
 import {SYUtils} from "../../src/libraries/SYUtils.sol";
-import {ReentrancyGuard} from "../../src/libraries/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {MockGuarded, WadRayMathHelper} from "./LibraryMocks.sol";
 
 // ============================================================================
@@ -183,7 +183,7 @@ contract ReentrancyGuardTest is Test {
     }
 
     function testNonReentrantRevertsOnReentry() public {
-        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        vm.expectRevert(ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
         guarded.tryReenter();
     }
 

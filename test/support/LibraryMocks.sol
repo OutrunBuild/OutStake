@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {ReentrancyGuard} from "../../src/libraries/ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {WadRayMath} from "../../src/libraries/WadRayMath.sol";
 
 /// @notice Mock contract exposing guarded actions for ReentrancyGuard tests.
-contract MockGuarded is ReentrancyGuard {
+contract MockGuarded is ReentrancyGuardTransient {
     function guardedAction() external nonReentrant returns (uint256) {
         return 42;
     }

@@ -3,7 +3,7 @@ pragma solidity ^0.8.35;
 
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {ReentrancyGuard} from "./ReentrancyGuard.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 error NativeAmountMismatch();
 error NativeTransferFailed();
@@ -11,7 +11,7 @@ error NativeTransferFailed();
 /// @title TokenHelper
 /// @notice Shared helper for native-token and ERC20 transfers.
 /// @dev NATIVE (address(0)) is a sentinel that routes to ETH/BNB handling instead of ERC20 calls.
-abstract contract TokenHelper is ReentrancyGuard {
+abstract contract TokenHelper is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @dev Sentinel used to route native token transfers instead of ERC20 calls.
@@ -20,8 +20,8 @@ abstract contract TokenHelper is ReentrancyGuard {
     /// single code path handle both native and ERC20 tokens.
     address internal constant NATIVE = address(0);
     /// @dev Approval refresh threshold.
-    /// Some ERC20 tokens (like USDT) store allowances in 96 bits. When the remaining allowance
-    /// drops below half of uint96 max, we reset to max to avoid approval race conditions.
+    /// Some ERC20 tokens store allowances in 96 bits. When the remaining allowance drops below
+    /// half of uint96 max, we refresh it back to max.
     uint256 internal constant LOWER_BOUND_APPROVAL = type(uint96).max / 2; // some tokens use 96 bits for approval
 
     /// @notice Transfers token from user; native via msg.value or ERC20 via transferFrom.
@@ -82,7 +82,8 @@ abstract contract TokenHelper is ReentrancyGuard {
         IERC20(token).forceApprove(to, value);
     }
 
-    /// @notice Keeps allowance at max; resets to 0 first because some tokens reject non-zero-to-non-zero.
+    /// @notice Refreshes allowance to max when it falls below the refresh threshold; resets to 0 first
+    /// because some tokens reject non-zero-to-non-zero.
     /// @param token Address of the ERC20 token.
     /// @param to Address to approve as spender.
     /// @dev Keeps ERC20 allowance at max once it falls below `LOWER_BOUND_APPROVAL`; native sentinel is ignored.
