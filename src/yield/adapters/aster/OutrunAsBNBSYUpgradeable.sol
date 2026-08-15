@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// SY adapter for Aster asBNB (BSC). The yield-bearing token is asBNB.
-// Deposit paths: (a) native BNB → mint asBNB via AsBnbMinter, (b) slisBNB → mint asBNB via AsBnbMinter,
-// (c) existing asBNB directly.
-// Exchange rate: asBNB→slisBNB via Minter, then slisBNB→BNB via Lista StakeManager.
-
 import {IAsBnbMinter} from "../../../integrations/aster/interfaces/IAsBnbMinter.sol";
-import {IListaBNBStakeManager} from "../../../integrations/aster/interfaces/IListaBNBStakeManager.sol";
+import {IListaStakeManager} from "../../../integrations/lista/interfaces/IListaStakeManager.sol";
 import {IYieldProxy} from "../../../integrations/aster/interfaces/IYieldProxy.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 
+/// @title Outrun Aster asBNB SY adapter
+/// @notice SY adapter for Aster asBNB (BSC). The yield-bearing token is asBNB. Deposit paths: (a) native BNB →
+///      mint asBNB via AsBnbMinter, (b) slisBNB → mint asBNB via AsBnbMinter, (c) existing asBNB directly.
+///      Exchange rate: asBNB→slisBNB via Minter, then slisBNB→BNB via Lista StakeManager.
 contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBSY") is SYBaseUpgradeable {
     struct OutrunAsBNBSYStorage {
         address AS_BNB_MINTER;
@@ -121,14 +120,14 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     // Two-step conversion: asBNB→slisBNB (via Minter), then slisBNB→BNB (via Lista StakeManager).
     function exchangeRate() public view override returns (uint256 res) {
         uint256 slisBnbPerShare = IAsBnbMinter(AS_BNB_MINTER()).convertToTokens(1 ether);
-        return IListaBNBStakeManager(STAKE_MANAGER()).convertSnBnbToBnb(slisBnbPerShare);
+        return IListaStakeManager(STAKE_MANAGER()).convertSnBnbToBnb(slisBnbPerShare);
     }
 
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         address _minter = AS_BNB_MINTER();
         if (tokenIn == NATIVE) {
             // Preview mirrors the live path: BNB -> slisBNB -> asBNB.
-            uint256 slisBnbAmount = IListaBNBStakeManager(STAKE_MANAGER()).convertBnbToSnBnb(amountTokenToDeposit);
+            uint256 slisBnbAmount = IListaStakeManager(STAKE_MANAGER()).convertBnbToSnBnb(amountTokenToDeposit);
             return IAsBnbMinter(_minter).convertToAsBnb(slisBnbAmount);
         }
         // slisBNB deposits convert through the Aster minter; asBNB deposits stay 1:1.

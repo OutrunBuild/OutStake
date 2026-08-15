@@ -4,12 +4,10 @@ pragma solidity ^0.8.35;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {IAaveV3Pool} from "../../src/integrations/aave/interfaces/IAaveV3Pool.sol";
 import {IAToken} from "../../src/integrations/aave/interfaces/IAToken.sol";
 import {IAsBnbMinter} from "../../src/integrations/aster/interfaces/IAsBnbMinter.sol";
-import {IListaBNBStakeManager} from "../../src/integrations/aster/interfaces/IListaBNBStakeManager.sol";
 import {IYieldProxy} from "../../src/integrations/aster/interfaces/IYieldProxy.sol";
 import {ILiquidityPool} from "../../src/integrations/etherfi/interfaces/ILiquidityPool.sol";
 import {IL2StETH} from "../../src/integrations/lido/interfaces/IL2StETH.sol";
@@ -28,6 +26,7 @@ import {OutrunSlisBNBSYUpgradeable} from "../../src/yield/adapters/lista/OutrunS
 import {OutrunWstETHSYUpgradeable} from "../../src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol";
 import {OutrunL2StakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol";
 import {OutrunStakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/OutrunStakedUsdsSYUpgradeable.sol";
+import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 
 contract SYAdaptersForkTest is Test {
     address internal constant OWNER = address(0xA11CE);
@@ -113,13 +112,13 @@ contract SYAdaptersForkTest is Test {
 
     function testFork_AsBnbExchangeRateMatchesTwoHopQuote() external {
         uint256 slisBnbPerShare = IAsBnbMinter(AS_BNB_MINTER).convertToTokens(1 ether);
-        uint256 expectedRate = IListaBNBStakeManager(asBnbStakeManager).convertSnBnbToBnb(slisBnbPerShare);
+        uint256 expectedRate = IListaStakeManager(asBnbStakeManager).convertSnBnbToBnb(slisBnbPerShare);
         assertEq(asBnbSy.exchangeRate(), expectedRate);
     }
 
     function testFork_AsBnbPreviewDepositNativeMatchesTwoHopQuote() external {
         uint256 amount = 1 ether;
-        uint256 slisQuote = IListaBNBStakeManager(asBnbStakeManager).convertBnbToSnBnb(amount);
+        uint256 slisQuote = IListaStakeManager(asBnbStakeManager).convertBnbToSnBnb(amount);
         uint256 expectedShares = IAsBnbMinter(AS_BNB_MINTER).convertToAsBnb(slisQuote);
         assertEq(asBnbSy.previewDeposit(address(0), amount), expectedShares);
     }
@@ -140,12 +139,10 @@ contract SYAdaptersForkTest is Test {
     function _deploySlisSy() internal returns (OutrunSlisBNBSYUpgradeable) {
         OutrunSlisBNBSYUpgradeable impl = new OutrunSlisBNBSYUpgradeable();
         return OutrunSlisBNBSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl),
-                        abi.encodeCall(
-                            OutrunSlisBNBSYUpgradeable.initialize, (OWNER, EXPECTED_SLIS_BNB, STAKE_MANAGER_PROXY)
-                        )
+            payable(ProxyTestHelper.deploy(
+                    address(impl),
+                    abi.encodeCall(
+                        OutrunSlisBNBSYUpgradeable.initialize, (OWNER, EXPECTED_SLIS_BNB, STAKE_MANAGER_PROXY)
                     )
                 ))
         );
@@ -153,22 +150,24 @@ contract SYAdaptersForkTest is Test {
 
     function _deployAsBnbSy() internal returns (OutrunAsBNBSYUpgradeable) {
         OutrunAsBNBSYUpgradeable impl = new OutrunAsBNBSYUpgradeable();
+        // Read the live slisBNB token from the minter before deploying (fork state, not a constant).
         address slis = IAsBnbMinter(AS_BNB_MINTER).token();
         return OutrunAsBNBSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl),
-                        abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (OWNER, AS_BNB, slis, AS_BNB_MINTER))
-                    )
+            payable(ProxyTestHelper.deploy(
+                    address(impl),
+                    abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (OWNER, AS_BNB, slis, AS_BNB_MINTER))
                 ))
         );
     }
 }
 
+// Shared Ethereum mainnet fork pin for the two mainnet fork contracts below. Declared once at file
+// level so the contracts cannot drift apart: each setUp asserts its fork block against this value.
+uint256 constant ETHEREUM_MAINNET_CHAIN_ID = 1;
+uint256 constant ETHEREUM_MAINNET_FORK_BLOCK = 25_108_887;
+
 contract SYAdaptersMainnetForkTest is Test {
     address internal constant OWNER = address(0xA11CE);
-    uint256 internal constant ETHEREUM_MAINNET_CHAIN_ID = 1;
-    uint256 internal constant ETHEREUM_MAINNET_FORK_BLOCK = 25_108_887;
 
     address internal constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
     address internal constant A_WETH = 0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8;
@@ -194,7 +193,11 @@ contract SYAdaptersMainnetForkTest is Test {
             return;
         }
 
-        vm.createSelectFork(mainnetRpc, ETHEREUM_MAINNET_FORK_BLOCK);
+        try vm.createSelectFork(mainnetRpc, ETHEREUM_MAINNET_FORK_BLOCK) returns (uint256) {}
+        catch {
+            vm.skip(true);
+            return;
+        }
         assertEq(block.chainid, ETHEREUM_MAINNET_CHAIN_ID);
         assertEq(block.number, ETHEREUM_MAINNET_FORK_BLOCK);
 
@@ -307,12 +310,10 @@ contract SYAdaptersMainnetForkTest is Test {
     function _deployAaveSy() internal returns (OutrunAaveV3SYUpgradeable) {
         OutrunAaveV3SYUpgradeable impl = new OutrunAaveV3SYUpgradeable();
         return OutrunAaveV3SYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl),
-                        abi.encodeCall(
-                            OutrunAaveV3SYUpgradeable.initialize, ("SY Aave WETH", "SY aWETH", A_WETH, AAVE_POOL, OWNER)
-                        )
+            payable(ProxyTestHelper.deploy(
+                    address(impl),
+                    abi.encodeCall(
+                        OutrunAaveV3SYUpgradeable.initialize, ("SY Aave WETH", "SY aWETH", A_WETH, AAVE_POOL, OWNER)
                     )
                 ))
         );
@@ -321,10 +322,8 @@ contract SYAdaptersMainnetForkTest is Test {
     function _deployLidoSy() internal returns (OutrunWstETHSYUpgradeable) {
         OutrunWstETHSYUpgradeable impl = new OutrunWstETHSYUpgradeable();
         return OutrunWstETHSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl), abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (OWNER, STETH, WSTETH))
-                    )
+            payable(ProxyTestHelper.deploy(
+                    address(impl), abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (OWNER, STETH, WSTETH))
                 ))
         );
     }
@@ -332,10 +331,8 @@ contract SYAdaptersMainnetForkTest is Test {
     function _deployEthenaSy() internal returns (OutrunStakedUSDeSYUpgradeable) {
         OutrunStakedUSDeSYUpgradeable impl = new OutrunStakedUSDeSYUpgradeable();
         return OutrunStakedUSDeSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl), abi.encodeCall(OutrunStakedUSDeSYUpgradeable.initialize, (OWNER, USDE, SUSDE))
-                    )
+            payable(ProxyTestHelper.deploy(
+                    address(impl), abi.encodeCall(OutrunStakedUSDeSYUpgradeable.initialize, (OWNER, USDE, SUSDE))
                 ))
         );
     }
@@ -343,10 +340,8 @@ contract SYAdaptersMainnetForkTest is Test {
     function _deploySkySy() internal returns (OutrunStakedUsdsSYUpgradeable) {
         OutrunStakedUsdsSYUpgradeable impl = new OutrunStakedUsdsSYUpgradeable();
         return OutrunStakedUsdsSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl), abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (OWNER, USDS, SUSDS))
-                    )
+            payable(ProxyTestHelper.deploy(
+                    address(impl), abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (OWNER, USDS, SUSDS))
                 ))
         );
     }
@@ -354,8 +349,6 @@ contract SYAdaptersMainnetForkTest is Test {
 
 contract SYAdaptersEtherfiMainnetForkTest is Test {
     address internal constant OWNER = address(0xA11CE);
-    uint256 internal constant ETHEREUM_MAINNET_CHAIN_ID = 1;
-    uint256 internal constant ETHEREUM_MAINNET_FORK_BLOCK = 25_108_887;
 
     address internal constant EETH = 0x35fA164735182de50811E8e2E824cFb9B6118ac2;
     address internal constant WEETH = 0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee;
@@ -420,13 +413,11 @@ contract SYAdaptersEtherfiMainnetForkTest is Test {
     function _deployEtherfiSy() internal returns (OutrunWeETHSYUpgradeable) {
         OutrunWeETHSYUpgradeable impl = new OutrunWeETHSYUpgradeable();
         return OutrunWeETHSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl),
-                        abi.encodeCall(
-                            OutrunWeETHSYUpgradeable.initialize,
-                            (OWNER, EETH, WEETH, ETHERFI_DEPOSIT_ADAPTER, ETHERFI_LIQUIDITY_POOL)
-                        )
+            payable(ProxyTestHelper.deploy(
+                    address(impl),
+                    abi.encodeCall(
+                        OutrunWeETHSYUpgradeable.initialize,
+                        (OWNER, EETH, WEETH, ETHERFI_DEPOSIT_ADAPTER, ETHERFI_LIQUIDITY_POOL)
                     )
                 ))
         );
@@ -465,6 +456,10 @@ contract SYAdaptersOptimismForkTest is Test {
         assertGt(OP_STETH.code.length, 0);
 
         lidoL2Sy = _deployLidoL2Sy();
+        // L1_STETH is an Ethereum mainnet address with no code on this L2 fork, so its wiring is
+        // asserted through the adapter's stored assetInfo() rather than a code-length check.
+        (, address l1Underlying,) = lidoL2Sy.assetInfo();
+        assertEq(l1Underlying, L1_STETH);
     }
 
     function testOptimismFork_LidoL2WrappableWstEthMatchesLiveQuote() external {
@@ -509,12 +504,10 @@ contract SYAdaptersOptimismForkTest is Test {
     function _deployLidoL2Sy() internal returns (OutrunL2WrappableWstETHSYUpgradeable) {
         OutrunL2WrappableWstETHSYUpgradeable impl = new OutrunL2WrappableWstETHSYUpgradeable();
         return OutrunL2WrappableWstETHSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl),
-                        abi.encodeCall(
-                            OutrunL2WrappableWstETHSYUpgradeable.initialize, (OWNER, OP_STETH, OP_WSTETH, L1_STETH, 18)
-                        )
+            payable(ProxyTestHelper.deploy(
+                    address(impl),
+                    abi.encodeCall(
+                        OutrunL2WrappableWstETHSYUpgradeable.initialize, (OWNER, OP_STETH, OP_WSTETH, L1_STETH, 18)
                     )
                 ))
         );
@@ -605,13 +598,10 @@ contract SYAdaptersBaseForkTest is Test {
     function _deploySkyL2Sy() internal returns (OutrunL2StakedUsdsSYUpgradeable) {
         OutrunL2StakedUsdsSYUpgradeable impl = new OutrunL2StakedUsdsSYUpgradeable();
         return OutrunL2StakedUsdsSYUpgradeable(
-            payable(address(
-                    new ERC1967Proxy(
-                        address(impl),
-                        abi.encodeCall(
-                            OutrunL2StakedUsdsSYUpgradeable.initialize,
-                            (OWNER, BASE_USDC, BASE_USDS, BASE_SUSDS, BASE_PSM3)
-                        )
+            payable(ProxyTestHelper.deploy(
+                    address(impl),
+                    abi.encodeCall(
+                        OutrunL2StakedUsdsSYUpgradeable.initialize, (OWNER, BASE_USDC, BASE_USDS, BASE_SUSDS, BASE_PSM3)
                     )
                 ))
         );
