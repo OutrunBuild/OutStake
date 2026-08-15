@@ -1,66 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {Test} from "forge-std/Test.sol";
-
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
-import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
-import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
-import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
-import {MockLzEndpoint} from "./mocks/OFTMocks.sol";
-import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
-import {PositionMockOracle, PositionMockToken} from "./mocks/PositionMocks.sol";
+import {PositionStackTestBase} from "./helpers/PositionStackTestBase.sol";
 import {EmptyMockLauncher} from "./mocks/EmptyMockLauncher.sol";
 
-contract RouterProxyIntegrationTest is Test {
-    address internal owner = address(0xA11CE);
-    address internal user = address(0xB0B);
-    address internal revenuePool = address(0xFEE);
-
-    PositionMockToken internal token;
-    OutrunL2StakedTokenSYUpgradeable internal sy;
-    OutrunUniversalAssetsUpgradeable internal uAsset;
-    OutrunStakingPositionUpgradeable internal position;
+contract RouterProxyIntegrationTest is PositionStackTestBase {
     OutrunRouter internal router;
 
     function setUp() external {
-        token = new PositionMockToken();
-        PositionMockOracle oracle = new PositionMockOracle();
-
-        sy = OutrunL2StakedTokenSYUpgradeable(
-            payable(ProxyTestHelper.deploy(
-                    address(new OutrunL2StakedTokenSYUpgradeable()),
-                    abi.encodeCall(
-                        OutrunL2StakedTokenSYUpgradeable.initialize,
-                        ("SY Token", "SYT", owner, address(token), address(oracle), address(token), 18)
-                    )
-                ))
-        );
-
-        MockLzEndpoint endpoint = new MockLzEndpoint();
-        uAsset = OutrunUniversalAssetsUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunUniversalAssetsUpgradeable(18, address(endpoint))),
-                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("UAsset", "UAST", 18, owner))
-            )
-        );
-
-        position = OutrunStakingPositionUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(uAsset), address(0xC0FFEE))
-                )
-            )
-        );
-
-        vm.prank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
-
+        _deployPositionStack();
         router = new OutrunRouter(owner, address(new EmptyMockLauncher()));
-        token.mint(user, 100e18);
     }
 
     function testRouterStakeFromTokenUsesProxyBackedContracts() external {

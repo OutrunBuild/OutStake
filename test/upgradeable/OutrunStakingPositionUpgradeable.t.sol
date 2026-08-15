@@ -1,73 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {Test} from "forge-std/Test.sol";
-
-import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
-import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
-import {MockLzEndpoint} from "./mocks/OFTMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
+import {PositionStackTestBase} from "./helpers/PositionStackTestBase.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
 import {MockPositionUUPSV2} from "./mocks/MockUUPSVersion.sol";
-import {PositionMockToken, PositionMockOracle, RejectZeroTransferMockSY} from "./mocks/PositionMocks.sol";
+import {RejectZeroTransferMockSY} from "./mocks/PositionMocks.sol";
 
-contract OutrunStakingPositionUpgradeableTest is Test {
-    address internal owner = address(0xA11CE);
-    address internal user = address(0xB0B);
-    address internal revenuePool = address(0xFEE);
-    address internal keeper = address(0xC0FFEE);
-
-    PositionMockToken internal token;
-    OutrunL2StakedTokenSYUpgradeable internal sy;
-    OutrunUniversalAssetsUpgradeable internal uAsset;
-    OutrunStakingPositionUpgradeable internal position;
-
+contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
     MockERC20 internal mixedUnderlying;
     MockSY internal mixedSy;
     MockUAsset internal mixedUAsset;
     OutrunStakingPositionUpgradeable internal mixedPosition;
 
     function setUp() external {
-        token = new PositionMockToken();
-        PositionMockOracle oracle = new PositionMockOracle();
+        _deployPositionStack();
 
-        OutrunL2StakedTokenSYUpgradeable syImpl = new OutrunL2StakedTokenSYUpgradeable();
-        sy = OutrunL2StakedTokenSYUpgradeable(
-            payable(ProxyTestHelper.deploy(
-                    address(syImpl),
-                    abi.encodeCall(
-                        OutrunL2StakedTokenSYUpgradeable.initialize,
-                        ("SY Token", "SYT", owner, address(token), address(oracle), address(token), 18)
-                    )
-                ))
-        );
-
-        MockLzEndpoint endpoint = new MockLzEndpoint();
-        OutrunUniversalAssetsUpgradeable uAssetImpl = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
-        uAsset = OutrunUniversalAssetsUpgradeable(
-            ProxyTestHelper.deploy(
-                address(uAssetImpl),
-                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("UAsset", "UAST", 18, owner))
-            )
-        );
-
-        OutrunStakingPositionUpgradeable positionImpl = new OutrunStakingPositionUpgradeable();
-        position = OutrunStakingPositionUpgradeable(
-            ProxyTestHelper.deploy(
-                address(positionImpl),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(uAsset), keeper)
-                )
-            )
-        );
-
-        vm.prank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
-
-        token.mint(user, 100e18);
         vm.startPrank(user);
         token.approve(address(sy), type(uint256).max);
         sy.deposit(user, address(token), 100e18, 0);
@@ -200,7 +150,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         (uint256 positionId,) = position.stake(10e18, 3650, user, user);
 
-        (,,,, uint128 deadline) = position.positions(positionId);
+        (,,, uint128 deadline) = position.positions(positionId);
         assertEq(deadline, uint128(block.timestamp + 3650 * 1 days), "deadline must equal now + lockupDays");
     }
 
@@ -208,7 +158,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         (uint256 positionId,) = position.stake(10e18, 0, user, user);
 
-        (,,,, uint128 deadline) = position.positions(positionId);
+        (,,, uint128 deadline) = position.positions(positionId);
         assertEq(deadline, uint128(block.timestamp), "zero-day deadline equals now");
 
         // No time warp: the lock check passes in the same block, so the position redeems at once.
@@ -236,7 +186,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.InsufficientTokenOut.selector, 10e18, 10e18 + 1));
         position.redeem(positionId, 10e18, user, address(sy), 10e18 + 1);
 
-        (, uint256 syStaked, uint256 uAssetMinted,,) = position.positions(positionId);
+        (, uint256 syStaked, uint256 uAssetMinted,) = position.positions(positionId);
         assertEq(syStaked, 10e18);
         assertEq(uAssetMinted, 10e18);
         assertEq(sy.balanceOf(user), 90e18);
@@ -252,7 +202,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         (uint256 positionId, uint256 minted) = mixedPosition.stake(1e6, 30, user, user);
 
-        (, uint256 syStaked, uint256 uAssetMinted,,) = mixedPosition.positions(positionId);
+        (, uint256 syStaked, uint256 uAssetMinted,) = mixedPosition.positions(positionId);
         assertEq(minted, 1e18);
         assertEq(syStaked, 1e6);
         assertEq(uAssetMinted, 1e18);
@@ -304,7 +254,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         // No state may change: SY must not be pulled, and no position may be created.
         assertEq(mixedPosition.syTotalStaking(), syTotalStakingBefore);
         assertEq(mixedSy.balanceOf(user), userSYBefore);
-        (address positionOwner,,,,) = mixedPosition.positions(1);
+        (address positionOwner,,,) = mixedPosition.positions(1);
         assertEq(positionOwner, address(0));
 
         // The failed dust stake must not have consumed the position id counter: a fresh stake at a
@@ -336,7 +286,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         uint256 drawn = mixedPosition.drawUAsset(positionId, user);
 
-        (, uint256 syStaked, uint256 uAssetMinted,,) = mixedPosition.positions(positionId);
+        (, uint256 syStaked, uint256 uAssetMinted,) = mixedPosition.positions(positionId);
         assertEq(drawn, 5e17);
         assertEq(syStaked, 1e6);
         assertEq(uAssetMinted, 15e17);
@@ -445,7 +395,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         mixedPosition.redeem(positionId, 5e5, user, address(mixedSy), 5e5);
 
-        (, uint256 syStakedDuringRepay, uint256 uAssetMintedDuringRepay,,) = mixedPosition.positions(positionId);
+        (, uint256 syStakedDuringRepay, uint256 uAssetMintedDuringRepay,) = mixedPosition.positions(positionId);
         assertEq(syStakedDuringRepay, 5e5);
         assertEq(uAssetMintedDuringRepay, 5e17);
         assertEq(mixedUAsset.syStakedDuringRepay(), 5e5);
@@ -516,7 +466,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         mixedSy.setExchangeRate(5e17);
         vm.warp(block.timestamp + 31 days);
 
-        (, uint256 syStakedBefore, uint256 uAssetMintedBefore,,) = mixedPosition.positions(positionId);
+        (, uint256 syStakedBefore, uint256 uAssetMintedBefore,) = mixedPosition.positions(positionId);
         uint256 userSYBefore = mixedSy.balanceOf(user);
         uint256 keeperUAssetBefore = mixedUAsset.balanceOf(keeper);
 
@@ -527,7 +477,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.stopPrank();
 
         // Revert must be atomic: keeper uAsset is not burned and position state is unchanged.
-        (, uint256 syStakedAfter, uint256 uAssetMintedAfter,,) = mixedPosition.positions(positionId);
+        (, uint256 syStakedAfter, uint256 uAssetMintedAfter,) = mixedPosition.positions(positionId);
         assertEq(syStakedAfter, syStakedBefore);
         assertEq(uAssetMintedAfter, uAssetMintedBefore);
         assertEq(mixedSy.balanceOf(user), userSYBefore);
@@ -608,7 +558,7 @@ contract OutrunStakingPositionUpgradeableTest is Test {
         vm.prank(user);
         (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
 
-        (,,,, uint128 deadline) = mixedPosition.positions(positionId);
+        (,,, uint128 deadline) = mixedPosition.positions(positionId);
         vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeNotExpired.selector, deadline));
         mixedPosition.previewKeepRedeem(positionId, 1e18);
     }

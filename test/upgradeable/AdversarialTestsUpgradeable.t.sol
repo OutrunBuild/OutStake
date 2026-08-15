@@ -329,7 +329,7 @@ contract AdversarialTests is Test {
         // The malicious SY's attempt to re-enter would have failed silently
         // (we don't check return value in the malicious callback)
         // But importantly, no extra position was created
-        (address posOwner,, uint256 posUAssetMinted,,) = malPosition.positions(positionId);
+        (address posOwner,, uint256 posUAssetMinted,) = malPosition.positions(positionId);
         assertEq(posOwner, alice, "Position owner should still be Alice");
         assertEq(posUAssetMinted, 50e18, "Position debt should be 50");
     }
@@ -482,8 +482,8 @@ contract AdversarialTests is Test {
         uint256 bobDrawn = position.drawUAsset(bobPosId, bob);
 
         // Verify independent state
-        (, uint256 aliceSyStaked, uint256 aliceUAssetMinted,,) = position.positions(alicePosId);
-        (, uint256 bobSyStaked, uint256 bobUAssetMinted,,) = position.positions(bobPosId);
+        (, uint256 aliceSyStaked, uint256 aliceUAssetMinted,) = position.positions(alicePosId);
+        (, uint256 bobSyStaked, uint256 bobUAssetMinted,) = position.positions(bobPosId);
 
         assertEq(aliceSyStaked, 100e18, "Alice SY staked should be 100");
         assertEq(aliceUAssetMinted, 200e18, "Alice uAsset minted should be 200 (100 initial + 100 draw)");
@@ -525,12 +525,12 @@ contract AdversarialTests is Test {
         position.redeem(alicePosId, 50e18, alice, address(sy), 0);
 
         // Verify Bob's position is unaffected
-        (, uint256 bobSyStaked, uint256 bobUAssetMinted,,) = position.positions(bobPosId);
+        (, uint256 bobSyStaked, uint256 bobUAssetMinted,) = position.positions(bobPosId);
         assertEq(bobSyStaked, 100e18, "Bob SY staked should still be 100");
         assertEq(bobUAssetMinted, 100e18, "Bob uAsset minted should still be 100");
 
         // Alice's position should be reduced
-        (, uint256 aliceSyStaked, uint256 aliceUAssetMinted,,) = position.positions(alicePosId);
+        (, uint256 aliceSyStaked, uint256 aliceUAssetMinted,) = position.positions(alicePosId);
         assertEq(aliceSyStaked, 50e18, "Alice SY staked should be 50");
         assertEq(aliceUAssetMinted, 50e18, "Alice uAsset minted should be 50");
     }
@@ -806,7 +806,7 @@ contract AdversarialTests is Test {
 
         // Try to create position with same ID (impossible due to auto-increment)
         // But verify the position owner is set correctly
-        (address posOwner,,,,) = position.positions(positionId);
+        (address posOwner,,,) = position.positions(positionId);
         assertEq(posOwner, alice, "Owner should be Alice");
 
         // Bob cannot draw from Alice's position
@@ -827,6 +827,36 @@ contract AdversarialTests is Test {
         vm.prank(bob);
         vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
         position.redeem(positionId, 100e18, bob, address(sy), 0);
+    }
+
+    /**
+     * @notice Access check precedes zero-address validation on drawUAsset and redeem
+     * @dev Regression for the F-37 guard merge: the onlyPositionOwner modifier runs
+     *      before the function-body ZeroInput checks, so a non-owner calling with a
+     *      zero recipient/receiver reverts with PositionAccessDenied, not ZeroInput.
+     */
+    function test_Adversarial_AccessCheckPrecedesZeroAddressInputCheck() external {
+        vm.prank(alice);
+        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
+
+        // Non-owner + zero recipient: access denial wins over ZeroInput.
+        vm.prank(bob);
+        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
+        position.drawUAsset(positionId, address(0));
+
+        // Non-owner + zero receiver: same revert precedence on redeem.
+        vm.prank(bob);
+        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
+        position.redeem(positionId, 50e18, address(0), address(sy), 0);
+
+        // Owner path: the in-body zero-address checks still fire once the access check passes.
+        vm.prank(alice);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        position.drawUAsset(positionId, address(0));
+
+        vm.prank(alice);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        position.redeem(positionId, 50e18, address(0), address(sy), 0);
     }
 
     /**
@@ -1050,7 +1080,7 @@ contract AdversarialTests is Test {
         assertEq(syOut, 50e18, "SY output should be exactly 50");
 
         // Verify position state: only 50 SY staked remains, exactly 50 uAsset debt
-        (address posOwner,, uint256 posUAssetMinted,,) = malPosition.positions(positionId);
+        (address posOwner,, uint256 posUAssetMinted,) = malPosition.positions(positionId);
         assertEq(posOwner, alice, "position owner should remain alice");
         assertEq(posUAssetMinted, 50e18, "position debt should be reduced to 50");
 

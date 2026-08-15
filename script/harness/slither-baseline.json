@@ -102,15 +102,6 @@
       "location": "src/position/OutrunStakingPositionUpgradeable.sol#L446-L491",
       "summary": "OutrunStakingPositionUpgradeable.keepRedeem(uint256,uint256,address) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.keepRedeem(uint256,uint256,address) uses timestamp for comparisons"
-    },
-    {
-      "id": "d48e12fdf68e5a1fb23242e208336c419d3ba15bc30ff031ba6b799ca9dbd6db",
-      "check": "dead-code",
-      "impact": "Informational",
-      "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L648-L662",
-      "summary": "OutrunStakingPositionUpgradeable._previewRedeemPositionDebt(uint256,uint256) is never used and should be removed",
-      "key": "dead-code|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._previewRedeemPositionDebt(uint256,uint256) is never used and should be removed"
     }
   ]
 }

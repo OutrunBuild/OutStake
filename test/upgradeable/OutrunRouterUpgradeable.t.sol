@@ -243,7 +243,7 @@ contract OutrunRouterTest is Test {
         vm.prank(owner);
         router.genesisBySY(address(position), 100e18, 30, 1, owner, 0);
 
-        (address positionOwner, uint256 syStaked, uint256 uAssetMinted,, uint128 deadline) = position.positions(1);
+        (address positionOwner, uint256 syStaked, uint256 uAssetMinted, uint128 deadline) = position.positions(1);
         (uint256 verseId, uint128 launcherUAsset, address launcherUser) = launcher.snapshot();
 
         assertEq(positionOwner, owner);
@@ -280,7 +280,7 @@ contract OutrunRouterTest is Test {
         vm.prank(owner);
         (uint256 positionId, uint256 uAssetMinted) = router.stakeFromSY(address(position), 100e18, stakeParam);
 
-        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,, uint128 deadline) =
+        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted, uint128 deadline) =
             position.positions(positionId);
 
         // Position is owned by owner
@@ -303,7 +303,7 @@ contract OutrunRouterTest is Test {
         vm.prank(owner);
         (uint256 positionId, uint256 uAssetMinted) = router.stakeFromSY(address(position), 100e18, stakeParam);
 
-        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,,) = position.positions(positionId);
+        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,) = position.positions(positionId);
 
         // Position is owned by owner
         assertEq(positionOwner, owner);
@@ -325,7 +325,7 @@ contract OutrunRouterTest is Test {
         (uint256 positionId, uint256 uAssetMinted) =
             router.stakeFromToken(address(position), address(underlying), 100e18, stakeParam);
 
-        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,, uint128 deadline) =
+        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted, uint128 deadline) =
             position.positions(positionId);
 
         // Position is owned by owner
@@ -349,7 +349,7 @@ contract OutrunRouterTest is Test {
         (uint256 positionId, uint256 uAssetMinted) =
             router.stakeFromToken(address(position), address(underlying), 100e18, stakeParam);
 
-        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,,) = position.positions(positionId);
+        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,) = position.positions(positionId);
 
         // Position is owned by owner
         assertEq(positionOwner, owner);

@@ -109,7 +109,7 @@ contract PositionHandler is Test {
         ghostTotalUAssetMintedInPositions += uAssetMinted;
 
         // Update max deadline
-        (,,,, uint128 deadline) = position.positions(positionId);
+        (,,, uint128 deadline) = position.positions(positionId);
         if (deadline > ghostMaxDeadline) {
             ghostMaxDeadline = deadline;
         }
@@ -130,7 +130,7 @@ contract PositionHandler is Test {
         uint256 positionId = activePositionIds[positionIndex];
 
         // Check if actor owns this position
-        (address positionOwner,,,,) = position.positions(positionId);
+        (address positionOwner,,,) = position.positions(positionId);
         if (positionOwner != actor) return;
 
         // Try to draw - will revert if no appreciation
@@ -203,7 +203,7 @@ contract PositionHandler is Test {
         uint256 positionId = activePositionIds[positionIndex];
 
         // Check if actor owns this position
-        (address positionOwner, uint256 syStaked,,,) = position.positions(positionId);
+        (address positionOwner, uint256 syStaked,,) = position.positions(positionId);
         if (positionOwner != actor || syStaked == 0) return;
 
         // Warp to ensure position is mature
@@ -229,7 +229,7 @@ contract PositionHandler is Test {
             ghostTotalUAssetMintedInPositions -= uAssetBurned;
 
             // Check if position is fully redeemed
-            (, uint256 newSyStaked,,,) = position.positions(positionId);
+            (, uint256 newSyStaked,,) = position.positions(positionId);
             if (newSyStaked == 0) {
                 // Position deleted, remove from tracking
                 _removePosition(positionId);
@@ -248,7 +248,7 @@ contract PositionHandler is Test {
         uint256 positionIndex = bound(positionIndexRaw, 0, activePositionIds.length - 1);
         uint256 positionId = activePositionIds[positionIndex];
 
-        (address positionOwner, uint256 syStaked, uint256 uAssetMinted,,) = position.positions(positionId);
+        (address positionOwner, uint256 syStaked, uint256 uAssetMinted,) = position.positions(positionId);
         if (positionOwner == address(0) || syStaked == 0) return;
 
         // Warp to ensure position is mature
@@ -273,7 +273,7 @@ contract PositionHandler is Test {
             ghostTotalUAssetMintedInPositions -= amountInUAsset;
 
             // Check if position is fully redeemed
-            (, uint256 newSyStaked,,,) = position.positions(positionId);
+            (, uint256 newSyStaked,,) = position.positions(positionId);
             if (newSyStaked == 0) {
                 _removePosition(positionId);
             }
@@ -301,7 +301,7 @@ contract PositionHandler is Test {
 
     // Helper to estimate uAsset burn for redemption
     function _estimateUAssetBurn(uint256 positionId, uint256 syRedeemed) internal view returns (uint256) {
-        (, uint256 syStaked, uint256 uAssetMinted,,) = position.positions(positionId);
+        (, uint256 syStaked, uint256 uAssetMinted,) = position.positions(positionId);
         if (syRedeemed == syStaked) return uAssetMinted;
 
         uint256 uAssetBurned = Math.mulDiv(uAssetMinted, syRedeemed, syStaked, Math.Rounding.Ceil);
@@ -387,7 +387,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
         for (uint256 i = 0; i < activeCount; i++) {
             uint256 positionId = handler.getActivePositionId(i);
-            (, uint256 syStaked,,,) = position.positions(positionId);
+            (, uint256 syStaked,,) = position.positions(positionId);
             if (syStaked > 0) {
                 totalPositionSY += syStaked;
             }
@@ -447,7 +447,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
         for (uint256 i = 0; i < activeCount; i++) {
             uint256 positionId = handler.getActivePositionId(i);
-            (,, uint256 uAssetMinted,,) = position.positions(positionId);
+            (,, uint256 uAssetMinted,) = position.positions(positionId);
             if (uAssetMinted > 0) {
                 totalPositionDebt += uAssetMinted;
             }
@@ -475,7 +475,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
         for (uint256 i = 0; i < activeCount; i++) {
             uint256 positionId = handler.getActivePositionId(i);
-            (address positionOwner, uint256 syStaked, uint256 uAssetMinted,,) = position.positions(positionId);
+            (address positionOwner, uint256 syStaked, uint256 uAssetMinted,) = position.positions(positionId);
 
             // If position is active (has owner), check consistency
             if (positionOwner != address(0) && syStaked > 0) {
@@ -493,7 +493,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
         for (uint256 i = 0; i < activeCount; i++) {
             uint256 positionId = handler.getActivePositionId(i);
-            (address positionOwner, uint256 syStaked,,,) = position.positions(positionId);
+            (address positionOwner, uint256 syStaked,,) = position.positions(positionId);
 
             // If position is tracked as active, it should either have a valid owner
             // or be deleted from tracking
@@ -514,7 +514,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
         for (uint256 i = 0; i < activeCount; i++) {
             uint256 positionId = handler.getActivePositionId(i);
-            (, uint256 syStaked, uint256 uAssetMinted,,) = position.positions(positionId);
+            (, uint256 syStaked, uint256 uAssetMinted,) = position.positions(positionId);
             if (syStaked > 0) {
                 totalPositionSY += syStaked;
             }

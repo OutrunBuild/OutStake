@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+/**
+ * @title Outrun router interface
+ * @notice User-facing entry surface of the OutStake protocol: token-to-SY conversion, locked staking,
+ *      wrap-staking, and genesis flows. Implemented by OutrunRouter; every state-changing entrypoint is
+ *      caller-funded (pulls its input from msg.sender) and enforces a per-flow slippage floor.
+ */
 interface IOutrunRouter {
     /**
      * @notice Parameters shared by locked-stake router entrypoints.
@@ -63,8 +69,7 @@ interface IOutrunRouter {
 
     /**
      * @notice Quotes the uAsset amount minted when staking existing SY.
-     * @dev Reads `SP.previewStake` for a quote-only SY-funded stake. `stakeParam` fields other than the
-     * current implementation's unused-variable touch do not alter the quote.
+     * @dev Reads `SP.previewStake` for a quote-only SY-funded stake. `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param amountInSY Amount of SY to stake.
      * @param stakeParam Stake settings carried into the preview.
@@ -98,12 +103,12 @@ interface IOutrunRouter {
      * @param tokenAmount Amount of `tokenIn` to convert and stake.
      * @param stakeParam Stake settings including lockup, SY/uAsset slippage floors, owner, and receiver.
      * @return positionId Newly created staking position id.
-     * @return UAssetMinted Amount of uAsset minted for the stake.
+     * @return mintedUAsset Amount of uAsset minted for the stake.
      */
     function stakeFromToken(address SP, address tokenIn, uint256 tokenAmount, StakeParam calldata stakeParam)
         external
         payable
-        returns (uint256 positionId, uint256 UAssetMinted);
+        returns (uint256 positionId, uint256 mintedUAsset);
 
     /**
      * @notice Stakes existing SY into the stake manager.
@@ -113,46 +118,46 @@ interface IOutrunRouter {
      * @param amountInSY Amount of SY to stake.
      * @param stakeParam Stake settings including lockup, uAsset slippage floor, owner, and receiver.
      * @return positionId Newly created staking position id.
-     * @return UAssetMinted Amount of uAsset minted for the stake.
+     * @return mintedUAsset Amount of uAsset minted for the stake.
      */
     function stakeFromSY(address SP, uint256 amountInSY, StakeParam calldata stakeParam)
         external
-        returns (uint256 positionId, uint256 UAssetMinted);
+        returns (uint256 positionId, uint256 mintedUAsset);
 
     /**
      * @notice Deposits an input token, converts it into SY, and wrap-stakes it.
      * @dev Caller-funded path. Derives canonical SY from `SP.SY()`, mints SY into the router, and enters the
-     * shared wrap pool for `uAssetRecipient`; no locked position id is created.
+     * shared wrap pool for `uAssetReceiver`; no locked position id is created.
      * @param SP Stake manager receiving the wrapped stake.
      * @param tokenIn Token to deposit into SY.
      * @param tokenAmount Amount of `tokenIn` to convert and wrap-stake.
      * @param minSyOut Minimum acceptable SY output from deposit.
-     * @param uAssetRecipient Recipient of the wrapped uAsset position.
+     * @param uAssetReceiver Recipient of the wrapped uAsset position.
      * @param minUAssetMinted Minimum acceptable uAsset minted by wrap stake.
-     * @return UAssetMinted Amount of uAsset minted to `uAssetRecipient`.
+     * @return mintedUAsset Amount of uAsset minted to `uAssetReceiver`.
      */
     function wrapStakeFromToken(
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         uint256 minSyOut,
-        address uAssetRecipient,
+        address uAssetReceiver,
         uint256 minUAssetMinted
-    ) external payable returns (uint256 UAssetMinted);
+    ) external payable returns (uint256 mintedUAsset);
 
     /**
      * @notice Wrap-stakes existing SY into uAsset.
      * @dev Caller-funded path. Derives canonical SY from `SP.SY()`, pulls SY from `msg.sender`, and enters the
-     * shared wrap pool for `uAssetRecipient`; no locked position id is created.
+     * shared wrap pool for `uAssetReceiver`; no locked position id is created.
      * @param SP Stake manager receiving the wrapped stake.
      * @param amountInSY Amount of SY to wrap-stake.
-     * @param uAssetRecipient Recipient of the minted uAsset.
+     * @param uAssetReceiver Recipient of the minted uAsset.
      * @param minUAssetMinted Minimum acceptable uAsset minted by wrap stake.
-     * @return UAssetMinted Amount of uAsset minted to `uAssetRecipient`.
+     * @return mintedUAsset Amount of uAsset minted to `uAssetReceiver`.
      */
-    function wrapStakeFromSY(address SP, uint256 amountInSY, address uAssetRecipient, uint256 minUAssetMinted)
+    function wrapStakeFromSY(address SP, uint256 amountInSY, address uAssetReceiver, uint256 minUAssetMinted)
         external
-        returns (uint256 UAssetMinted);
+        returns (uint256 mintedUAsset);
 
     /**
      * @notice Creates a genesis position starting from an input token.
@@ -206,5 +211,5 @@ interface IOutrunRouter {
     function setMemeverseLauncher(address memeverseLauncher) external;
 
     error InvalidParam();
-    error InsufficientUAssetMinted(uint256 UAssetMinted, uint256 minMinted);
+    error InsufficientUAssetMinted(uint256 mintedUAsset, uint256 minMinted);
 }

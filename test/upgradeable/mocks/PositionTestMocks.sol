@@ -201,7 +201,7 @@ contract MockUAsset is ERC20, IUniversalAssets {
 
         IOutrunStakeManager _positionProbe = positionProbe;
         if (address(_positionProbe) != address(0)) {
-            (, syStakedDuringRepay, uAssetMintedDuringRepay,,) = _positionProbe.positions(positionIdProbe);
+            (, syStakedDuringRepay, uAssetMintedDuringRepay,) = _positionProbe.positions(positionIdProbe);
             syTotalStakingDuringRepay = _positionProbe.syTotalStaking();
             syWrapStakingDuringRepay = _positionProbe.syWrapStaking();
             wrapUAssetDebtDuringRepay = _positionProbe.wrapUAssetDebt();

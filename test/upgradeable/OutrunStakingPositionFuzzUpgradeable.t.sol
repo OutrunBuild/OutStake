@@ -139,7 +139,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         assertEq(drawAmount, expectedDrawAmount, "draw amount should match appreciation");
 
         // Verify position state after draw
-        (, uint256 syStaked, uint256 positionUAssetMinted,,) = position.positions(positionId);
+        (, uint256 syStaked, uint256 positionUAssetMinted,) = position.positions(positionId);
         assertEq(syStaked, amountInSY, "syStaked should remain unchanged");
         assertEq(positionUAssetMinted, expectedCurrentValue, "UAssetMinted should equal current value after draw");
         assertEq(uAsset.balanceOf(owner), expectedCurrentValue, "owner should have total minted uAsset");
@@ -182,7 +182,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         assertEq(syOut, syRedeemed, "SY out should equal redeemed amount");
 
         // Verify remaining position state
-        (, uint256 remainingSyStaked, uint256 remainingUAssetMinted,,) = position.positions(positionId);
+        (, uint256 remainingSyStaked, uint256 remainingUAssetMinted,) = position.positions(positionId);
         assertEq(remainingSyStaked, amountInSY - syRedeemed, "remaining syStaked incorrect");
         assertEq(remainingUAssetMinted, totalUAssetMinted - expectedBurn, "remaining UAssetMinted incorrect");
     }
@@ -225,7 +225,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         assertEq(actualBurn, 1, "redeem should round debt burn up");
         assertEq(actualSyOut, 1, "redeem SY out should match redeemed SY");
 
-        (, uint256 remainingSyStaked, uint256 remainingUAssetMinted,,) = position.positions(positionId);
+        (, uint256 remainingSyStaked, uint256 remainingUAssetMinted,) = position.positions(positionId);
         assertEq(remainingSyStaked, 2, "remaining SY should be preserved");
         assertEq(remainingUAssetMinted, 1, "remaining debt should reflect rounded burn");
     }
@@ -249,7 +249,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         assertEq(actualBurn, minted, "full redeem should burn exact remaining debt");
         assertEq(actualSyOut, 2, "full redeem SY out should match redeemed SY");
 
-        (address positionOwner, uint256 remainingSyStaked, uint256 remainingUAssetMinted,,) =
+        (address positionOwner, uint256 remainingSyStaked, uint256 remainingUAssetMinted,) =
             position.positions(positionId);
         assertEq(positionOwner, address(0), "position should be deleted after full redeem");
         assertEq(remainingSyStaked, 0, "full redeem should leave no SY");
@@ -280,7 +280,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         position.redeem(positionId, amountInSY, owner, address(sy), 0);
 
         // Verify position deleted
-        (address positionOwner,,,,) = position.positions(positionId);
+        (address positionOwner,,,) = position.positions(positionId);
         assertEq(positionOwner, address(0), "position should be deleted after full redeem");
 
         // Verify accounting
@@ -693,7 +693,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         assertEq(uAssetMinted, largeAmount, "large amount stake mint incorrect");
         assertEq(position.syTotalStaking(), largeAmount, "syTotalStaking for large amount incorrect");
 
-        (, uint256 syStaked, uint256 positionUAssetMinted,,) = position.positions(positionId);
+        (, uint256 syStaked, uint256 positionUAssetMinted,) = position.positions(positionId);
         assertEq(syStaked, largeAmount, "position syStaked incorrect");
         assertEq(positionUAssetMinted, largeAmount, "position UAssetMinted incorrect");
     }

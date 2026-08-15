@@ -5,9 +5,7 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IOutrunStakeManager} from "./interfaces/IOutrunStakeManager.sol";
 import {IStandardizedYield} from "../yield/interfaces/IStandardizedYield.sol";
@@ -33,8 +31,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     OwnableUpgradeable,
     UUPSUpgradeable
 {
-    using SafeERC20 for IERC20;
-
     struct OutrunStakingPositionStorage {
         address SY;
         uint256 minStake;
@@ -153,16 +149,15 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @param positionId The position identifier.
     /// @return owner Position owner address.
     /// @return syStaked SY amount currently staked in the position.
-    /// @return UAssetMinted uAsset amount minted against this position.
-    /// @return startTime Timestamp when the position was created.
+    /// @return UAssetMinted Current outstanding uAsset debt recorded against this position.
     /// @return deadline Timestamp after which the position can be redeemed.
     function positions(uint256 positionId)
         public
         view
-        returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 startTime, uint128 deadline)
+        returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 deadline)
     {
         Position storage position = outrunStakingPositionStorage.positions[positionId];
-        return (position.owner, position.syStaked, position.UAssetMinted, position.startTime, position.deadline);
+        return (position.owner, position.syStaked, position.UAssetMinted, position.deadline);
     }
 
     /// @notice Previews the uAsset amount mintable from a given SY stake amount.
@@ -201,10 +196,10 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         Position storage position = outrunStakingPositionStorage.positions[positionId];
         if (position.owner == address(0)) revert PositionAccessDenied();
         address _SY = SY();
-        uint256 currentValue = _syToAsset(position.syStaked, _currentExchangeRate(_SY));
-        uint256 minted = position.UAssetMinted;
-        if (currentValue <= minted) return 0;
-        UAssetMintable = currentValue - minted;
+        uint256 currentValueInUAsset = _syToAsset(position.syStaked, _currentExchangeRate(_SY));
+        uint256 positionUAssetMinted = position.UAssetMinted;
+        if (currentValueInUAsset <= positionUAssetMinted) return 0;
+        UAssetMintable = currentValueInUAsset - positionUAssetMinted;
     }
 
     /// @notice Previews the outcome of redeeming SY from a matured position.
@@ -270,19 +265,19 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
     /// @notice Stakes SY tokens and creates a time-locked position, minting uAsset to the receiver.
     /// Rounds down when converting SY to uAsset to avoid over-minting.
-    /// @dev The position is locked until deadline (startTime + lockupDays * 1 day).
+    /// @dev The position is locked until deadline (block.timestamp + lockupDays * 1 day).
     /// Redeeming the staked SY requires the deadline to have passed.
     /// @param amountInSY SY amount to stake. Must be > 0 and >= minStake.
     /// @param lockupDays Number of days the position is locked after creation.
     /// @param positionOwner Address that will own the position and can draw/redeem it.
     /// @param uAssetReceiver Address that receives the minted uAsset.
     /// @return positionId The newly created position identifier.
-    /// @return UAssetMinted The uAsset amount minted for this stake.
+    /// @return mintedUAsset The uAsset amount minted for this stake.
     function stake(uint256 amountInSY, uint128 lockupDays, address positionOwner, address uAssetReceiver)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 positionId, uint256 UAssetMinted)
+        returns (uint256 positionId, uint256 mintedUAsset)
     {
         if (positionOwner == address(0) || uAssetReceiver == address(0) || amountInSY == 0) revert ZeroInput();
         address _SY = SY();
@@ -291,14 +286,16 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         _validateMinStake(amountInSY);
         // Step 2: convert SY principal to uAsset value at the current exchange rate.
         uint256 exchangeRate_ = _currentExchangeRate(_SY);
-        uint256 principalValue = _syToAsset(amountInSY, exchangeRate_);
+        uint256 uAssetDebt = _syToAsset(amountInSY, exchangeRate_);
         // Reject zero-debt stakes before pulling SY so dust cannot create a zero-value position or waste the SY transfer.
-        if (principalValue == 0) revert DustRoundedToZero();
+        if (uAssetDebt == 0) revert DustRoundedToZero();
         // Step 3: pull SY tokens from the staker.
         _transferIn(_SY, msg.sender, amountInSY);
 
         OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
         unchecked {
+            // No overflow: the accumulator only grows by SY actually received in _transferIn above,
+            // so it stays below SY total supply.
             $.syTotalStaking += amountInSY;
         }
 
@@ -311,12 +308,11 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         if (deadline256 > type(uint128).max) revert LockupDaysOutOfRange(lockupDays);
 
         positionId = _nextId();
-        UAssetMinted = principalValue;
+        mintedUAsset = uAssetDebt;
         $.positions[positionId] = Position({
             owner: positionOwner,
             syStaked: amountInSY,
-            UAssetMinted: UAssetMinted,
-            startTime: uint128(block.timestamp),
+            UAssetMinted: mintedUAsset,
             // Safe: deadline256 was checked to fit in uint128 immediately above.
             // forge-lint: disable-next-line(unsafe-typecast)
             deadline: uint128(deadline256)
@@ -326,41 +322,40 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // Minting draws on this contract's own uAsset minter record: it increases this contract's
         // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
         // mintingCap is exhausted.
-        IUniversalAssets(_uAsset).mint(uAssetReceiver, UAssetMinted);
-        emit Stake(positionId, positionOwner, amountInSY, principalValue, UAssetMinted, deadline256);
+        IUniversalAssets(_uAsset).mint(uAssetReceiver, mintedUAsset);
+        emit Stake(positionId, positionOwner, amountInSY, uAssetDebt, mintedUAsset, deadline256);
     }
 
     /// @notice Mints extra uAsset from a position after the staked SY becomes more valuable.
     /// Only the position owner can call this. Reverts if the position has no extra value to mint against.
     /// @param positionId The position identifier.
-    /// @param recipient Address that receives the newly minted uAsset.
-    /// @return amountInUAsset Additional uAsset amount minted.
-    function drawUAsset(uint256 positionId, address recipient)
+    /// @param uAssetReceiver Address that receives the newly minted uAsset.
+    /// @return mintedUAsset Additional uAsset amount minted.
+    function drawUAsset(uint256 positionId, address uAssetReceiver)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 amountInUAsset)
+        onlyPositionOwner(positionId)
+        returns (uint256 mintedUAsset)
     {
-        if (recipient == address(0)) revert ZeroInput();
+        if (uAssetReceiver == address(0)) revert ZeroInput();
         Position storage position = outrunStakingPositionStorage.positions[positionId];
-        address positionOwner = position.owner;
-        if (positionOwner == address(0) || positionOwner != msg.sender) revert PositionAccessDenied();
 
         address _SY = SY();
-        uint256 currentValue = _syToAsset(position.syStaked, _currentExchangeRate(_SY));
-        uint256 minted = position.UAssetMinted;
-        if (currentValue <= minted) revert NothingToDraw();
+        uint256 currentValueInUAsset = _syToAsset(position.syStaked, _currentExchangeRate(_SY));
+        uint256 positionUAssetMinted = position.UAssetMinted;
+        if (currentValueInUAsset <= positionUAssetMinted) revert NothingToDraw();
 
-        amountInUAsset = currentValue - minted;
+        mintedUAsset = currentValueInUAsset - positionUAssetMinted;
         // Increase the position debt first so the newly minted uAsset is recorded against this position.
-        position.UAssetMinted = currentValue;
+        position.UAssetMinted = currentValueInUAsset;
 
         address _uAsset = uAsset();
         // Minting draws on this contract's own uAsset minter record: it increases this contract's
         // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
         // mintingCap is exhausted.
-        IUniversalAssets(_uAsset).mint(recipient, amountInUAsset);
-        emit DrawUAsset(positionId, recipient, amountInUAsset);
+        IUniversalAssets(_uAsset).mint(uAssetReceiver, mintedUAsset);
+        emit DrawUAsset(positionId, uAssetReceiver, mintedUAsset);
     }
 
     /// @notice Stakes SY into the shared wrap pool without creating a position, minting uAsset immediately.
@@ -368,21 +363,21 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Rounds down when converting SY to uAsset to avoid over-minting.
     /// @dev Increments both syTotalStaking and syWrapStaking, and also increments wrapUAssetDebt.
     /// @param amountInSY SY amount to wrap stake. Must be > 0.
-    /// @param uAssetRecipient Address that receives the minted uAsset.
-    /// @return UAssetAmount uAsset amount minted.
-    function wrapStake(uint256 amountInSY, address uAssetRecipient)
+    /// @param uAssetReceiver Address that receives the minted uAsset.
+    /// @return mintedUAsset uAsset amount minted.
+    function wrapStake(uint256 amountInSY, address uAssetReceiver)
         external
         nonReentrant
         whenNotPaused
-        returns (uint256 UAssetAmount)
+        returns (uint256 mintedUAsset)
     {
-        if (uAssetRecipient == address(0) || amountInSY == 0) revert ZeroInput();
+        if (uAssetReceiver == address(0) || amountInSY == 0) revert ZeroInput();
         address _SY = SY();
         // Minted uAsset is tracked as shared pool debt, not position-specific debt.
         uint256 exchangeRate_ = _currentExchangeRate(_SY);
-        uint256 principalValue = _syToAsset(amountInSY, exchangeRate_);
+        uint256 uAssetDebt = _syToAsset(amountInSY, exchangeRate_);
         // Reject zero-debt stakes before pulling SY so rounded dust cannot change pool accounting or balances.
-        if (principalValue == 0) revert DustRoundedToZero();
+        if (uAssetDebt == 0) revert DustRoundedToZero();
 
         address _uAsset = uAsset();
         // The shared wrap pool receives SY directly from the caller; no position owner or deadline is stored.
@@ -390,17 +385,20 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
         OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
         unchecked {
+            // No overflow: the SY accumulators only grow by tokens actually received in _transferIn above
+            // (bounded by SY total supply), and wrapUAssetDebt only grows when the mint below succeeds —
+            // uAsset mintingCap overruns revert the whole transaction with ReachMintCap.
             $.syTotalStaking += amountInSY;
             $.syWrapStaking += amountInSY;
-            $.wrapUAssetDebt += principalValue;
+            $.wrapUAssetDebt += uAssetDebt;
         }
 
-        UAssetAmount = principalValue;
+        mintedUAsset = uAssetDebt;
         // Minting draws on this contract's own uAsset minter record: it increases this contract's
         // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
         // mintingCap is exhausted.
-        IUniversalAssets(_uAsset).mint(uAssetRecipient, UAssetAmount);
-        emit WrapStake(amountInSY, UAssetAmount, uAssetRecipient);
+        IUniversalAssets(_uAsset).mint(uAssetReceiver, mintedUAsset);
+        emit WrapStake(amountInSY, mintedUAsset, uAssetReceiver);
     }
 
     // slither-disable-next-line reentrancy-no-eth,timestamp
@@ -420,13 +418,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         external
         nonReentrant
         whenNotPaused
+        onlyPositionOwner(positionId)
         returns (uint256 UAssetBurned, uint256 amountTokenOut)
     {
         if (receiver == address(0)) revert ZeroInput();
         address _SY = SY();
         Position storage position = outrunStakingPositionStorage.positions[positionId];
-        address positionOwner = position.owner;
-        if (positionOwner == address(0) || positionOwner != msg.sender) revert PositionAccessDenied();
 
         uint128 deadline = position.deadline;
         if (block.timestamp < deadline) revert LockTimeNotExpired(deadline);
@@ -476,6 +473,10 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         amountInSY = _validateWrapRedeemAmount(amountInUAsset, _SY);
 
         unchecked {
+            // No underflow: _validateWrapRedeemAmount enforces amountInUAsset <= wrapUAssetDebt and
+            // amountInSY = _assetToSy(amountInUAsset) <= _assetToSyUp(amountInUAsset) <=
+            // _assetToSyUp(wrapUAssetDebt) <= syWrapStaking (floor <= ceil at the same exchange rate), and
+            // syTotalStaking >= syWrapStaking keeps the total ledger above the same bound.
             $.syTotalStaking -= amountInSY;
             $.syWrapStaking -= amountInSY;
             $.wrapUAssetDebt -= amountInUAsset;
@@ -484,7 +485,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // Burn keeper-provided uAsset; repay decrements the stake manager's minter debt.
         IUniversalAssets(_uAsset).repay(msg.sender, amountInUAsset);
 
-        _transferSY(_SY, receiver, amountInSY);
+        _transferOut(_SY, receiver, amountInSY);
 
         emit KeepWrapRedeem(msg.sender, receiver, amountInUAsset, amountInSY);
     }
@@ -535,8 +536,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
         // Step 3: apply position reduction and transfer SY to both parties.
         _applyPositionRedeem(positionId, position, syRedeemed, UAssetBurned, syStaked, positionUAssetMinted);
-        _transferSY(_SY, receiver, keeperPrincipalSY);
-        _transferSY(_SY, positionOwner, ownerExcessSY);
+        _transferOut(_SY, receiver, keeperPrincipalSY);
+        _transferOut(_SY, positionOwner, ownerExcessSY);
 
         emit KeepRedeem(positionId, positionOwner, syRedeemed, UAssetBurned, receiver, keeperPrincipalSY, ownerExcessSY);
     }
@@ -561,6 +562,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         uint256 amountInSY = wrapPoolSY - wrapDebtInSY;
         unchecked {
             // Harvesting removes only excess SY; the wrap debt-equivalent amount stays in the pool.
+            // No underflow: amountInSY was derived above from syWrapStaking (amountInSY <= syWrapStaking),
+            // and syTotalStaking >= syWrapStaking, so both subtractions stay non-negative.
             $.syTotalStaking -= amountInSY;
             $.syWrapStaking -= amountInSY;
         }
@@ -569,7 +572,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             // Direct SY payout avoids adapter redemption and therefore needs its own minTokenOut check.
             if (amountInSY < minTokenOut) revert InsufficientTokenOut(amountInSY, minTokenOut);
             amountTokenOut = amountInSY;
-            _transferSY(_SY, $.revenuePool, amountInSY);
+            _transferOut(_SY, $.revenuePool, amountInSY);
         } else {
             // Non-SY payout converts excess SY through the adapter and sends proceeds to revenuePool.
             amountTokenOut = IStandardizedYield(_SY).redeem($.revenuePool, amountInSY, tokenOut, minTokenOut, false);
@@ -630,18 +633,18 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @dev Used for wrap redeem — converting uAsset debt back to SY to release. Rounds down to avoid releasing too much SY.
-    /// @param amountInAsset The uAsset amount to convert.
+    /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
-    function _assetToSy(uint256 amountInAsset, uint256 exchangeRate_) internal view returns (uint256) {
-        uint256 canonicalAssetValue = _scaleUAssetToCanonicalAsset(amountInAsset, Math.Rounding.Floor);
+    function _assetToSy(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
+        uint256 canonicalAssetValue = _scaleUAssetToCanonicalAsset(amountInUAsset, Math.Rounding.Floor);
         return SYUtils.assetToSy(exchangeRate_, canonicalAssetValue);
     }
 
     /// @dev Used for harvest — computing debt in SY terms. Rounds up to leave enough SY covering all debt.
-    /// @param amountInAsset The uAsset amount to convert.
+    /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
-    function _assetToSyUp(uint256 amountInAsset, uint256 exchangeRate_) internal view returns (uint256) {
-        uint256 canonicalAssetValue = _scaleUAssetToCanonicalAsset(amountInAsset, Math.Rounding.Ceil);
+    function _assetToSyUp(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
+        uint256 canonicalAssetValue = _scaleUAssetToCanonicalAsset(amountInUAsset, Math.Rounding.Ceil);
         return SYUtils.assetToSyUp(exchangeRate_, canonicalAssetValue);
     }
 
@@ -728,6 +731,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
         unchecked {
             // Total staked SY falls by the amount leaving the position.
+            // Safe: remainingSY and remainingUAsset bounds were checked immediately above; for the ledger,
+            // syTotalStaking = sum(position.syStaked) + syWrapStaking >= syStaked >= syRedeemed.
             $.syTotalStaking -= syRedeemed;
             remainingSY = syStaked - syRedeemed;
             remainingUAsset = positionUAssetMinted - UAssetBurned;
@@ -742,23 +747,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // Partial redeem keeps the same position id with reduced SY and reduced debt.
         position.syStaked = remainingSY;
         position.UAssetMinted = remainingUAsset;
-    }
-
-    // slither-disable-next-line timestamp
-    function _previewRedeemPositionDebt(uint256 positionId, uint256 syRedeemed)
-        internal
-        view
-        returns (uint256 UAssetBurned)
-    {
-        Position storage position = outrunStakingPositionStorage.positions[positionId];
-        uint128 deadline = position.deadline;
-        if (block.timestamp < deadline) revert LockTimeNotExpired(deadline);
-
-        uint256 syStaked = position.syStaked;
-        uint256 positionUAssetMinted = position.UAssetMinted;
-        _validateRedeemAmount(syStaked, syRedeemed);
-
-        UAssetBurned = _computeRedeemPositionDebt(positionUAssetMinted, syRedeemed, syStaked);
     }
 
     /// @dev Validates a wrap redemption amount and computes the SY amount to release at face value.
@@ -817,7 +805,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         if (tokenOut == _SY) {
             // The receiver asked for SY itself, so transfer the redeemed SY without adapter conversion.
             amountTokenOut = syRedeemed;
-            _transferSY(_SY, receiver, syRedeemed);
+            _transferOut(_SY, receiver, syRedeemed);
         } else {
             // Any other tokenOut must be produced by the SY adapter's redeem path.
             amountTokenOut = IStandardizedYield(_SY).redeem(receiver, syRedeemed, tokenOut, minTokenOut, false);
@@ -836,11 +824,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             // Adapter preview handles non-SY token conversion.
             amountTokenOut = IStandardizedYield(_SY).previewRedeem(tokenOut, amountInSY);
         }
-    }
-
-    function _transferSY(address _SY, address receiver, uint256 syAmount) internal {
-        if (syAmount == 0) return;
-        IERC20(_SY).safeTransfer(receiver, syAmount);
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}

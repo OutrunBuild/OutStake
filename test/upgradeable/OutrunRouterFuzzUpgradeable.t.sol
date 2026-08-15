@@ -161,7 +161,7 @@ contract OutrunRouterFuzzTest is Test {
             router.stakeFromToken(address(position), address(underlying), amount, stakeParam);
 
         // Verify position created with correct state
-        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,, uint128 deadline) =
+        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted, uint128 deadline) =
             position.positions(positionId);
 
         assertEq(positionOwner, user, "position owner mismatch");
@@ -196,7 +196,7 @@ contract OutrunRouterFuzzTest is Test {
         (uint256 positionId, uint256 uAssetMinted) = router.stakeFromSY(address(position), amount, stakeParam);
 
         // Verify position created with correct state
-        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted,, uint128 deadline) =
+        (address positionOwner, uint256 syStaked, uint256 positionUAssetMinted, uint128 deadline) =
             position.positions(positionId);
 
         assertEq(positionOwner, user, "position owner mismatch");
@@ -231,7 +231,7 @@ contract OutrunRouterFuzzTest is Test {
             router.stakeFromToken(address(position), address(underlying), amount, stakeParam);
 
         // Verify: position owned by owner
-        (address positionOwner,, uint256 positionUAssetMinted,,) = position.positions(positionId);
+        (address positionOwner,, uint256 positionUAssetMinted,) = position.positions(positionId);
         assertEq(positionOwner, user, "position should be owned by owner");
         assertEq(positionUAssetMinted, amount, "positionUAssetMinted mismatch");
 
@@ -254,7 +254,7 @@ contract OutrunRouterFuzzTest is Test {
         (uint256 positionId, uint256 uAssetMinted) = router.stakeFromSY(address(position), amount, stakeParam);
 
         // Verify: position owned by owner
-        (address positionOwner,, uint256 positionUAssetMinted,,) = position.positions(positionId);
+        (address positionOwner,, uint256 positionUAssetMinted,) = position.positions(positionId);
         assertEq(positionOwner, user, "position should be owned by owner");
         assertEq(positionUAssetMinted, amount, "positionUAssetMinted mismatch");
 
@@ -465,7 +465,7 @@ contract OutrunRouterFuzzTest is Test {
         router.genesisByToken{value: 0}(address(position), address(underlying), amount, 0, 0, lockupDays, verseId, user);
 
         // Verify position created
-        (address positionOwner, uint256 syStaked, uint256 uAssetMinted,, uint128 deadline) = position.positions(1);
+        (address positionOwner, uint256 syStaked, uint256 uAssetMinted, uint128 deadline) = position.positions(1);
         assertEq(positionOwner, user, "position owner mismatch");
         assertEq(syStaked, amount, "syStaked mismatch");
         assertEq(uAssetMinted, amount, "uAssetMinted mismatch");
@@ -503,7 +503,7 @@ contract OutrunRouterFuzzTest is Test {
         router.genesisBySY(address(position), amount, lockupDays, verseId, user, 0);
 
         // Verify position created
-        (address positionOwner, uint256 syStaked, uint256 uAssetMinted,, uint128 deadline) = position.positions(1);
+        (address positionOwner, uint256 syStaked, uint256 uAssetMinted, uint128 deadline) = position.positions(1);
         assertEq(positionOwner, user, "position owner mismatch");
         assertEq(syStaked, uint256(amount), "syStaked mismatch");
         assertEq(uAssetMinted, uint256(amount), "uAssetMinted mismatch");

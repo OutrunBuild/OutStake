@@ -15,7 +15,6 @@ interface IOutrunStakeManager {
         address owner;
         uint256 syStaked;
         uint256 UAssetMinted;
-        uint128 startTime;
         uint128 deadline;
     }
 
@@ -94,14 +93,13 @@ interface IOutrunStakeManager {
      * @param positionId Identifier of the position to inspect.
      * @return owner Owner of the position.
      * @return syStaked SY principal currently staked in the position.
-     * @return UAssetMinted Total uAsset minted against the position.
-     * @return startTime Timestamp when the position was opened.
+     * @return UAssetMinted Current outstanding uAsset debt recorded against the position.
      * @return deadline Timestamp when the lockup expires.
      */
     function positions(uint256 positionId)
         external
         view
-        returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 startTime, uint128 deadline);
+        returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 deadline);
 
     /**
      * @notice Previews how much uAsset a direct stake would mint.
@@ -181,30 +179,31 @@ interface IOutrunStakeManager {
      * @param positionOwner Address that owns the created position.
      * @param uAssetReceiver Address receiving the initially minted uAsset.
      * @return positionId Identifier of the created position.
-     * @return UAssetMinted Amount of uAsset minted for the new position.
+     * @return mintedUAsset Amount of uAsset minted for the new position.
      */
     function stake(uint256 amountInSY, uint128 lockupDays, address positionOwner, address uAssetReceiver)
         external
-        returns (uint256 positionId, uint256 UAssetMinted);
+        returns (uint256 positionId, uint256 mintedUAsset);
 
     /**
      * @notice Mints newly drawable uAsset from an existing position.
      * @dev Position-owner path. Uses current SY asset value to mint only appreciation above existing position debt.
      * @param positionId Identifier of the position to draw against.
-     * @param recipient Address receiving the minted uAsset.
-     * @return amountInUAsset Amount of uAsset minted to the recipient.
+     * @param uAssetReceiver Address receiving the minted uAsset.
+     * @return mintedUAsset Additional (per-call incremental) uAsset minted to the uAssetReceiver; not the position's
+     * outstanding total debt.
      */
-    function drawUAsset(uint256 positionId, address recipient) external returns (uint256 amountInUAsset);
+    function drawUAsset(uint256 positionId, address uAssetReceiver) external returns (uint256 mintedUAsset);
 
     /**
-     * @notice Adds SY to the wrap pool and mints uAsset to a recipient.
+     * @notice Adds SY to the wrap pool and mints uAsset to the uAssetReceiver.
      * @dev Pulls SY from `msg.sender`, increases shared wrap-pool principal and debt, and does not create a
      * per-user position record.
      * @param amountInSY Amount of SY to add to the wrap pool.
-     * @param uAssetRecipient Address receiving the minted uAsset.
-     * @return UAssetAmount Amount of uAsset minted.
+     * @param uAssetReceiver Address receiving the minted uAsset.
+     * @return mintedUAsset Amount of uAsset minted.
      */
-    function wrapStake(uint256 amountInSY, address uAssetRecipient) external returns (uint256 UAssetAmount);
+    function wrapStake(uint256 amountInSY, address uAssetReceiver) external returns (uint256 mintedUAsset);
 
     /**
      * @notice Redeems part or all of a position after lock expiry.
@@ -284,16 +283,35 @@ interface IOutrunStakeManager {
      */
     function setKeeper(address keeper) external;
 
+    /**
+     * @notice Emitted when a new locked position is created by `stake`.
+     * @param positionId Identifier of the newly created position.
+     * @param owner Owner of the created position.
+     * @param amountInSY Amount of SY staked.
+     * @param uAssetDebt Initial uAsset debt units minted against the staked SY, denominated in
+     * uAsset decimals (NOT SY or canonical asset units). Equals the position's initial `UAssetMinted`
+     * storage field at stake time.
+     * @param mintedUAsset Amount of uAsset minted for the new position.
+     * @param deadline Timestamp when the position lockup expires.
+     */
     event Stake(
         uint256 indexed positionId,
         address indexed owner,
         uint256 amountInSY,
-        uint256 principalValue,
-        uint256 UAssetMinted,
+        uint256 uAssetDebt,
+        uint256 mintedUAsset,
         uint256 deadline
     );
 
-    event DrawUAsset(uint256 indexed positionId, address indexed recipient, uint256 amountInUAsset);
+    /**
+     * @notice Emitted when a position owner draws additional uAsset from accrued value.
+     * @param positionId Identifier of the position drawn against.
+     * @param uAssetReceiver Address receiving the newly minted uAsset.
+     * @param mintedUAsset Incremental uAsset minted by this call (the appreciation above existing
+     * debt), NOT the position's outstanding total debt — after this call the total is
+     * `position.UAssetMinted`, which was reset to the position's current uAsset value.
+     */
+    event DrawUAsset(uint256 indexed positionId, address indexed uAssetReceiver, uint256 mintedUAsset);
 
     event Redeem(
         uint256 indexed positionId,
@@ -305,7 +323,14 @@ interface IOutrunStakeManager {
         uint256 amountTokenOut
     );
 
-    event WrapStake(uint256 amountInSY, uint256 amountInUAsset, address indexed uAssetRecipient);
+    /**
+     * @notice Emitted when SY is added to the shared wrap pool and uAsset is minted.
+     * @param amountInSY Amount of SY added to the wrap pool.
+     * @param mintedUAsset Incremental uAsset minted by this call and added to `wrapUAssetDebt`;
+     * wrap-pool debt is aggregate, so there is no per-position total here.
+     * @param uAssetReceiver Address receiving the minted uAsset.
+     */
+    event WrapStake(uint256 amountInSY, uint256 mintedUAsset, address indexed uAssetReceiver);
 
     event KeepWrapRedeem(address indexed keeper, address indexed receiver, uint256 amountInUAsset, uint256 amountInSY);
 
