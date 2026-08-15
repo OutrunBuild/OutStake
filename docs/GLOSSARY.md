@@ -7,14 +7,15 @@
 - **OutrunRouter**：聚合路由入口，把 token <-> SY <-> position/uAsset 的组合路径收敛为单次调用。
 - **Underlying**：SY adapter 对应的基础资产，如 USDS（Sky）、USDC（Aave）、USDE（Ethena）。
 - **Yield Bearing Token**：SY adapter 对应的收益产生型代币，如 sUSDS、aUSDC、wstETH。
-- **Canonical Asset**：adapter 对外声明的"真实底层资产"元数据（地址 + 精度），L2 adapter 中指向 Ethereum 上的 canonical underlying 而非 L2 token。
+- **Canonical Asset**：adapter 对外声明的"真实底层资产"元数据（地址 + 精度）。跨链收益族 L2 adapter（`OutrunL2OracleBackedSYUpgradeable` 派生系及 `OutrunL2WrappableWstETHSYUpgradeable`）指向 Ethereum 上的 canonical underlying 而非 L2 token；L2 原生协议族（如 Sky PSM3 的 `OutrunL2StakedUsdsSYUpgradeable`）canonical 为 L2 本地资产。
 - **exchangeRate()**：SY 的汇率函数，返回 asset per SY。用于将 SY 份额数量与资产值双向换算。
 - **SYUtils.syToAsset**：按 exchangeRate 将 SY 份额换算为资产值（向下取整）。
 - **SYUtils.syToAssetUp**：按 exchangeRate 将 SY 份额换算为资产值（向上取整）。
 - **SYUtils.assetToSy**：按 exchangeRate 将资产值换算为 SY 份额（向下取整）。
 - **SYUtils.assetToSyUp**：按 exchangeRate 将资产值换算为 SY 份额（向上取整）。
-- **Position**：锁仓仓位记录，包含 owner（仓位控制权）、syStaked（质押 SY 数量）、UAssetMinted（已铸造 uAsset 债务）、startTime、deadline。
-- **principalValue**：仓位初始资产值，由 syStaked 通过 exchangeRate 按 syToAsset 折算。
+- **Position**：锁仓仓位记录，包含 owner（仓位控制权）、syStaked（质押 SY 数量）、UAssetMinted（已铸造 uAsset 债务）、deadline。
+- **uAssetDebt**：stake/wrapStake 铸出的初始 uAsset 债务单位（uAsset decimals 口径，非 SY 单位）：质押的 SY 数量（stake/wrapStake 入口即 `amountInSY`）先按 exchangeRate 经 SYUtils.syToAsset 折算成 canonical asset 价值，再经 canonical→uAsset 精度重缩放得到（`OutrunStakingPositionUpgradeable.sol::_syToAsset` 两段换算）；它是 `stake` 与 `wrapStake` 共用的初始债务定价结果（locked position 场景即 `Stake` 事件对应字段与 position 初始 `UAssetMinted` 的取值，wrap 池场景累加进 `wrapUAssetDebt`），亦即单位模型中的 `uAssetDebtUnits`。
+- **mintedUAsset**：调用级铸出量标识符（`OutrunStakingPositionUpgradeable.sol::stake` / `::drawUAsset` / `::wrapStake` 的返回值与 `Stake`/`DrawUAsset`/`WrapStake` 事件字段（`IOutrunStakeManager.sol` 事件字段））：本次调用实际 mint 的 uAsset 数量（uAsset decimals 口径增量）。stake/wrapStake 场景数值上等于 `uAssetDebt`；drawUAsset 场景为升值差额 `currentValueInUAsset - positionUAssetMinted`。与 storage 域总债务 `position.UAssetMinted`（`Position` 结构体字段/`IOutrunStakeManager.sol::positions` 返回）分属两域、刻意异名。
 - **Wrap Pool**：公共 wrap 池，不建立独立 positionId，维护全池聚合账务（syTotalStaking、syWrapStaking、wrapUAssetDebt）；退出由 keeper 经 keepWrapRedeem 托管，无协议内自助赎回。
 - **syTotalStaking**：position 合约中所有 SY 质押总量（含锁仓仓位与 wrap 池）。
 - **syWrapStaking**：wrap 池中的 SY 本金量。
@@ -41,9 +42,9 @@
 - **ERC1967Proxy**：当前 upgradeable implementation 使用的 proxy 部署壳，部署时携带 initializer calldata 并把 proxy address 作为产品地址。
 - **UUPS**：当前 upgradeable implementation 使用的 upgrade pattern；upgrade authority 位于 implementation 的 `_authorizeUpgrade(address)`，由 owner 控制。
 - **SYBaseUpgradeable**：当前所有 SY adapters 的共享 upgradeable base，统一持有 UUPS authority。
-- **Multisig Owner**：当前 upgradeable implementation 的单一 protocol owner（部署期 owner 必须等于广播者 EOA，部署完成后通过 `transferOwnership` 转交 multisig，详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
+- **Multisig Owner**：当前 upgradeable implementation 的单一 protocol owner（部署期 owner 约束按脚本区分：`OutstakeScript.s.sol` 系强制 `OWNER` 等于广播者 EOA、部署完成后 `transferOwnership` 转交 multisig；`YieldDeployScript.s.sol` 系无此 `OWNER == 广播者` 约束、`OWNER` 可直接设为终态 multisig；详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
 - **Initializer**：upgradeable variant 替代 constructor 的初始化入口；通过 proxy deployment 调用一次，写入 owner 与原构造依赖。
 - **exchangeRateOracle**：oracle-backed SY upgradeable variants 中存储 oracle adapter 地址的 mutable storage 字段，通过 owner-only `setExchangeRateOracle(address)` 更新。
-- **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter；通过 `latestRoundData()`（非 `latestAnswer()`）读取，在精度归一化前做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验；不提供 bounds、fallback 或多源聚合保证。
+- **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter；通过 `latestRoundData()`（非 `latestAnswer()`）读取，在精度归一化前做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate` fail-closed）；不提供 bounds、fallback 或多源聚合保证。
 - **OutrunOFTUpgradeable**：当前 custom OFT base，使用 LayerZero 官方 `OFTCoreUpgradeable` / `OAppUpgradeable` 路径并保留自定义 ERC20 metadata/decimals；需要自定义 metadata/decimals 时不继承默认 `OFTUpgradeable`。
-- **ReentrancyGuard**：当前 upgradeable helper 使用的项目自研 transient reentrancy guard（`src/libraries/ReentrancyGuard.sol`，经 `TokenHelper` 继承）；部署链需要支持 EIP-1153 transient storage。
+- **ReentrancyGuardTransient**：当前 upgradeable helper 使用的 vendored OpenZeppelin transient reentrancy guard（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`，经 `TokenHelper.sol` 继承）；部署链需要支持 EIP-1153 transient storage。

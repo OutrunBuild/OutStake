@@ -5,6 +5,8 @@
 - Policy schema: .harness/schemas/policy.schema.json
 - Claude agents: .claude/agents/*
 - Codex agents: .codex/agents/*
+- ZCode agents: .zcode/agents/*
+- Pi agents: .pi/agents/*
 - Enforcement entrypoint: script/harness/gate.sh
 
 The gate reports phase fields for `harness_writer_roles`, `code_writer_roles`, and `code_review_roles`.

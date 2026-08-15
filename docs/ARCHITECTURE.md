@@ -54,7 +54,6 @@
 - `src/integrations/aave/interfaces/IAToken.sol`
 - `src/integrations/aave/interfaces/IAaveV3Pool.sol`
 - `src/integrations/aster/interfaces/IAsBnbMinter.sol`
-- `src/integrations/aster/interfaces/IListaBNBStakeManager.sol`
 - `src/integrations/aster/interfaces/IYieldProxy.sol`
 - `src/integrations/etherfi/interfaces/IDepositAdapter.sol`
 - `src/integrations/etherfi/interfaces/ILiquidityPool.sol`
@@ -65,7 +64,7 @@
 - `src/integrations/lista/interfaces/IListaStakeManager.sol`
 - `src/integrations/sky/interfaces/IPSM3.sol`
 - `src/libraries/oracle/OutrunExchangeOracleAdapter.sol`
-- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 做精度归一化前校验 raw answer 正性、新鲜度与可选 sequencer。
+- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 做精度归一化前校验 raw answer 正性、新鲜度与可选 sequencer，并在归一化后校验结果非零。
 - `OutrunExchangeOracleAdapter` 不部署在 proxy 后；需要更换 oracle normalization 规则时部署新 adapter，再由 oracle-backed SY proxy 的 owner 更新 `exchangeRateOracle`。
 - 后续执行 adapter / integration 相关任务时，以 `find src -type f` 得到的当前文件树和 `.harness/policy.json` 分类为准；本文件提供架构背景，不覆盖实际文件存在性与 harness surface 分类。
 
@@ -73,14 +72,13 @@
 
 - `src/libraries/TokenHelper.sol`
 - `src/libraries/SYUtils.sol`
-- `src/libraries/ReentrancyGuard.sol`
 - `src/libraries/AaveAdapterLib.sol`
 - `src/libraries/ArrayLib.sol`
 - `src/libraries/AutoIncrementIdUpgradeable.sol`
 - `src/libraries/IWETH.sol`
 - `src/libraries/WadRayMath.sol`
 - 跨业务域共享的 token 传输、汇率换算、重入保护、数组操作、ID 生成、错误定义等基础工具。
-- 当前 helper 中 `TokenHelper` 继承项目内 `ReentrancyGuard`，该 guard 使用 transient storage；部署目标链必须支持 EIP-1153 transient storage。
+- 当前 helper 中 `TokenHelper.sol` 继承 vendored OpenZeppelin `ReentrancyGuardTransient.sol`（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`），该 guard 使用 EIP-1153 transient storage；部署目标链必须支持 EIP-1153。
 
 ### 1.7 Upgradeable deployment model
 
@@ -89,7 +87,7 @@
 - proxy-backed：`OutrunUniversalAssetsUpgradeable`、`OutrunStakingPositionUpgradeable`、全部 SY adapter upgradeable variants。
 - non-upgradeable / redeployable：`OutrunRouter`、`OutrunExchangeOracleAdapter`、interfaces、pure libraries、外部协议 interface。
 - deployment flow：部署 implementation，编码 initializer calldata，部署 `ERC1967Proxy(implementation, initData)`，把 proxy address 作为产品地址写入后续 wiring。
-- owner：单一 protocol owner 为 multisig（部署期 owner 必须等于广播者 EOA，即 `OWNER` 环境变量等于 `PRIVATE_KEY` 派生地址；部署完成后通过 `transferOwnership` 转交 multisig，详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
+- owner：单一 protocol owner 为 multisig（部署期 owner 约束按脚本区分：`OutstakeScript.s.sol` 系强制 `OWNER` 等于广播者 EOA、部署完成后 `transferOwnership` 转交 multisig；`YieldDeployScript.s.sol` 系无此 `OWNER == 广播者` 约束、`OWNER` 可直接设为终态 multisig；详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
 - upgrade authority：每个 UUPS product 的 `_authorizeUpgrade(address)` 由 `onlyOwner` 保护，只暴露 UUPS base 的 `upgradeToAndCall`。
 - initializer boundary：构造参数迁移到 `initialize(...)` / `__..._init(...)`，implementation constructor 禁用 initializers。LayerZero endpoint 与 local decimals 是 `OutrunOFTUpgradeable` 继承官方 upgradeable OFT/OApp 路径所需的 implementation-level constructor 参数，每个 endpoint / local-decimal 配置部署一个 implementation。
 - legacy boundary：旧非 upgradeable SY 合约、测试与部署 helper 已退出当前产品真源；当前清理任务会删除对应源码与测试表面。
@@ -106,11 +104,11 @@ router 路径先把 SY 转入 SY 合约地址（直调路径份额留在调用�
 
 ### 2.3 Token / SY -> Locked Stake
 
-用户授权 -> router 调用 SY 转换 -> position.stake() -> 拉取 SY -> 按 exchangeRate 折算 principalValue -> 写入 position -> uAsset.mint(uAssetReceiver, principalValue)。
+用户授权 -> router 调用 SY 转换 -> position.stake() -> 拉取 SY -> 按 exchangeRate 折算 uAssetDebt -> 写入 position -> uAsset.mint(uAssetReceiver, uAssetDebt)。
 
 ### 2.4 Token / SY -> Wrap Stake
 
-用户授权 -> SY 转换 -> position.wrapStake() -> 拉取 SY -> 按 exchangeRate 折算 -> 增加 syTotalStaking / syWrapStaking / wrapUAssetDebt -> uAsset.mint(uAssetRecipient, principalValue)。
+用户授权 -> SY 转换 -> position.wrapStake() -> 拉取 SY -> 按 exchangeRate 折算 -> 增加 syTotalStaking / syWrapStaking / wrapUAssetDebt -> uAsset.mint(uAssetReceiver, uAssetDebt)。
 
 ### 2.5 Wrap Redeem
 
@@ -222,17 +220,17 @@ OutrunExchangeOracleAdapter
 |        |  |              |  |             |  | (external)       |
 |mintSY  |  | deposit      |  | stake       |  |                  |
 |redeemSy|  | redeem       |  | drawUAsset  |  | genesis          |
-|stake   |  | preview*     |  | redeem      |  └────────┬─────────┘
-|wrapStk |  | exchangeRate |  | wrapStake   |           │
-|        |  └──────┬───────┘  │ keepWrapRdm │  ┌────────┴─────────┐
-|genesis │         │          │ keepRedeem  │  | SY token via     |
-+───┬────┘         │     ┌────┤ harvest     │  | redeem           |
-    │              │     │    │ preview*    │  | ·redeem          |
-    └──────────────┘     │    └─────┬─┬─────┘  └────────┬─────────┘
-                         │          │ │                 │
-                 deposit/redeem mint│ │repay            │
-                                    │ │             ┌───┘
-                                    ▼ ▼             ▼
+|stake   |  | preview*     |  | redeem      |  └──────────────────┘
+|wrapStk |  | exchangeRate |  | wrapStake   |
+|        |  └──────┬───────┘  │ keepWrapRdm │
+|genesis │         │          │ keepRedeem  |
++───┬────┘         │          │ harvest     │
+    │              │          │ preview*    │
+    └──────────────┘          └─────┬─┬───┬─┘
+                                    │ │   └───────┐
+                 deposit/redeem mint│ │repay      │
+                                    │ │     redeem│
+                                    ▼ ▼           ▼
                           +----------------┐  +────────────┐
                           | OutrunUniversal|  | SY token   |
                           | Assets (uAsset)|  | ·redeem    |
@@ -245,6 +243,8 @@ OutrunExchangeOracleAdapter
                                                LayerZero Endpoint (external)
 ```
 
+本图为调用主干摘要，非穷举：Router→Position（`stakeFromToken`/`stakeFromSY` → `stake`/`wrapStake`）与 Router→Launcher（`genesisByToken`/`genesisBySY` → `launcher.genesis`）等编排调用未画出，完整调用清单见 §3.2.2 表与 §3.1 依赖扇出。
+
 #### 3.2.2 调用关系说明
 
 | Caller | Callee | 入口 |
@@ -252,7 +252,8 @@ OutrunExchangeOracleAdapter
 | Router | SY | `mintSYFromToken` → `SY.deposit`；`redeemSyToToken` → `SY.redeem` |
 | Router | Position | `stakeFromToken`/`stakeFromSY` → `stake`/`wrapStake` |
 | Router | Launcher | `genesisByToken`/`genesisBySY` → `launcher.genesis` |
-| Position | uAsset | `stake`/`wrapStake` → `mint`；`redeem`/`keepRedeem`/`keepWrapRedeem` → `repay` |
+| Position | uAsset | `stake`/`wrapStake`/`drawUAsset` → `mint`；`redeem`/`keepRedeem`/`keepWrapRedeem` → `repay` |
+| Position | SY | `redeem`/`harvestWrapYield` → `SY.redeem`（非 SY tokenOut 时经 adapter 兑换） |
 | Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`；redeem → `withdraw`/`unwrap`/`release` |
 | OutrunOFT | LayerZero | `_toSD` 编码消息；`_debit` burn 本链；`_credit` mint 远端 |
 
@@ -279,7 +280,7 @@ Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut
 
 锁定 Stake (资金从 SY → uAsset):
 
-  SY ──transferFrom──► Position ──exchangeRate──► principalValue
+  SY ──transferFrom──► Position ──exchangeRate──► uAssetDebt
                                                         │
                                                    mint uAsset
                                                         ▼
@@ -290,8 +291,8 @@ Wrap Stake (资金进入共享池):
   SY ──transferFrom──► Position
     → syTotalStaking  += amountInSY
     → syWrapStaking   += amountInSY
-    → wrapUAssetDebt  += principalValue
-    → mint uAsset to uAssetRecipient
+    → wrapUAssetDebt  += uAssetDebt
+    → mint uAsset to uAssetReceiver
 
 赎回路径 (资金流出协议):
 
@@ -385,5 +386,5 @@ Harvest:
 - Genesis 当前走的是 locked stake 路径，不是 wrap stake 路径。
 - Wrap 池按 principal debt 记账，不会因为汇率上涨自动给用户补发更多 uAsset。
 - 11 个 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
-- Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验；不实现 deviation bounds 或 fallback。
+- Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不实现 deviation bounds 或 fallback。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。

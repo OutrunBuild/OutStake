@@ -12,7 +12,7 @@
 - `OutrunStakingPositionUpgradeable` 继续按 position 记录 `syStaked` 与 `UAssetMinted`，并按公共 wrap 池记录 `syTotalStaking`、`syWrapStaking`、`wrapUAssetDebt`。
 - `SY` 依赖在 initializer 中写入后保持固定，不新增 `setSY()`，避免 position / wrap debt 对应的 share token 与 exchangeRate source 被替换。
 - oracle-backed SY upgradeable variants 可通过 owner-only `setExchangeRateOracle(address)` 更换 `exchangeRateOracle`，但 setter 不改变 balances、shares、position accounting 或 yield-bearing token 配置。
-- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（做 raw answer 正性、新鲜度窗口 `maxStaleness`（含 `updatedAt == 0` fail-closed）、可选构造期 sequencer 校验后做精度归一化；不提供 bounds/fallback/多源聚合）；本次变更不改变上述 oracle 校验语义。
+- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（做 raw answer 正性、新鲜度窗口 `maxStaleness`（含 `updatedAt == 0` fail-closed）、可选构造期 sequencer 校验，并在精度归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds/fallback/多源聚合）；本次变更仅在归一化后追加非零校验（`ZeroNormalizedRate`），归一化前的正性/新鲜度/sequencer 校验语义不变。
 - 旧 non-upgradeable contracts 已退出当前产品真源；当前 upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout。L2 oracle-backed SY 变体（`OutrunL2StakedTokenSYUpgradeable` / `OutrunL2WstETHSYUpgradeable`）在共享基类中的 state（`exchangeRateOracle` 引用与 underlying asset 元数据）使用基类 ERC-7201 槽 `erc7201("outrun.storage.OutrunL2OracleBackedSY")`；原 per-subclass 命名空间 `outrun.storage.OutrunL2StakedTokenSY` / `outrun.storage.OutrunL2WstETHSY` 已并入该槽，升级兼容性以新槽为准。前提：当前无任何测试网/主网部署这两个变体（无存量旧布局 proxy），V1 发布前布局变更无需迁移函数；若出现任何存量部署，必须先提供迁移函数或恢复旧命名空间。
 
 ## 2. `uAsset` 的 minter-cap 账务
@@ -41,14 +41,13 @@
 - `owner`
 - `syStaked`
 - `UAssetMinted`
-- `startTime`
 - `deadline`
 
 锁仓仓位的初始 debt 规则是：
 
 - 用户 stake `amountInSY`
-- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`
-- `principalValue` 同时成为初始 `UAssetMinted`
+- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`
+- `uAssetDebt` 同时成为初始 `UAssetMinted`
 - position 内写入该值，并调用 `uAsset.mint(...)`
 
 这里的关键点是：position debt 不是按固定 1:1 写入，而是按当前 `exchangeRate()` 折算后的 canonical asset value，再归一化成 `uAsset` 记账单位后写入。
@@ -65,8 +64,8 @@ wrap 池当前使用三组聚合账务变量：
 
 - 增加 `syTotalStaking`
 - 增加 `syWrapStaking`
-- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`
-- 用 principal value 增加 `wrapUAssetDebt`
+- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`
+- 用 `uAssetDebt` 增加 `wrapUAssetDebt`
 - 铸造等额 `uAsset`
 
 `keepWrapRedeem` 时（keeper-only，仅直付 SY）：
@@ -129,16 +128,16 @@ rounding matrix：
 
 ## 6. Draw 账务
 
-`drawUAsset(positionId, recipient)` 当前的账务规则是：
+`drawUAsset(positionId, uAssetReceiver)` 当前的账务规则是：
 
 - 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`
 - 再读取已有 `position.UAssetMinted`
-- 若 `currentValueInUAsset <= minted`，则可追加铸造额为 0
-- 否则只允许铸造差额 `currentValueInUAsset - minted`
+- 若 `currentValueInUAsset <= positionUAssetMinted`，则可追加铸造额为 0
+- 否则只允许铸造差额 `currentValueInUAsset - positionUAssetMinted`
 
 成功后：
 
-- `position.UAssetMinted += amountInUAsset`
+- `position.UAssetMinted = currentValueInUAsset`（本次 draw 后总债务被重置为当前估值；返回值/事件里的 `mintedUAsset` 仅指本次新增差额 `currentValueInUAsset - positionUAssetMinted`，非新总量）
 - 再次检查当前 `uAsset` mint cap 是否足够
 - 最后铸造追加的 `uAsset`
 

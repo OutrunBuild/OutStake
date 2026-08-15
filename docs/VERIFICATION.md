@@ -24,10 +24,9 @@ Gate verifies classification and command outcomes. Spec/document impact is decid
 
 For `fast` verification, `targeted_tests` still starts from the exact file set selected by `test_mapping`, but the gate now tries to compress that file set into a single `forge test --match-contract <regex>` run. The gate builds the regex from `forge test --list --match-path <file>` results, validates that `forge test --list --match-contract <regex>` resolves to the same test-contract set, and only then runs the compressed command. If extraction or validation fails, the gate falls back to the original per-file `forge test --match-path <file>` loop.
 
-CI uses two entry paths:
+CI uses one gate path. On every CI event (push, pull_request, workflow_dispatch), `script/harness/ci-gate-entrypoint.sh` unconditionally invokes `gate:ci -- --all` over every surface file, regardless of the diff: full test suite, `forge build`, coverage, slither, and full fmt/lint/bash/node checks.
 
-- When a reliable diff base exists, `script/harness/ci-gate-entrypoint.sh` computes `git diff --name-only`, expands those repo-relative paths into `gate:ci -- --changed-files <path> [<path> ...]`, and passes diff evidence through `CHANGE_CLASSIFIER_DIFF_FILE`.
-- For `workflow_dispatch`, zero-base, or empty-diff events, the CI entrypoint invokes `gate:ci -- --all` instead of synthesizing a repo-wide changed-files list.
+This full gate is the backstop for the local pre-push hook (`.githooks/pre-push`), which runs `gate:fast -- --all`: forge build plus targeted tests spanning every test file, and fmt/lint — no coverage, slither, or full test suite. Neither path computes a diff-based changed-files subset.
 
 Diff evidence must not be created as persistent repository files. Prefer `GATE_DIFF_BASE=<git-ref>`; when `CHANGE_CLASSIFIER_DIFF_FILE` is needed, point it at a `mktemp` file outside the repository and remove it after `gate.sh` exits.
 

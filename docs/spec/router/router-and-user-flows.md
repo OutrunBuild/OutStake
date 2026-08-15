@@ -62,11 +62,11 @@
   - `positionOwner` 和 `uAssetReceiver` 不能为零地址。
   - `amountInSY` 必须满足 `minStake`。
   - 把 `SY` 从 router 拉入 position 合约。
-  - 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`。
-  - 用这个 `principalValue` 作为初始 `UAssetMinted`。
-  - 新建 `positionId`，写入 `owner`、`syStaked`、`UAssetMinted`、`startTime`、`deadline`。
+  - 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`。
+  - 用这个 `uAssetDebt` 作为初始 `position.UAssetMinted`（返回值/事件字段名为 `mintedUAsset`）。
+  - 新建 `positionId`，写入 `owner`、`syStaked`、`UAssetMinted`、`deadline`。
   - 向 `uAssetReceiver` mint 等额 `uAsset`。
-- router 在 stake 完成后才检查 `UAssetMinted >= stakeParam.minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
+- router 在 stake 完成后才检查 `mintedUAsset >= stakeParam.minUAssetMinted`（即 `SP.stake` 返回值）；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 
 ## 5. SY -> locked stake
 
@@ -87,38 +87,37 @@
 
 ### 6.1 token -> wrap stake
 
-`wrapStakeFromToken(SP, tokenIn, tokenAmount, minSyOut, uAssetRecipient, minUAssetMinted)` 的流程是：
+`wrapStakeFromToken(SP, tokenIn, tokenAmount, minSyOut, uAssetReceiver, minUAssetMinted)` 的流程是：
 
 - router 先从 `SP.SY()` 读取 stake manager 绑定的 `SY`。
 - router 调用 `_mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut)`，先把 token / native 转成 `SY`，并由 `SY.deposit(...)` 校验 token -> SY 最小输出。
-- router 再调用 `SP.wrapStake(amountInSY, uAssetRecipient)`。
-- router 在 wrap stake 完成后校验 `UAssetMinted >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
+- router 再调用 `SP.wrapStake(amountInSY, uAssetReceiver)`。
+- router 在 wrap stake 完成后校验 `mintedUAsset >= minUAssetMinted`（即 `SP.wrapStake` 返回值）；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 
 ### 6.2 SY -> wrap stake
 
-`wrapStakeFromSY(SP, amountInSY, uAssetRecipient, minUAssetMinted)` 的流程是：
+`wrapStakeFromSY(SP, amountInSY, uAssetReceiver, minUAssetMinted)` 的流程是：
 
 - router 先从 `SP.SY()` 读取 canonical `SY`，再把 `SY` 从调用者拉到自己地址。
-- router 再调用 `SP.wrapStake(amountInSY, uAssetRecipient)`。
-- router 在 wrap stake 完成后校验 `UAssetMinted >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
+- 之后走和 `token -> wrap stake` 一样的 `OutrunRouter.sol::_wrapStakeFromSYBalance` 共享尾部：approve 精确额度给 `SP`、调用 `SP.wrapStake(amountInSY, uAssetReceiver)`，并在完成后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 
 ### 6.3 wrap stake 落到 position 合约后的语义
 
 `OutrunStakingPosition.wrapStake(...)` 当前行为是：
 
-- `amountInSY` 不能为 0，`uAssetRecipient` 不能为零地址。
+- `amountInSY` 不能为 0，`uAssetReceiver` 不能为零地址。
 - 把 `SY` 拉入 position 合约。
-- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`。
+- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`。
 - 更新共享账务：
   - `syTotalStaking += amountInSY`
   - `syWrapStaking += amountInSY`
-  - `wrapUAssetDebt += principalValue`
-- 给 `uAssetRecipient` mint `principalValue` 数量的 `uAsset`。
+  - `wrapUAssetDebt += uAssetDebt`
+- 给 `uAssetReceiver` mint `uAssetDebt` 数量的 `uAsset`。
 
 测试证明：
 
 - wrap stake 返回值是本次 mint 的 `uAsset` 数量。
-- `wrapStakeFromSY(...)` 会直接把 `uAsset` 打给 `uAssetRecipient`。
+- `wrapStakeFromSY(...)` 会直接把 `uAsset` 打给 `uAssetReceiver`。
 - wrap stake 不产生独立 `positionId`。
 
 ## 7. genesis flows
@@ -131,16 +130,16 @@
 - 然后调用 `SP.stake(amountInSY, lockupDays, genesisUser, address(this))`。
 - 这里走的是 locked stake，不是 wrap stake。
 - stake 产出的 `uAsset` 先 mint 给 router 自己。
-- router 在 stake 后校验 `amountInUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
-- router 校验 `amountInUAsset <= type(uint128).max`。
-- 之后 router 授权 `memeverseLauncher`，再调用 `memeverseLauncher.genesis(verseId, uint128(amountInUAsset), genesisUser)`。
-- router 当前不会在 `genesis(...)` 返回后再检查 launcher 是否把本次 allowance 全部消费；这一步依赖当前 launcher 实现按传入的 `amountInUAsset` 精确拉取 `uAsset`。
+- router 在 stake 后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
+- router 校验 `mintedUAsset <= type(uint128).max`。
+- 之后 router 授权 `memeverseLauncher`，再调用 `memeverseLauncher.genesis(verseId, uint128(mintedUAsset), genesisUser)`。
+- router 当前不会在 `genesis(...)` 返回后再检查 launcher 是否把本次 allowance 全部消费；这一步依赖当前 launcher 实现按传入的 `mintedUAsset` 精确拉取 `uAsset`。
 
 ### 7.2 genesisBySY
 
 - `genesisBySY(SP, amountInSY, lockupDays, verseId, genesisUser, minUAssetMinted)` 会先从 `SP.SY()` 读取 canonical `SY`，再从调用者拉取 `SY`。
 - 后续和 `genesisByToken(...)` 一样，仍然调用 `SP.stake(...)` 创建 locked position。
-- router 在 stake 后校验 `amountInUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
+- router 在 stake 后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 - 最终也是由 launcher 拉走本次 stake 产出的 `uAsset`。
 - router 当前不会对 launcher 的 allowance 消费结果做额外断言；精确消费由当前 launcher 实现负责。
 

@@ -22,21 +22,21 @@
 1. 调用前状态：用户持有 `SY`，或先经 router 把 token 转成 `SY`。
 2. 入口校验：`positionOwner` 与 `uAssetReceiver` 不能为零地址，`amountInSY` 需满足 `minStake`，合约不能处于 paused。
 3. 资产进入：`SY` 被转入 `OutrunStakingPositionUpgradeable`。
-4. principal 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`；其中 `canonicalAssetDecimals = SY.assetInfo().assetDecimals`，`uAssetDecimals = uAsset.decimals()`。
+4. uAssetDebt 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`；其中 `canonicalAssetDecimals = SY.assetInfo().assetDecimals`，`uAssetDecimals = uAsset.decimals()`。
 5. debt 上限校验：检查当前 `uAsset` 给该 position 合约地址留下的 mintable cap 是否足够。
 6. 状态写入：增加 `syTotalStaking`，生成新的 `positionId`，写入 position。
-7. 债务铸造：调用 `uAsset.mint(uAssetReceiver, UAssetMinted)`。
+7. 债务铸造：调用 `uAsset.mint(uAssetReceiver, mintedUAsset)`（stake 场景 `mintedUAsset = uAssetDebt`）。
 8. 完成状态：position 进入“已创建、可 draw”的活跃状态；若 `lockupDays > 0`，新 position 未到期、不可 redeem；若 `lockupDays == 0`，`deadline == block.timestamp`，新 position 可立即 redeem。
 
 ## 3. Draw 生命周期
 
-`drawUAsset(positionId, recipient)` 只作用于已存在 position，当前状态机如下：
+`drawUAsset(positionId, uAssetReceiver)` 只作用于已存在 position，当前状态机如下：
 
 1. 前置状态：position 存在，调用者必须是 position owner，合约不能 paused。
 2. 估值阶段：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`。
-3. 可追加额度计算：若 `currentValueInUAsset` 不高于已铸 debt，则流程回退；否则差额即 `amountInUAsset`。
+3. 可追加额度计算：若 `currentValueInUAsset` 不高于已铸 debt，则流程回退；否则差额即 `mintedUAsset`（`drawUAsset` 返回值与 `DrawUAsset` 事件字段，调用级铸出量；非 `position.UAssetMinted` 总债务）。
 4. 状态更新：增加 `position.UAssetMinted`。
-5. cap 校验与铸造：检查 `uAsset` mint cap，随后铸造新的 `uAsset` 到 `recipient`。
+5. cap 校验与铸造：检查 `uAsset` mint cap，随后铸造新的 `uAsset` 到 `uAssetReceiver`。
 6. 完成状态：position 仍是活跃仓位，但未偿 debt 增大。
 
 因此，draw 不会改变 lock deadline，也不会改变 `syStaked`。
@@ -71,17 +71,17 @@
 
 ### 5.1 Wrap stake
 
-`wrapStake(amountInSY, uAssetRecipient)` 当前状态机如下：
+`wrapStake(amountInSY, uAssetReceiver)` 当前状态机如下：
 
-1. 前置状态：合约未 paused；输入数量和 recipient 有效。
+1. 前置状态：合约未 paused；输入数量和 `uAssetReceiver` 有效。
 2. 资产进入：`SY` 转入 position 合约。
-3. principal 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `principalValue = canonical asset -> uAsset`。
+3. uAssetDebt 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`。
 4. cap 校验：检查当前 `uAsset` mint cap。
 5. 聚合账务更新：
    - `syTotalStaking += amountInSY`
    - `syWrapStaking += amountInSY`
-   - `wrapUAssetDebt += principalValue`
-6. 铸造：向 `uAssetRecipient` 铸造 `principalValue` 对应的 `uAsset`。
+   - `wrapUAssetDebt += uAssetDebt`
+6. 铸造：向 `uAssetReceiver` 铸造 `uAssetDebt` 对应的 `uAsset`。
 
 ### 5.2 Keep wrap redeem
 
@@ -168,7 +168,7 @@
 
 ## 8. Pause / unpause 的影响
 
-当前仓库存在两类 pause 语义：
+当前仓库存在三类 pause 语义：
 
 ### 8.1 Position 级 pause
 
@@ -186,10 +186,19 @@
 
 ### 8.2 SY token 级 pause
 
-`SYBase` 继承 `OutrunERC20Pausable`，因此 `SY` token 在 owner pause 时会被阻断。阻断分两层：`SY.deposit` / `SY.redeem` 自带函数级 `whenNotPaused`，pause 时在函数入口直接 revert；常规 `SY` transfer 没有函数级 modifier，由 `_update` 的 `whenNotPaused` 兜底拦截。当前这会影响：
+`SYBase` 继承 `OutrunERC20PausableUpgradeable`，因此 `SY` token 在 owner pause 时会被阻断。阻断分两层：`SY.deposit` / `SY.redeem` 自带函数级 `whenNotPaused`，pause 时在函数入口直接 revert；常规 `SY` transfer 没有函数级 modifier，由 `_update` 的 `whenNotPaused` 兜底拦截。当前这会影响：
 
 - `SY.deposit`（函数级 `whenNotPaused`）
 - `SY.redeem`（函数级 `whenNotPaused`）
 - 常规 `SY` transfer 行为（经 `_update` 的 `whenNotPaused`）
 
-因此，在当前实现里，用户流程既可能被 position 级 pause 阻断，也可能被底层 `SY` token pause 阻断。
+### 8.3 uAsset 级 pause
+
+`OutrunUniversalAssetsUpgradeable` 经 `OutrunOFTUpgradeable` → `OutrunERC20PausableUpgradeable` 继承 pause 家族，可被其自身 owner 独立 pause（与 position owner 是不同合约的独立角色，部署配置可指向同一地址）。阻断分两层：`OutrunUniversalAssetsUpgradeable.sol::mint` / `OutrunUniversalAssetsUpgradeable.sol::repay` 自带函数级 `whenNotPaused`；常规 uAsset transfer 与 OFT outbound send 没有函数级 modifier，由 `_update` 的 `whenNotPaused` 兜底拦截（跨链 inbound `_credit` 豁免，见 `docs/spec/common-foundations.md` 的「Pause 与跨链 OFT 执行边界」）。当前这会影响 position 的六个业务入口：
+
+- `stake` / `drawUAsset` / `wrapStake`（经 `uAsset.mint`）
+- `redeem` / `keepRedeem` / `keepWrapRedeem`（经 `uAsset.repay`）
+
+`harvestWrapYield` 不调用 uAsset 的 mint / repay，不受该级 pause 阻断（仅受 8.1 与 8.2 两级影响）；对应的 preview / view 函数同样不受该级 pause 影响。
+
+因此，在当前实现里，用户流程既可能被 position 级 pause 阻断，也可能被底层 `SY` token pause 阻断，还可能被 uAsset 级 pause 阻断。

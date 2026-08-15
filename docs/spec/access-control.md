@@ -14,7 +14,7 @@
 
 ## 权限模型
 
-- protocol owner 是 multisig（部署期 owner 必须等于广播者 EOA，即 `OWNER` 环境变量等于 `PRIVATE_KEY` 派生地址；部署完成后通过 `transferOwnership` 转交 multisig，详见 `docs/deployment.md`「关键约束」）
+- protocol owner 是 multisig（部署期 owner 约束按脚本区分：`OutstakeScript.s.sol` 系强制 `OWNER` 等于广播者 EOA、部署完成后 `transferOwnership` 转交 multisig；`YieldDeployScript.s.sol` 系无此 `OWNER == 广播者` 约束、`OWNER` 可直接设为终态 multisig；详见 `docs/deployment.md`「关键约束」）
 - 不引入 timelock
 - 不引入额外 governance module
 - router 仍只有 `setMemeverseLauncher(address)` owner 入口
