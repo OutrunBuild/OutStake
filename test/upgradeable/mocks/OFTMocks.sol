@@ -26,23 +26,12 @@ contract MockLzEndpoint {
         delegate = delegate_;
     }
 
-    function setQuoteNativeFee(uint256 nativeFee_) external {
-        quoteNativeFee = nativeFee_;
-    }
-
     function quote(MessagingParams calldata, address) external view returns (MessagingFee memory fee) {
         fee = MessagingFee({nativeFee: quoteNativeFee, lzTokenFee: 0});
     }
 
     function send(MessagingParams calldata, address) external payable returns (MessagingFee memory) {
         return MessagingFee({nativeFee: quoteNativeFee, lzTokenFee: 0});
-    }
-}
-
-/// @dev Mock message inspector that always approves messages.
-contract MockMsgInspector {
-    function inspect(bytes calldata, bytes calldata) external pure returns (bool valid) {
-        return true;
     }
 }
 

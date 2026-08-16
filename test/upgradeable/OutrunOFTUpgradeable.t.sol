@@ -6,7 +6,7 @@ import {MessagingFee, OFTLimit, SendParam} from "@layerzerolabs/oft-evm/contract
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
-import {OutrunRateLimiterHarness} from "../mocks/OutrunRateLimiterHarness.sol";
+import {OutrunRateLimiterHarness} from "./mocks/OutrunRateLimiterHarness.sol";
 import {MockLzEndpoint, OutrunUpgradeableOftHarness} from "./mocks/OFTMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
+import {OutrunRateLimiterUpgradeable} from "../../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
 
 /// @dev Test harness exposing OutrunRateLimiterUpgradeable internals so tests can drive
 ///      base-contract rate limit state without deploying the full OFT stack. The base
