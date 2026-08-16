@@ -7,11 +7,11 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
 import {OutrunDeployer} from "../../script/deploy/deployment/OutrunDeployer.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
-import {MockUSDC} from "../support/MockUSDC.sol";
-import {MockAUSDC} from "../support/MockAUSDC.sol";
-import {MockSUSDS} from "../support/MockSUSDS.sol";
-import {MockAUSDCOracle} from "../support/MockAUSDCOracle.sol";
-import {MockSUSDSOracle} from "../support/MockSUSDSOracle.sol";
+import {MockUSDC} from "../support/mocks/MockUSDC.sol";
+import {MockAUSDC} from "../support/mocks/MockAUSDC.sol";
+import {MockSUSDS} from "../support/mocks/MockSUSDS.sol";
+import {MockAUSDCOracle} from "../support/mocks/MockAUSDCOracle.sol";
+import {MockSUSDSOracle} from "../support/mocks/MockSUSDSOracle.sol";
 
 contract OutstakeScriptHarness is OutstakeScript {
     function configure(address owner_, address deployer_, address outrunDeployer_) external {

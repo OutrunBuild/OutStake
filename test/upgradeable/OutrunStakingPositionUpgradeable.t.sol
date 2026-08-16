@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
@@ -42,7 +45,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
     }
 
     function testInitializeCannotRunTwice() external {
-        vm.expectRevert();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
         position.initialize(owner, 1, revenuePool, address(sy), address(uAsset), keeper);
     }
 
@@ -172,7 +175,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
     function testNonOwnerCannotUpgrade() external {
         MockPositionUUPSV2 implementationV2 = new MockPositionUUPSV2();
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
         position.upgradeToAndCall(address(implementationV2), "");
     }
 

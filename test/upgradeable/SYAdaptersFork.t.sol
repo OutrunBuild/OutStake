@@ -14,7 +14,7 @@ import {IL2StETH} from "../../src/integrations/lido/interfaces/IL2StETH.sol";
 import {IListaStakeManager} from "../../src/integrations/lista/interfaces/IListaStakeManager.sol";
 import {IWstETH} from "../../src/integrations/lido/interfaces/IWstETH.sol";
 import {IPSM3} from "../../src/integrations/sky/interfaces/IPSM3.sol";
-import {IWETH} from "../../src/libraries/IWETH.sol";
+import {IWETH} from "../support/IWETH.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
 import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol";
 import {OutrunStakedUSDeSYUpgradeable} from "../../src/yield/adapters/ethena/OutrunStakedUSDeSYUpgradeable.sol";

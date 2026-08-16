@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {IMockSUSDS} from "../../support/MockSUSDS.sol";
+import {IMockSUSDS} from "../../support/mocks/MockSUSDS.sol";
 import {MockOutrunERC20SYUpgradeableBase} from "./MockOutrunERC20SYUpgradeableBase.sol";
 
 /**

@@ -3,6 +3,8 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {OFTReceipt, SendParam} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
@@ -36,13 +38,13 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
     }
 
     function testInitializeRevertsWhenCalledTwice() external {
-        vm.expectRevert();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
         uAsset.initialize("x", "x", 18, owner);
     }
 
     function testImplementationCannotBeInitializedDirectly() external {
         OutrunUniversalAssetsUpgradeable implementation = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
-        vm.expectRevert();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
         implementation.initialize("x", "x", 18, owner);
     }
 
@@ -71,7 +73,7 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
     function testNonOwnerCannotUpgrade() external {
         OutrunUniversalAssetsUpgradeable implementationV2 = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
         vm.prank(minter);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, minter));
         uAsset.upgradeToAndCall(address(implementationV2), "");
     }
 
@@ -223,13 +225,13 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         uAsset.mint(receiver, 60e18);
 
         vm.startPrank(owner);
-        vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidTransferParams.selector);
+        vm.expectRevert(IUniversalAssets.InvalidTransferParams.selector);
         uAsset.transferMinterDebt(address(0), otherMinter, 1);
 
-        vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidTransferParams.selector);
+        vm.expectRevert(IUniversalAssets.InvalidTransferParams.selector);
         uAsset.transferMinterDebt(minter, address(0), 1);
 
-        vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidTransferParams.selector);
+        vm.expectRevert(IUniversalAssets.InvalidTransferParams.selector);
         uAsset.transferMinterDebt(minter, otherMinter, 0);
 
         vm.expectRevert(IUniversalAssets.ReachBurnCap.selector);
@@ -251,7 +253,7 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         uint256 receiverBalanceBefore = uAsset.balanceOf(receiver);
 
         vm.prank(owner);
-        vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidTransferParams.selector);
+        vm.expectRevert(IUniversalAssets.InvalidTransferParams.selector);
         uAsset.transferMinterDebt(minter, minter, 10e18);
 
         IUniversalAssets.MintingStatus memory status = uAsset.mintingStatusTable(minter);
@@ -263,7 +265,7 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
 
     function testNonOwnerCannotTransferMinterDebt() external {
         vm.prank(minter);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, minter));
         uAsset.transferMinterDebt(minter, otherMinter, 1);
     }
 

@@ -3,6 +3,10 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
+import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {SYUpgradeableMockToken, TestSYUpgradeable, TestSYUpgradeableV2} from "./mocks/SYUpgradeableMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 
@@ -27,13 +31,13 @@ contract SYUpgradeableTest is Test {
     }
 
     function testSYBaseInitializerCannotRunTwice() external {
-        vm.expectRevert();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
         sy.initialize("x", "x", address(token), owner);
     }
 
     function testSYBaseZeroYieldBearingTokenReverts() external {
         TestSYUpgradeable implementation = new TestSYUpgradeable();
-        vm.expectRevert();
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
         ProxyTestHelper.deploy(
             address(implementation),
             abi.encodeCall(TestSYUpgradeable.initialize, ("SY Token", "SYT", address(0), owner))
@@ -58,7 +62,7 @@ contract SYUpgradeableTest is Test {
     function testSYBaseNonOwnerCannotUpgrade() external {
         TestSYUpgradeableV2 implementationV2 = new TestSYUpgradeableV2();
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
         sy.upgradeToAndCall(address(implementationV2), "");
     }
 

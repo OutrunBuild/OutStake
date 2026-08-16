@@ -3,6 +3,8 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
 import {OutrunWeETHSYUpgradeable} from "../../src/yield/adapters/etherfi/OutrunWeETHSYUpgradeable.sol";
@@ -71,7 +73,7 @@ contract SYAdaptersUpgradeableTest is Test {
         OutrunWstETHSYUpgradeable impl = new OutrunWstETHSYUpgradeable();
         MockToken stETH = new MockToken("stETH", "stETH", 18);
 
-        vm.expectRevert();
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
         ProxyTestHelper.deploy(
             address(impl), abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(0)))
         );
@@ -106,7 +108,7 @@ contract SYAdaptersUpgradeableTest is Test {
 
         MockOracle newOracle = new MockOracle(1.5e18);
         vm.prank(address(0xB0B));
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, address(0xB0B)));
         _asSY(sy).setExchangeRateOracle(address(newOracle));
 
         vm.prank(owner);
@@ -116,7 +118,7 @@ contract SYAdaptersUpgradeableTest is Test {
         assertEq(_asSY(sy).exchangeRate(), 1.5e18);
 
         vm.prank(owner);
-        vm.expectRevert();
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
         _asSY(sy).setExchangeRateOracle(address(0));
     }
 

@@ -8,6 +8,7 @@ import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeMan
 import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {
     MockSYWithRateControl,
     MockERC20ForAdversarial,
@@ -439,11 +440,11 @@ contract AdversarialTests is Test {
 
         // Non-owner tries to harvest
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker));
         position.harvestWrapYield(address(sy), 0);
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
         position.harvestWrapYield(address(sy), 0);
 
         // Only owner can harvest
@@ -725,11 +726,11 @@ contract AdversarialTests is Test {
      */
     function test_Adversarial_NonOwnerCannotPause() external {
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker));
         position.pause();
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
         position.pause();
     }
 
@@ -741,11 +742,11 @@ contract AdversarialTests is Test {
         position.pause();
 
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker));
         position.unpause();
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
         position.unpause();
     }
 

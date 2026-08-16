@@ -3,8 +3,11 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunL2WstETHSYUpgradeable} from "../../src/yield/adapters/lido/OutrunL2WstETHSYUpgradeable.sol";
+import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {OracleSetterMockToken, OracleSetterMockOracle, RevertingOracle} from "./mocks/OracleSetterMocks.sol";
 
@@ -54,14 +57,14 @@ contract OracleSetterUpgradeableTest is Test {
         IOracleBackedSYUpgradeable sy = _deployL2Staked();
         OracleSetterMockOracle newOracle = new OracleSetterMockOracle(1.2e18);
         vm.prank(nonOwner);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, nonOwner));
         sy.setExchangeRateOracle(address(newOracle));
     }
 
     function testZeroExchangeRateOracleReverts() external {
         IOracleBackedSYUpgradeable sy = _deployL2Staked();
         vm.prank(owner);
-        vm.expectRevert();
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
         sy.setExchangeRateOracle(address(0));
     }
 

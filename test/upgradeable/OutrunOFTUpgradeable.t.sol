@@ -5,14 +5,13 @@ import {Test} from "forge-std/Test.sol";
 import {MessagingFee, OFTLimit, SendParam} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
-import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
+import {OutrunRateLimiterHarness} from "../mocks/OutrunRateLimiterHarness.sol";
 import {MockLzEndpoint, OutrunUpgradeableOftHarness} from "./mocks/OFTMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 
 contract OutrunOFTUpgradeableTest is Test {
     OutrunUpgradeableOftHarness internal oft;
-    OutrunUniversalAssetsUpgradeable internal uAsset;
     MockLzEndpoint internal endpoint;
 
     address internal owner = address(0xA11CE);
@@ -22,15 +21,6 @@ contract OutrunOFTUpgradeableTest is Test {
     function setUp() external {
         endpoint = new MockLzEndpoint();
 
-        // Deploy the real OutrunUniversalAssetsUpgradeable for minting-cap tests.
-        OutrunUniversalAssetsUpgradeable uAssetImpl = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
-        uAsset = OutrunUniversalAssetsUpgradeable(
-            ProxyTestHelper.deploy(
-                address(uAssetImpl),
-                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("Outrun OFT", "OFT", 18, owner))
-            )
-        );
-
         // Deploy the harness (OutrunOFTUpgradeable child) for debit/credit/outflow tests.
         OutrunUpgradeableOftHarness implementation = new OutrunUpgradeableOftHarness(18, address(endpoint));
         oft = OutrunUpgradeableOftHarness(
@@ -39,12 +29,6 @@ contract OutrunOFTUpgradeableTest is Test {
                 abi.encodeCall(OutrunUpgradeableOftHarness.initialize, ("Outrun OFT", "OFT", 18, owner))
             )
         );
-
-        // Set up the real uAsset for minting-cap tests.
-        vm.prank(owner);
-        uAsset.setMintingCap(user, 100e18);
-        vm.prank(user);
-        uAsset.mint(user, 100e18);
 
         // Mint tokens on the harness for debit/credit/outflow tests.
         oft.exposedCredit(user, 100e18, 0);
@@ -208,5 +192,72 @@ contract OutrunOFTUpgradeableTest is Test {
             composeMsg: bytes(""),
             oftCmd: bytes("")
         });
+    }
+}
+
+/// @dev Pins the base OutrunRateLimiterUpgradeable view semantics without the OFT override:
+///      an unconfigured or deleted destination reports the infinite-capacity sentinel
+///      (0, type(uint256).max), matching _checkAndUpdateRateLimit's no-limit early return.
+contract OutrunRateLimiterBaseTest is Test {
+    OutrunRateLimiterHarness internal rateLimiter;
+
+    uint32 internal constant DST_EID = 201;
+
+    function setUp() external {
+        rateLimiter = new OutrunRateLimiterHarness();
+    }
+
+    /// @dev F-031 regression: window == 0 must read as "infinite limit" in the base view,
+    ///      not as zero capacity.
+    function testUnconfiguredDestinationReturnsInfiniteCapacity() external {
+        (uint256 inFlight, uint256 canBeSent) = rateLimiter.getAmountCanBeSent(DST_EID);
+
+        assertEq(inFlight, 0, "unconfigured destination: no tokens in flight");
+        assertEq(canBeSent, type(uint256).max, "unconfigured destination: capacity is the infinite sentinel");
+    }
+
+    /// @dev With a configured limit the decay path still applies at the base layer:
+    ///      nothing in flight means the full limit is immediately sendable.
+    function testConfiguredDestinationReturnsFullLimitImmediately() external {
+        rateLimiter.setRateLimits(_singleConfig(100 ether, 1 hours));
+
+        (uint256 inFlight, uint256 canBeSent) = rateLimiter.getAmountCanBeSent(DST_EID);
+
+        assertEq(inFlight, 0, "configured destination with no outflow: no tokens in flight");
+        assertEq(canBeSent, 100 ether, "configured destination with no outflow: full limit sendable");
+    }
+
+    /// @dev Deleting the limit must return the destination to the infinite-capacity sentinel.
+    function testRemovedLimitReturnsInfiniteCapacity() external {
+        rateLimiter.setRateLimits(_singleConfig(100 ether, 1 hours));
+        rateLimiter.removeRateLimit(DST_EID);
+
+        (uint256 inFlight, uint256 canBeSent) = rateLimiter.getAmountCanBeSent(DST_EID);
+
+        assertEq(inFlight, 0, "removed limit: no tokens in flight");
+        assertEq(canBeSent, type(uint256).max, "removed limit: capacity is the infinite sentinel again");
+    }
+
+    /// @dev Pins that the infinite-capacity early return keys on window alone, not limit.
+    ///      This window == 0 && limit > 0 state is unreachable in production —
+    ///      OutrunOFTUpgradeable.sol::setOutboundRateLimit rejects window == 0 — but the
+    ///      base _setRateLimits allows it, mirroring _checkAndUpdateRateLimit's window-only
+    ///      early exit on the accounting path.
+    function testZeroWindowWithNonzeroLimitReturnsInfiniteCapacity() external {
+        rateLimiter.setRateLimits(_singleConfig(100 ether, 0));
+
+        (uint256 inFlight, uint256 canBeSent) = rateLimiter.getAmountCanBeSent(DST_EID);
+
+        assertEq(inFlight, 0, "zero window with nonzero limit: no tokens in flight");
+        assertEq(canBeSent, type(uint256).max, "zero window with nonzero limit: capacity is the infinite sentinel");
+    }
+
+    function _singleConfig(uint192 limit, uint64 window)
+        internal
+        pure
+        returns (OutrunRateLimiterUpgradeable.RateLimitConfig[] memory configs)
+    {
+        configs = new OutrunRateLimiterUpgradeable.RateLimitConfig[](1);
+        configs[0] = OutrunRateLimiterUpgradeable.RateLimitConfig({dstEid: DST_EID, limit: limit, window: window});
     }
 }
