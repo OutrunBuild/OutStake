@@ -4,7 +4,7 @@ pragma solidity ^0.8.35;
 import {Test} from "forge-std/Test.sol";
 
 import {NativeAmountMismatch, NativeTransferFailed} from "../../src/libraries/TokenHelper.sol";
-import {TokenHelperHarness, MockERC20, RevertingReceiver} from "./TokenHelperMocks.sol";
+import {TokenHelperHarness, MockERC20, RevertingReceiver} from "./mocks/TokenHelperMocks.sol";
 
 contract TokenHelperTest is Test {
     TokenHelperHarness internal harness;

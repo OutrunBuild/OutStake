@@ -7,7 +7,7 @@ import {WadRayMath} from "../../src/libraries/WadRayMath.sol";
 import {ArrayLib} from "../../src/libraries/ArrayLib.sol";
 import {SYUtils} from "../../src/libraries/SYUtils.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {MockGuarded, WadRayMathHelper} from "./LibraryMocks.sol";
+import {MockGuarded, WadRayMathHelper} from "./mocks/LibraryMocks.sol";
 
 // ============================================================================
 // WadRayMath Tests
@@ -85,7 +85,7 @@ contract SYUtilsTest is Test {
     using SYUtils for uint256;
 
     function testSyToAssetReturnsCorrectValue() public {
-        // With rate 1:1 (1e18), 1e18 SY -> 100 asset
+        // With rate 1:1 (1e18), 100 SY -> 100 asset
         uint256 exchangeRate = 1e18;
         uint256 syAmount = 100;
         uint256 result = SYUtils.syToAsset(exchangeRate, syAmount);
@@ -93,7 +93,7 @@ contract SYUtilsTest is Test {
     }
 
     function testSyToAssetWithRate2x() public {
-        // With rate 2e18, 2e18 SY -> 400 asset
+        // With rate 2e18, 200 SY -> 400 asset
         uint256 exchangeRate = 2e18;
         uint256 syAmount = 200;
         uint256 result = SYUtils.syToAsset(exchangeRate, syAmount);

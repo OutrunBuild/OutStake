@@ -3,7 +3,7 @@ pragma solidity ^0.8.35;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-import {IMintable} from "./MockUSDC.sol";
+import {IMintable} from "./mocks/MockUSDC.sol";
 
 interface IFaucet {
     function addToken(address token, uint256 dailyLimit) external;

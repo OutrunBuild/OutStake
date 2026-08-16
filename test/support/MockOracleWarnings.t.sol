@@ -3,10 +3,10 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 
-import {MockAUSDCOracle} from "./MockAUSDCOracle.sol";
-import {MockSUSDSOracle} from "./MockSUSDSOracle.sol";
+import {MockAUSDCOracle} from "./mocks/MockAUSDCOracle.sol";
+import {MockSUSDSOracle} from "./mocks/MockSUSDSOracle.sol";
 import {OutrunExchangeOracleAdapter} from "../../src/libraries/oracle/OutrunExchangeOracleAdapter.sol";
-import {MockAggregator} from "./MockOracleWarningsMocks.sol";
+import {MockAggregator} from "./mocks/MockOracleWarningsMocks.sol";
 
 contract MockOracleWarningsTest is Test {
     bytes4 internal constant INVALID_ORACLE_ANSWER_SELECTOR = bytes4(keccak256("InvalidOracleAnswer()"));

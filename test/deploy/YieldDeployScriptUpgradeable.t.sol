@@ -13,7 +13,7 @@ import {
     YieldDeployMockAToken,
     YieldDeployMockAavePool,
     YieldDeployMockUniversalAsset
-} from "./YieldDeployMocks.sol";
+} from "./mocks/YieldDeployMocks.sol";
 
 contract YieldDeployScriptHarness is YieldDeployScript {
     function configure(address ueth, address uusd, address ubnb, address owner_, address revenuePool_, address keeper_)

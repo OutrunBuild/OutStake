@@ -24,11 +24,11 @@ import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 
 import {Faucet, IFaucet} from "../../test/support/Faucet.sol";
-import {MockUSDC} from "../../test/support/MockUSDC.sol";
-import {MockAUSDC} from "../../test/support/MockAUSDC.sol";
-import {MockSUSDS} from "../../test/support/MockSUSDS.sol";
-import {MockAUSDCOracle} from "../../test/support/MockAUSDCOracle.sol";
-import {MockSUSDSOracle} from "../../test/support/MockSUSDSOracle.sol";
+import {MockUSDC} from "../../test/support/mocks/MockUSDC.sol";
+import {MockAUSDC} from "../../test/support/mocks/MockAUSDC.sol";
+import {MockSUSDS} from "../../test/support/mocks/MockSUSDS.sol";
+import {MockAUSDCOracle} from "../../test/support/mocks/MockAUSDCOracle.sol";
+import {MockSUSDSOracle} from "../../test/support/mocks/MockSUSDSOracle.sol";
 import {MockOutrunAUSDCSYUpgradeable} from "../../test/upgradeable/mocks/MockOutrunAUSDCSYUpgradeable.sol";
 import {MockOutrunSUSDSSYUpgradeable} from "../../test/upgradeable/mocks/MockOutrunSUSDSSYUpgradeable.sol";
 
