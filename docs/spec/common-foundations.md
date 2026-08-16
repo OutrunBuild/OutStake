@@ -145,7 +145,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 
 部署与升级一致性约束（`OutrunUniversalAssetsUpgradeable`）：
 
-- `initialize` 强制传入 `decimals_` 等于构造期固化的 `_localDecimalsForValidation()`，否则 revert `DecimalsMismatch(expected, provided)`：不可用与 localDecimals 不一致的 decimals 部署
+- `OutrunUniversalAssetsUpgradeable.sol::initialize` 强制传入 `decimals_` 等于构造期固化的 `OutrunOFTUpgradeable.sol::localDecimals`，否则 revert `DecimalsMismatch(expected, provided)`：不可用与 localDecimals 不一致的 decimals 部署
 - `OutrunOFTUpgradeable.sol::constructor` 拒绝 `lzEndpoint == address(0)`，revert `InvalidLayerZeroEndpoint`；标准部署脚本的 `OutstakeScript.s.sol::_validateUAssetDeploymentConfig` 可能在 implementation 创建前以 `InvalidEndpoint` 预检同一输入
 - `_authorizeUpgrade`（owner-only）校验新实现与当前值三一致——endpoint、decimalConversionRate、localDecimals 任一不一致即 revert `InvalidOFTUpgradeConfig`：升级不可改变这三项
 
