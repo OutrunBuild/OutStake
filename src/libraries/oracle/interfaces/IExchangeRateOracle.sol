@@ -13,9 +13,10 @@ pragma solidity ^0.8.35;
  */
 interface IExchangeRateOracle {
     /// @notice Returns the current exchange rate, scaled by 1e18 (asset per SY), for SY accounting.
-    /// @dev Implementations MUST return a 1e18-scaled value: position accounting divides the rate by a hardcoded
-    ///      1e18 (SYUtils.ONE), so any other scale silently breaks stake/wrap accounting. This interface does not
-    ///      add freshness, bounds, fallback, or multi-source guarantees.
+    /// @dev Implementations MUST return a 1e18-scaled value: position accounting converts amounts against the
+    ///      rate with a hardcoded 1e18 (SYUtils.ONE) — `syAmount * exchangeRate / 1e18` for SY-to-asset and
+    ///      `assetAmount * 1e18 / exchangeRate` for asset-to-SY — so any other scale silently breaks stake/wrap
+    ///      accounting. This interface does not add freshness, bounds, fallback, or multi-source guarantees.
     /// @return The current exchange rate value (1e18-scaled).
     function getExchangeRate() external view returns (uint256);
 

@@ -67,19 +67,62 @@ interface IUniversalAssets {
      */
     function repay(address account, uint256 amount) external;
 
+    /**
+     * @notice Emitted by {mint} after uAsset is minted successfully.
+     * @param minter Minter whose outstanding debt increases (`msg.sender`).
+     * @param receiver Address that receives the minted uAsset.
+     * @param amount Amount of uAsset minted.
+     */
     event MintUAsset(address indexed minter, address indexed receiver, uint256 amount);
 
+    /**
+     * @notice Emitted by {repay} after uAsset is burned successfully.
+     * @param minter Minter whose outstanding debt decreases (`msg.sender`).
+     * @param amount Amount of uAsset burned.
+     */
     event BurnUAsset(address indexed minter, uint256 amount);
 
+    /**
+     * @notice Emitted by {setMintingCap} after a minter's cap is updated.
+     * @param minter Minter whose cap changed.
+     * @param oldMintingCap Previous minting cap.
+     * @param newMintingCap New minting cap.
+     */
     event SetMintingCap(address indexed minter, uint256 oldMintingCap, uint256 newMintingCap);
 
+    /**
+     * @notice Emitted by {revokeMinter} after a minter's cap is cleared.
+     * @param minter Minter whose minting permission was revoked.
+     * @param oldMintingCap Cap before revocation.
+     */
     event RevokeMinter(address indexed minter, uint256 oldMintingCap);
 
+    /**
+     * @notice Emitted by {transferMinterDebt} after outstanding debt moves between minter records.
+     * @param from Minter whose outstanding debt decreases.
+     * @param to Minter whose outstanding debt increases.
+     * @param amount Amount of outstanding debt transferred.
+     */
     event TransferMinterDebt(address indexed from, address indexed to, uint256 amount);
 
+    /**
+     * @notice Thrown by {setMintingCap}, {revokeMinter}, {mint}, or {repay} when a required address or amount is zero.
+     */
     error ZeroInput();
 
+    /**
+     * @notice Thrown by {mint} or {transferMinterDebt} when the operation would exceed a minter's minting cap.
+     */
     error ReachMintCap();
 
+    /**
+     * @notice Thrown by {repay} or {transferMinterDebt} when the requested amount exceeds outstanding minted debt.
+     * @dev The limit is `amountInMinted`, the minter's outstanding debt, rather than an independent burn cap.
+     */
     error ReachBurnCap();
+
+    /**
+     * @notice Thrown by {transferMinterDebt} for zero addresses, identical minter records, or a zero amount.
+     */
+    error InvalidTransferParams();
 }

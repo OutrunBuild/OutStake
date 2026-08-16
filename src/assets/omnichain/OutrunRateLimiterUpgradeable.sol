@@ -55,6 +55,9 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     /// @param dstEid Destination endpoint ID
     /// @return currentAmountInFlight Tokens currently in-flight
     /// @return amountCanBeSent Remaining capacity available to send
+    /// @dev When window == 0 (unconfigured or deleted limit) the capacity is infinite and this returns
+    ///      the type(uint256).max sentinel. Subclasses with their own amount envelope (e.g. OFT's
+    ///      uint64 shared-decimals wire cap) must override to return that envelope instead.
     function getAmountCanBeSent(uint32 dstEid)
         public
         view
@@ -62,6 +65,10 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         returns (uint256 currentAmountInFlight, uint256 amountCanBeSent)
     {
         RateLimit memory rl = rateLimits(dstEid);
+        // window == 0 means the destination is unconfigured (or its limit was deleted): the limit is
+        // infinite, matching _checkAndUpdateRateLimit's early return. The sentinel cannot collide with
+        // a configured state, whose sendable amount is bounded by limit <= type(uint192).max.
+        if (rl.window == 0) return (0, type(uint256).max);
         return _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
     }
 
@@ -148,7 +155,12 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         (uint256 currentAmountInFlight, uint256 amountCanBeSent) =
             _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
         if (amount > amountCanBeSent) revert RateLimitExceeded();
-        // casting to uint192 is safe because currentAmountInFlight + amount is bounded by rl.limit.
+        // casting to uint192 is safe because currentAmountInFlight + amount is bounded by
+        // max(rl.limit, the stored amountInFlight), and both are uint192. On the outflow path the
+        // revert check above caps the sum at rl.limit; on the amount == 0 checkpoint path the sum
+        // equals the decayed stored amountInFlight, itself already a uint192. An owner lowering
+        // the limit can leave in-flight above the new limit — that over-limit state is expected
+        // and decays back under the limit over time.
         // forge-lint: disable-next-line(unsafe-typecast)
         rl.amountInFlight = uint192(currentAmountInFlight + amount);
         // slither-disable-next-line timestamp

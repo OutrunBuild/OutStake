@@ -30,7 +30,6 @@ contract OutrunUniversalAssetsUpgradeable
 
     error InvalidOFTUpgradeConfig();
     error DecimalsMismatch(uint8 expected, uint8 provided);
-    error InvalidTransferParams();
 
     constructor(uint8 localDecimals_, address lzEndpoint) OutrunOFTUpgradeable(localDecimals_, lzEndpoint) {}
 

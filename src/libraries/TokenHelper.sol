@@ -77,7 +77,9 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param token Address of the ERC20 token.
     /// @param to Address to approve as spender.
     /// @param value Amount to approve.
-    /// @dev PLS PAY ATTENTION to tokens that requires the approval to be set to 0 before changing it
+    /// @dev Passthrough to SafeERC20.forceApprove. Tokens that reject non-zero-to-non-zero approval
+    /// changes (e.g. USDT) are handled by its internal fallback (on failure, reset to 0 and retry),
+    /// so callers do not need to pre-zero the allowance.
     function _safeApprove(address token, address to, uint256 value) internal {
         IERC20(token).forceApprove(to, value);
     }
@@ -90,7 +92,9 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     function _safeApproveInf(address token, address to) internal {
         if (token == NATIVE) return;
         if (IERC20(token).allowance(address(this), to) < LOWER_BOUND_APPROVAL) {
-            // First reset to 0 (required by tokens that reject non-zero-to-non-zero approval changes), then set to max.
+            // Explicit two-step: resetting to 0 first makes each approve succeed on the first try for
+            // tokens that reject non-zero-to-non-zero changes. forceApprove's fallback would also recover,
+            // but only after one wasted failed call. Then set to max.
             _safeApprove(token, to, 0);
             _safeApprove(token, to, type(uint256).max);
         }

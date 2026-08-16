@@ -48,7 +48,9 @@ interface IAsBnbMinter {
 
     /**
      * @notice Quotes the token-side asset value represented by an asBNB amount.
-     * @dev OutrunAsBNBSY combines this with Lista conversion quotes for local preview and exchange-rate reads.
+     * @dev OutrunAsBNBSY consumes this only for `exchangeRate()` reads, combining the asBNB-to-slisBNB quote with
+     *      Lista's `convertSnBnbToBnb`; deposit previews use `convertToAsBnb`, with native BNB first quoted via
+     *      `convertBnbToSnBnb`.
      * @param asBNBAmount The asBNB amount to convert.
      * @return The corresponding slisBNB amount (the asset returned by `token()`).
      */
