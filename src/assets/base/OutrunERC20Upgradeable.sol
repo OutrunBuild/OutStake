@@ -123,7 +123,7 @@ abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, I
         _update(address(0), account, value);
     }
 
-    function _burn(address account, uint256 value) internal virtual {
+    function _burn(address account, uint256 value) internal {
         require(account != address(0), ERC20InvalidSender(address(0)));
         _update(account, address(0), value);
     }

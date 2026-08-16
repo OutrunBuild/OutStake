@@ -187,14 +187,4 @@ abstract contract OutrunOFTUpgradeable is
     function _maxOFTAmountLD() internal view returns (uint256) {
         return uint256(type(uint64).max) * decimalConversionRate;
     }
-
-    /// @dev Returns the constructor-frozen local decimals for the equality checks. The OFT
-    ///      conversion math (decimalConversionRate, _removeDust granularity) derives only from this
-    ///      immutable value, while the ERC20 storage `decimals` drives the `decimals()` metadata
-    ///      getter. initialize() forces the two equal (DecimalsMismatch) and _authorizeUpgrade()
-    ///      re-checks new implementations, so ERC20 metadata can never disagree with OFT conversion
-    ///      math.
-    function _localDecimalsForValidation() internal view returns (uint8) {
-        return _localDecimals;
-    }
 }

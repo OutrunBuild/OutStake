@@ -46,7 +46,7 @@ contract OutrunUniversalAssetsUpgradeable
         // (decimalConversionRate, _removeDust granularity) derives only from the constructor-frozen
         // _localDecimals, while decimals_ becomes the ERC20 `decimals()` metadata. Forcing the two
         // equal keeps ERC20 metadata and cross-chain amount conversion consistent.
-        uint8 expectedDecimals = _localDecimalsForValidation();
+        uint8 expectedDecimals = localDecimals();
         if (decimals_ != expectedDecimals) {
             revert DecimalsMismatch(expectedDecimals, decimals_);
         }
@@ -187,7 +187,7 @@ contract OutrunUniversalAssetsUpgradeable
         if (
             address(implementation.endpoint()) != address(endpoint)
                 || implementation.decimalConversionRate() != decimalConversionRate
-                || implementation.localDecimals() != _localDecimalsForValidation()
+                || implementation.localDecimals() != localDecimals()
         ) revert InvalidOFTUpgradeConfig();
     }
 }
