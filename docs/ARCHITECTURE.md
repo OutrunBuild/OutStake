@@ -8,6 +8,7 @@
 - `src/assets/base/OutrunERC20PausableUpgradeable.sol`
 - `src/assets/base/OutrunUniversalAssetsUpgradeable.sol`
 - `src/assets/omnichain/OutrunOFTUpgradeable.sol`
+- `src/assets/omnichain/OutrunRateLimiterUpgradeable.sol`（共享 OFT outbound rate-limit 抽象基类）
 - `src/assets/interfaces/IUniversalAssets.sol`
 - uAsset 统一债务与流通资产层，维护按 minter 维度的 mint cap / 已铸造债务 / mint / repay 路径，并继承 ERC20 / pause / OFT 跨链铸烧能力。
 - 当前 state-bearing uAsset 使用 `Upgradeable` 后缀变体并通过 `ERC1967Proxy` + UUPS 部署；旧非 upgradeable 合约已退出当前产品真源。
@@ -36,6 +37,7 @@
 - `src/yield/adapters/sky/OutrunStakedUsdsSYUpgradeable.sol`
 - `src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol`
 - `src/yield/OutrunL2StakedTokenSYUpgradeable.sol`
+- `src/yield/OutrunL2OracleBackedSYUpgradeable.sol`（oracle-backed L2 SY 变体抽象基类）
 - `src/yield/interfaces/IStandardizedYield.sol`
 - SY 份额层抽象，把外部收益资产包装为统一的 deposit / redeem / preview / exchangeRate 接口。
 - 所有当前 SY adapter product surface 都通过 `ERC1967Proxy` + UUPS 部署，包括 Lido 相关 adapter。`SYBaseUpgradeable` 统一继承 `UUPSUpgradeable`，具体 SY adapter 通过该 base 取得 upgrade authority，不重复继承 UUPS。
@@ -64,7 +66,7 @@
 - `src/integrations/lista/interfaces/IListaStakeManager.sol`
 - `src/integrations/sky/interfaces/IPSM3.sol`
 - `src/libraries/oracle/OutrunExchangeOracleAdapter.sol`
-- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 做精度归一化前校验 raw answer 正性、新鲜度与可选 sequencer，并在归一化后校验结果非零。
+- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 做精度归一化前校验 raw answer 正性、新鲜度（含 feed 时钟超前的未来时间戳 fail-closed）与可选 sequencer，并在归一化后校验结果非零。
 - `OutrunExchangeOracleAdapter` 不部署在 proxy 后；需要更换 oracle normalization 规则时部署新 adapter，再由 oracle-backed SY proxy 的 owner 更新 `exchangeRateOracle`。
 - 后续执行 adapter / integration 相关任务时，以 `find src -type f` 得到的当前文件树和 `.harness/policy.json` 分类为准；本文件提供架构背景，不覆盖实际文件存在性与 harness surface 分类。
 
@@ -75,7 +77,6 @@
 - `src/libraries/AaveAdapterLib.sol`
 - `src/libraries/ArrayLib.sol`
 - `src/libraries/AutoIncrementIdUpgradeable.sol`
-- `src/libraries/IWETH.sol`
 - `src/libraries/WadRayMath.sol`
 - 跨业务域共享的 token 传输、汇率换算、重入保护、数组操作、ID 生成、错误定义等基础工具。
 - 当前 helper 中 `TokenHelper.sol` 继承 vendored OpenZeppelin `ReentrancyGuardTransient.sol`（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`），该 guard 使用 EIP-1153 transient storage；部署目标链必须支持 EIP-1153。
@@ -254,7 +255,7 @@ OutrunExchangeOracleAdapter
 | Router | Launcher | `genesisByToken`/`genesisBySY` → `launcher.genesis` |
 | Position | uAsset | `stake`/`wrapStake`/`drawUAsset` → `mint`；`redeem`/`keepRedeem`/`keepWrapRedeem` → `repay` |
 | Position | SY | `redeem`/`harvestWrapYield` → `SY.redeem`（非 SY tokenOut 时经 adapter 兑换） |
-| Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`；redeem → `withdraw`/`unwrap`/`release` |
+| Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`；redeem → `withdraw`/`unwrap`/`redeem`/`swapExactIn`/`wrap`；或 1:1 直付 |
 | OutrunOFT | LayerZero | `_toSD` 编码消息；`_debit` burn 本链；`_credit` mint 远端 |
 
 Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut` 约束 token -> SY，`minUAssetMinted` 约束 stake / wrap stake 输出，`minTokenOut` 约束 redeem 输出。
@@ -386,5 +387,5 @@ Harvest:
 - Genesis 当前走的是 locked stake 路径，不是 wrap stake 路径。
 - Wrap 池按 principal debt 记账，不会因为汇率上涨自动给用户补发更多 uAsset。
 - 11 个 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
-- Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（含 `updatedAt == 0` fail-closed）与可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不实现 deviation bounds 或 fallback。
+- Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）与可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不实现 deviation bounds 或 fallback。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。

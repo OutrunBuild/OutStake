@@ -16,7 +16,7 @@ Auto-loads when you edit `test/` files.
 - `setUp()` runs before each test — use it to establish fresh state.
 - Mirror `src/`: `src/token/Foo.sol` → `test/token/Foo.t.sol`.
 - Group related tests in one contract: `contract FooTransferTest is Test { … }`.
-- Expose internals via a harness in `test/mocks/` (e.g. `exposed_mint` wrapping `_mint`), never by widening production visibility.
+- Expose internals via a harness in the area's `mocks/` directory (e.g. `exposed_mint` wrapping `_mint`), never by widening production visibility.
 
 ## Common cheatcodes
 - Impersonate a caller: `vm.prank(alice)` (single) / `vm.startPrank(alice)` … `vm.stopPrank()` (multiple).
@@ -41,7 +41,7 @@ Auto-loads when you edit `test/` files.
 - Coverage: `forge coverage` (`--report lcov` for lcov).
 
 ## Inheritance (strict — see AGENTS.md "Test Code Rules")
-Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in `test/mocks/`. (AGENTS.md is always in context — this is a reminder.)
+Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). (AGENTS.md is always in context — this is a reminder.)
 
 ## Debugging verbosity
 - `-vvv`: traces for failing tests only (most common for debugging).

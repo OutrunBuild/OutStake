@@ -89,9 +89,9 @@ Do not override policy or gate evidence with natural-language guesses.
 
 - Test contracts must NOT inherit upgradeable production contracts (those using `Initializable`, proxy patterns, or storage-in-heritage layouts). Use interfaces, abstract contracts, or standalone implementations to simulate dependencies.
 - Test contracts MAY inherit non-upgradeable production contracts (plain contracts without initializer logic or proxy storage risks).
-- Mock contracts go in `test/mocks/`. Do not co-locate with test files.
+- Mock contracts go in the `mocks/` subdirectory of the test area they serve (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). Do not co-locate mock files with test files.
 - Mock contracts reuse interfaces from `src/`. Define test-only interfaces only when src/ interfaces are insufficient.
-- **Exception:** Test contracts may inherit an upgradeable `src/` contract only when it is declared `abstract contract` — either to implement its abstract functions for unit testing, or to expose its internal `pure`/`view` functions. Such harnesses must live in `test/mocks/`.
+- **Exception:** Test contracts may inherit an upgradeable `src/` contract only when it is declared `abstract contract` — either to implement its abstract functions for unit testing, or to expose its internal `pure`/`view` functions. Such harnesses must live in the area's `mocks/` subdirectory.
 
 ## Uncommitted Changes
 

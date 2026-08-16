@@ -11,7 +11,6 @@
 - `src/libraries/WadRayMath.sol`
 - `src/libraries/AutoIncrementIdUpgradeable.sol`
 - `src/libraries/ArrayLib.sol`（地址数组构造辅助，语义权重低，本文档只列名）
-- `src/libraries/IWETH.sol`（WETH 接口镜像，语义权重低，本文档只列名）
 - `src/assets/base/OutrunERC20Upgradeable.sol`
 - `src/assets/base/OutrunERC20PausableUpgradeable.sol`
 - `src/assets/base/OutrunUniversalAssetsUpgradeable.sol`
@@ -30,12 +29,23 @@
 - `nonReentrant` 由 transient guard 提供
 - `1e18` 是统一换算基准
 - oracle-backed upgradeable adapters 通过 `exchangeRateOracle` storage 读取外部汇率
-- `OutrunExchangeOracleAdapter` 做 raw answer 正性检查、新鲜度窗口校验（`maxStaleness`，含 `updatedAt == 0` fail-closed）、可选 L2 sequencer 状态校验（构造期 `sequencerUptimeFeed == address(0)` 关闭）后做精度归一化，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds、fallback 或多源聚合；通过 `latestRoundData()` 读取（非 `latestAnswer()`）
+- `OutrunExchangeOracleAdapter` 做 raw answer 正性检查、新鲜度窗口校验（`maxStaleness`；`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）、可选 L2 sequencer 状态校验（构造期 `sequencerUptimeFeed == address(0)` 关闭）后做精度归一化，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds、fallback 或多源聚合；通过 `latestRoundData()` 读取（非 `latestAnswer()`）
 - `uAsset` minter 债务由 `amountInMinted` 记录；`revokeMinter(minter)` 通过把 `mintingCap` 置零禁止后续 mint，但保留既有 `amountInMinted` 直到偿还
 - `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` 可把 `mintingCap` 下调至低于既有 `amountInMinted`：此后 `OutrunUniversalAssetsUpgradeable.sol::mint` 的前置 cap 校验失败、revert `ReachMintCap`，直到 `OutrunUniversalAssetsUpgradeable.sol::repay` 把 `amountInMinted` 冲减至新 cap 以下方自愈——属预期自愈语义，非故障；cap 置零时 repay 不产生自愈，mint 持续被阻断直至重新调升 cap（同 `revokeMinter`）
 - `transferMinterDebt(from, to, amount)` 当前已实现为 owner-only 操作：要求 `from`、`to` 均非零、彼此不同、`amount` 非零；仅在两个 minter 地址之间迁移未偿债务，不 mint、不 burn、不 transfer，也不改变 `totalSupply` 或任一账户 `balance`
 - `transferMinterDebt` 执行时减少 `from.amountInMinted`、增加 `to.amountInMinted`，并要求来源 minter 具备足额未偿债务、目标 minter 具备足够 `mintingCap` headroom；用途限定为运维修复或迁移，不用于用户债务豁免
 - `transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务；若该 minter 还受 position、wrap 等模块账本约束，操作方只能在这些账本保持一致的协调迁移流程中使用它，`uAsset` 本身不会同步更新 position/wrap 台账
+
+### uAsset 错误与事件观测
+
+- `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` 与 `OutrunUniversalAssetsUpgradeable.sol::revokeMinter` 对零 minter 地址 revert `ZeroInput`；`OutrunUniversalAssetsUpgradeable.sol::mint` 对零 receiver 或零 amount、`OutrunUniversalAssetsUpgradeable.sol::repay` 对零 account 或零 amount revert `ZeroInput`
+- `OutrunUniversalAssetsUpgradeable.sol::mint` 在本次铸出超过 minter 的 `mintingCap` headroom 时 revert `ReachMintCap`；`OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 在目标 minter 无法容纳迁入债务时同样 revert `ReachMintCap`
+- `OutrunUniversalAssetsUpgradeable.sol::repay`（来源为 `msg.sender` minter）或 `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt`（来源为 `from` minter）在销减量超过来源 minter 的未偿 `amountInMinted` 时 revert `ReachBurnCap`；该名称表示未偿债务余额不足，协议没有另一个可配置的独立 burn cap
+- `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 对 `from`/`to` 任一为零地址、两者相同或 `amount == 0` revert `InvalidTransferParams`
+- 五个 uAsset 事件及字段为：`MintUAsset(indexed minter, indexed receiver, amount)`、`BurnUAsset(indexed minter, amount)`、`SetMintingCap(indexed minter, oldMintingCap, newMintingCap)`、`RevokeMinter(indexed minter, oldMintingCap)`、`TransferMinterDebt(indexed from, indexed to, amount)`（声明见 `IUniversalAssets.sol`）
+- `OutrunUniversalAssetsUpgradeable.sol::mint` 与 `OutrunUniversalAssetsUpgradeable.sol::repay` 分别伴随 `MintUAsset`/`BurnUAsset` 以及 ERC20 `Transfer`（铸出为零地址到 receiver，偿还为 account 到零地址）；`setMintingCap`、`revokeMinter`、`transferMinterDebt` 只改 minter 账本并发出各自 accounting event，不改变账户 `balance` 或 `totalSupply`，也不发出 ERC20 `Transfer`/`Approval`
+- `OutrunOFTUpgradeable.sol::_debit` 与 `OutrunOFTUpgradeable.sol::_credit` 仅通过 ERC20 `_update` 产生 ERC20 `Transfer`：不读写 minter debt ledger，不改变 `amountInMinted`/`mintingCap`，也不发出 `MintUAsset`/`BurnUAsset`
+
 - `_safeApproveInf` 的 ERC20 approval 刷新：当 allowance 低于 `LOWER_BOUND_APPROVAL`（`type(uint96).max / 2`）时先归零再设 max——USDT 型 token 拒绝非零→非零变更；NATIVE 哨兵跳过；刷新是调用点触发的惰性重检，仅在再次调用 `_safeApproveInf` 时重查 allowance，不维护「恒 max」不变量
 - TokenHelper 资金转移契约：native 转出走低层 call，失败必须 revert `NativeTransferFailed`（不静默吞失败）；`_transferOut`/`_transferFrom` 零金额跳过不发起转账；`_transferIn`：native 分支自身不发起转账（资金随 `msg.value` 到达）、仅校验 `msg.value == amount`，ERC20 分支要求 `msg.value == 0` 且金额非零才执行 `safeTransferFrom`，两分支的 `msg.value` 校验均不因零金额跳过
 - `TokenHelper.sol::_selfBalance`：token 为 NATIVE 哨兵时读 `address(this).balance`，否则读 `balanceOf(address(this))`；`OutrunSlisBNBSYUpgradeable` 用它在外部质押存款调用（Lista StakeManager `deposit()`，效果为 mint slisBNB）前后做余额差量计量
@@ -119,7 +129,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 - outbound send 受 rate limit 约束：`_debit` burn 前先走 `_outflow` 记账，超过可用额度即 revert `RateLimitExceeded`
 - 线性衰减回补模型：`decay = limit × timeSinceLastUpdate / window`；当前 in-flight = `max(0, 上次 in-flight − decay)`；可用额度 = `limit − 当前 in-flight`（距上次记账超过 `window` 后全量回补）
 - `quoteOFT()` 的 `maxAmountLD` 受 rate limit 封顶：取 `min(amountCanBeSent, uint64.max × decimalConversionRate)` 再去 dust；`window == 0` 时不封顶
-- `window == 0` 表示无限额，只存在于未配置/删除态：`setOutboundRateLimit` 拒绝 `window == 0`（revert `InvalidWindowSeconds`），`removeOutboundRateLimit` 删除配置后回到无限额
+- `window == 0` 表示无限额，只存在于未配置/删除态：`setOutboundRateLimit` 拒绝 `window == 0`（revert `InvalidWindowSeconds`），`removeOutboundRateLimit` 删除配置后回到无限额；该状态下基座 `OutrunRateLimiterUpgradeable.sol::getAmountCanBeSent` 返回无限额哨兵 `(0, type(uint256).max)`，OFT 层 override（`OutrunOFTUpgradeable.sol::getAmountCanBeSent`）返回 SD 域包络 `(0, uint64.max × decimalConversionRate)`
 - checkpoint 语义：每次 `setOutboundRateLimit` 先以 0 记账结算当前 in-flight，再写入新限额；若限额被调低，已 in-flight 可瞬态超过新限额——此时可用额度为 0、outbound 暂时全部 revert，随衰减回补自愈
 - 部署约束：部署脚本对每个远程链强制设置限额与窗口，限额/窗口由 env 显式配置、无生产默认值，任一为 0 即部署 revert；部署测试断言值为 1_000_000 ether / 1h（测试断言值，非生产默认值）
 
@@ -136,6 +146,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 部署与升级一致性约束（`OutrunUniversalAssetsUpgradeable`）：
 
 - `initialize` 强制传入 `decimals_` 等于构造期固化的 `_localDecimalsForValidation()`，否则 revert `DecimalsMismatch(expected, provided)`：不可用与 localDecimals 不一致的 decimals 部署
+- `OutrunOFTUpgradeable.sol::constructor` 拒绝 `lzEndpoint == address(0)`，revert `InvalidLayerZeroEndpoint`；标准部署脚本的 `OutstakeScript.s.sol::_validateUAssetDeploymentConfig` 可能在 implementation 创建前以 `InvalidEndpoint` 预检同一输入
 - `_authorizeUpgrade`（owner-only）校验新实现与当前值三一致——endpoint、decimalConversionRate、localDecimals 任一不一致即 revert `InvalidOFTUpgradeConfig`：升级不可改变这三项
 
 单笔发送的 SD 域 LD 上限 = `uint64.max × decimalConversionRate`；`quoteOFT().maxAmountLD` 为该值与 rate-limit 可用额度的 `min` 再去 dust（`window == 0` 时等于该值），见上文 `## OFT 与 rate limiter` 小节。

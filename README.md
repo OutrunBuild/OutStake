@@ -65,9 +65,10 @@ Repository layout:
 
 - `src/assets/{base,interfaces,omnichain}`
 - `src/position/{interfaces}` plus `OutrunStakingPositionUpgradeable.sol`
-- `src/yield/{interfaces,adapters/{aave,aster,ethena,etherfi,lido,lista,sky}}`
+- `src/yield/{interfaces,adapters/{aave,aster,ethena,etherfi,lido,lista,sky}}` plus `SYBaseUpgradeable.sol`, `OutrunL2OracleBackedSYUpgradeable.sol`, `OutrunL2StakedTokenSYUpgradeable.sol`
 - `src/router/{interfaces}` plus `OutrunRouter.sol`
 - `src/integrations/{aave,aster,etherfi,lido,lista,sky}`
+- `src/libraries/{oracle}`
 - `test/{deploy,support,upgradeable}`
 - `script/{deploy,deploy/deployment,harness,lib,ops}`
 - `.harness/{runtime,schemas}` and `docs/`

@@ -12,7 +12,7 @@
 
 `test/deploy/` 覆盖 upgradeable deployment scripts。
 
-`test/support/` 保留 mock、helper、library 和 token helper 证据。
+`test/support/` 保留 library 与 token helper 测试证据及 Faucet 等 helper 合约；mock 与 harness 位于 `test/support/mocks/`。
 
 `test/{assets,integration,position,router,security,yield}/` 当前不承载 `.sol` 测试文件；相关证据已迁移到 `test/upgradeable/` 或 `test/deploy/`。
 
@@ -36,6 +36,7 @@
 - router：`test/upgradeable/OutrunRouterUpgradeable.t.sol`、`test/upgradeable/OutrunRouterFuzzUpgradeable.t.sol`、`test/upgradeable/RouterProxyIntegration.t.sol`
 - yield：`test/upgradeable/SYUpgradeable.t.sol`、`test/upgradeable/SYAdaptersUpgradeable.t.sol`、`test/upgradeable/SYAdaptersFork.t.sol`、`test/upgradeable/OracleSetterUpgradeable.t.sol`
 - deployment：`test/deploy/OutstakeScriptUpgradeable.t.sol`、`test/deploy/YieldDeployScriptUpgradeable.t.sol`
+- libraries：`test/support/Libraries.t.sol`、`test/support/TokenHelper.t.sol`、`test/support/MockOracleWarnings.t.sol`
 - security：`test/upgradeable/AdversarialTestsUpgradeable.t.sol`
 
 ## 仍需留意

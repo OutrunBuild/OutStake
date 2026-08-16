@@ -230,6 +230,31 @@
         }
       ]
     },
+    "libraries": {
+      "tests": [
+        "test/support/Libraries.t.sol",
+        "test/support/TokenHelper.t.sol",
+        "test/support/MockOracleWarnings.t.sol"
+      ],
+      "rules": [
+        {
+          "id": "libraries-core",
+          "paths": [
+            "^src/libraries/.*\\.sol$"
+          ],
+          "change_tests": [
+            "test/support/Libraries.t.sol",
+            "test/support/TokenHelper.t.sol",
+            "test/support/MockOracleWarnings.t.sol"
+          ],
+          "evidence_tests": [
+            "test/support/Libraries.t.sol",
+            "test/support/TokenHelper.t.sol",
+            "test/support/MockOracleWarnings.t.sol"
+          ]
+        }
+      ]
+    },
     "security": {
       "tests": [
         "test/upgradeable/AdversarialTestsUpgradeable.t.sol"
