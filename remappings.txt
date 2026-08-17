@@ -1,7 +1,5 @@
 @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 @openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/
-openzeppelin-contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/
-ds-test/=lib/ds-test/src/
 forge-std/=lib/forge-std/src/
 @layerzerolabs/oapp-evm/=lib/layerzerolabs/devtools/packages/oapp-evm/
 @layerzerolabs/oapp-evm-upgradeable/=lib/layerzerolabs/devtools/packages/oapp-evm-upgradeable/

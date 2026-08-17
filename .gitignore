@@ -18,8 +18,10 @@ broadcast
 docs/superpowers
 docs/review
 
-# Dotenv file
+# Dotenv files (keep the committed template)
 .env
+.env.*
+!.env.example
 
 # Claude Code local settings
 .claude/settings.local.json
