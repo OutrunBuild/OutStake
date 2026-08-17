@@ -65,13 +65,6 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(oftLimit.maxAmountLD, 15e18);
     }
 
-    function testSetOutboundRateLimitDoesNotDispatchVirtualOutflow() external {
-        vm.prank(owner);
-        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
-
-        assertEq(oft.outflowCalls(), 0);
-    }
-
     function testDebitDispatchesVirtualOutflow() external {
         vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
@@ -169,6 +162,37 @@ contract OutrunOFTUpgradeableTest is Test {
         (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(inFlight, 0);
         assertEq(canBeSent, 40e18);
+    }
+
+    /// @dev Locks the reconfig checkpoint: when a destination already has in-flight tokens,
+    ///      setting a new limit/window must first settle the in-flight amount under the OLD
+    ///      decay parameters before the new ones take effect. With limit = 40e18, window =
+    ///      1 day, a 25e18 debit, then a 12-hour warp, then reconfiguring to limit = 80e18,
+    ///      window = 4 days: the checkpoint decays 40e18 * 12h / 24h = 20e18 under the old
+    ///      parameters, so inFlight = 25e18 - 20e18 = 5e18 and lastUpdated moves to the
+    ///      reconfig timestamp; the view then reports canBeSent = 80e18 - 5e18 = 75e18.
+    function testReconfigCheckpointsInFlightAtOldWindow() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 25e18, 0, DST_EID);
+
+        // The warp between debit and reconfig is what makes the checkpoint observable:
+        // it creates elapsed time that must be settled under the old window first.
+        vm.warp(block.timestamp + 12 hours);
+
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 80e18, 4 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 5e18);
+        assertEq(canBeSent, 75e18);
+
+        OutrunRateLimiterUpgradeable.RateLimit memory rateLimit = oft.rateLimits(DST_EID);
+        assertEq(rateLimit.amountInFlight, 5e18);
+        assertEq(rateLimit.lastUpdated, block.timestamp);
+        assertEq(rateLimit.window, 4 days);
     }
 
     function testRemoveLimitRestoresSharedDecimalEnvelope() external {

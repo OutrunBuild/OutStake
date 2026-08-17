@@ -80,7 +80,8 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         unchecked {
             for (uint256 i; i < numConfigs; ++i) {
                 RateLimit storage rl = $.rateLimits[rateLimitConfigs[i].dstEid];
-                // Checkpoint the current state before updating the stored limit values.
+                // Checkpoint with the old limit/window before replacing them; amount == 0 settles existing in-flight
+                // amount at this timestamp without recording a new outflow, preventing retroactive new-rate decay.
                 _checkAndUpdateRateLimit(rl, 0);
                 rl.limit = rateLimitConfigs[i].limit;
                 rl.window = rateLimitConfigs[i].window;
@@ -104,14 +105,14 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         virtual
         returns (uint256 currentAmountInFlight, uint256 amountCanBeSent)
     {
-        // Computes how much capacity has refilled since the last transfer.
-        // Decay = (limit * secondsSinceLastTransfer) / window.
+        // Computes how much capacity has refilled since the last rate limit update.
+        // Decay = (limit * timeSinceLastUpdate) / window.
         // Current in-flight = max(0, previousInFlight - decay).
         // Available = limit - currentInFlight.
         // slither-disable-next-line timestamp
-        uint256 timeSinceLastDeposit = block.timestamp - lastUpdated;
-        if (timeSinceLastDeposit >= window) return (0, limit);
-        uint256 decay = (uint256(limit) * timeSinceLastDeposit) / window;
+        uint256 timeSinceLastUpdate = block.timestamp - lastUpdated;
+        if (timeSinceLastUpdate >= window) return (0, limit);
+        uint256 decay = (uint256(limit) * timeSinceLastUpdate) / window;
         if (amountInFlight > decay) {
             // The guard prevents underflow.
             unchecked {
