@@ -17,6 +17,9 @@ interface IWstETH {
     /**
      * @notice Wraps stETH into wstETH.
      * @dev OutrunWstETHSY calls this after it holds stETH and consumes the return value as minted SY shares.
+     *      Lido invariant: wrap(stETHAmount) mints exactly getSharesByPooledEth(stETHAmount) wstETH, i.e.
+     *      1 wstETH unit == 1 stETH internal share. This identity is why the adapter's deposit preview can
+     *      quote IStETH.getSharesByPooledEth directly instead of calling this non-view wrap.
      * @param stETHAmount The amount of stETH to wrap.
      * @return The amount of wstETH minted.
      */

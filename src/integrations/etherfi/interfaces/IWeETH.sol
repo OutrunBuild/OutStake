@@ -10,6 +10,9 @@ interface IWeETH {
     /**
      * @notice Wraps eETH into weETH.
      * @dev OutrunWeETHSY calls this after it holds eETH and consumes the return value as minted SY shares.
+     *      EtherFi invariant: wrap(_eETHAmount) returns the eETH share amount for that value, i.e.
+     *      1 weETH == 1 eETH share. ILiquidityPool.sharesForAmount quotes the same quantity, which is why
+     *      the adapter's eETH deposit preview matches this wrap's output.
      * @param _eETHAmount The amount of eETH to wrap.
      * @return The amount of weETH minted.
      */
