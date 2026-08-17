@@ -23,8 +23,12 @@ interface IOutrunStakeManager {
     /// resulting SY or uAsset amount down to zero (e.g. dust after a decimal downscale). Distinct from
     /// `ZeroInput`, which means the caller passed a zero amount or zero address.
     error DustRoundedToZero();
+    /// @dev Reverts when the SY `exchangeRate()` read returns zero; every conversion path fails
+    /// closed with this named error at the single rate-reading home instead of a low-level
+    /// division panic or a misleading dust/nothing error.
+    error ZeroExchangeRate();
     error PermissionDenied();
-    error LockTimeNotExpired(uint128 deadLine);
+    error LockTimeNotExpired(uint128 deadline);
     /// @dev Reverts when `lockupDays` is so large that `block.timestamp + lockupDays * 1 days` no
     /// longer fits in uint128, which would let the deadline cast wrap into the past and bypass the lock.
     error LockupDaysOutOfRange(uint128 lockupDays);
@@ -60,6 +64,18 @@ interface IOutrunStakeManager {
     function uAsset() external view returns (address);
 
     /**
+     * @notice Returns the minimum SY amount required per stake operation.
+     * @return Minimum stake amount in SY.
+     */
+    function minStake() external view returns (uint256);
+
+    /**
+     * @notice Returns the revenue pool address that receives harvested yield.
+     * @return Revenue pool address.
+     */
+    function revenuePool() external view returns (address);
+
+    /**
      * @notice Returns the total SY currently tracked across positions and wrap pool.
      * @dev Includes locked-position principal and wrap-pool principal; it is not only user-owned unlocked SY.
      * @return Total SY held as staking principal.
@@ -82,7 +98,8 @@ interface IOutrunStakeManager {
 
     /**
      * @notice Returns the keeper allowed to execute keeper-only redemptions.
-     * @dev Keeper redemptions burn keeper-provided uAsset and split released SY; they are not owner redemptions.
+     * @dev Both keeper-only paths burn keeper-provided uAsset. `keepRedeem` splits released SY between the keeper
+     * receiver and position owner; `keepWrapRedeem` pays released wrap-pool SY directly to its receiver.
      * @return Address with keeper privileges.
      */
     function keeper() external view returns (address);
@@ -105,15 +122,20 @@ interface IOutrunStakeManager {
      * @notice Previews how much uAsset a direct stake would mint.
      * @dev Quote-only. Uses current `SY.exchangeRate()` and the same conversion direction as `stake`, but does
      * not reserve cap, transfer SY, create a position, or apply slippage protection.
+     * Reverts `MinStakeInsufficient` when `amountInSY < minStake()`, and `ZeroExchangeRate` when the rate reads
+     * zero. Returns 0 if the floor conversion rounds the quote to zero (dust); this differs from `stake`, which
+     * reverts `DustRoundedToZero` for the same non-zero dust input.
      * @param amountInSY Amount of SY to stake.
-     * @return UAssetMintable Amount of uAsset expected to be minted.
+     * @return UAssetMintable Amount of uAsset expected to be minted; 0 when the floor conversion zeroes it.
      */
     function previewStake(uint256 amountInSY) external view returns (uint256 UAssetMintable);
 
     /**
      * @notice Previews how much uAsset a wrap stake would mint.
      * @dev Quote-only. Uses current `SY.exchangeRate()` and the same conversion direction as `wrapStake`, but
-     * does not reserve cap, transfer SY, or update wrap-pool debt.
+     * does not reserve cap, transfer SY, or update wrap-pool debt. Reverts `ZeroInput` when `amountInSY == 0`,
+     * `ZeroExchangeRate` when the rate reads zero, and `DustRoundedToZero` when the floor conversion rounds the
+     * quote to zero.
      * @param amountInSY Amount of SY to add to the wrap pool.
      * @return UAssetMintable Amount of uAsset expected to be minted.
      */
@@ -122,7 +144,9 @@ interface IOutrunStakeManager {
     /**
      * @notice Previews additional uAsset drawable from an existing position.
      * @dev Quote-only. Returns only the current value above the position's existing debt; it does not update
-     * position debt or reserve uAsset mint cap.
+     * position debt or reserve uAsset mint cap. Reverts `PositionAccessDenied` when the position is missing and
+     * `ZeroExchangeRate` when the rate reads zero. Returns 0 when the current value does not exceed the
+     * position's existing debt (mirrors `drawUAsset` reverting `NothingToDraw`).
      * @param positionId Identifier of the position to inspect.
      * @return UAssetMintable Additional uAsset currently drawable from the position.
      */
@@ -132,7 +156,10 @@ interface IOutrunStakeManager {
      * @notice Previews a position redemption into SY or another output token.
      * @dev Quote-only. Full redeem burns all remaining position debt; partial redeem uses ceiling rounding and
      * rejects any partial path that would consume all remaining debt. Token output is either direct SY or the
-     * current `SY.previewRedeem` result for `tokenOut`.
+     * current `SY.previewRedeem` result for `tokenOut`. Reverts `PositionAccessDenied` when the position is
+     * missing, `LockTimeNotExpired` before maturity, `ZeroInput` when `syRedeemed == 0`,
+     * `ExceedsPositionBalance` when `syRedeemed > position.syStaked`, and `PartialRedeemMustLeaveDebt` when a
+     * partial quote would consume all remaining debt.
      * @param positionId Identifier of the position being redeemed.
      * @param syRedeemed Amount of SY principal to redeem from the position.
      * @param tokenOut Token requested on redemption.
@@ -146,9 +173,12 @@ interface IOutrunStakeManager {
 
     /**
      * @notice Previews the SY a keeper would receive from keepWrapRedeem.
-     * @dev Quote-only. Healthy pool: face value. Undercollateralized: reverts WrapPoolUndercollateralized
-     * (mirrors keepWrapRedeem). Does not check keeper permission; callers pranking as keeper can match this
-     * quote against keepWrapRedeem execution.
+     * @dev Quote-only. Face value is the SY amount represented by the burned uAsset debt at the current exchange
+     * rate; the payout rounds down and full-debt coverage rounds up. Reverts `ZeroInput` when `amountInUAsset == 0`,
+     * `ExceedsWrapDebt` when the amount exceeds `wrapUAssetDebt()`, `ZeroExchangeRate` when the rate reads zero,
+     * `WrapPoolUndercollateralized` when the wrap pool is undercollateralized, and `DustRoundedToZero` when the
+     * payout rounds to zero. Does not check keeper permission; callers pranking as keeper can match this quote
+     * against keepWrapRedeem execution.
      * @param amountInUAsset uAsset amount the keeper would burn.
      * @return amountInSY SY amount the keeper would receive.
      */
@@ -158,7 +188,8 @@ interface IOutrunStakeManager {
      * @notice Previews the SY split for a keeper redemption of a matured position.
      * @dev Quote-only. Mirrors `keepRedeem`'s keeper/owner SY split and failure paths without checking keeper
      * permission, burning uAsset, or changing state. Reverts if the position is missing, not matured, the amount
-     * is zero or exceeds position debt, the position is undercollateralized, or the proportional SY rounds to dust.
+     * is zero or exceeds position debt, the position is undercollateralized, the SY exchange rate reads zero, or
+     * the proportional SY rounds to dust or the keeper's debt-equivalent SY rounds to dust.
      * @param positionId Identifier of the position being redeemed.
      * @param amountInUAsset Amount of uAsset the keeper would burn.
      * @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
@@ -223,7 +254,9 @@ interface IOutrunStakeManager {
         returns (uint256 UAssetBurned, uint256 amountTokenOut);
 
     /**
-     * @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value, paid out in SY only.
+     * @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value, paid out in SY only. Face value is
+     * the SY amount represented by the burned uAsset debt at the current exchange rate; the payout rounds down and
+     * full-debt coverage rounds up.
      * @dev Keeper-only path; reverts PermissionDenied for any other caller. Reverts WrapPoolUndercollateralized
      * on an undercollateralized pool — the keeper is trusted and must not bear a loss-making redemption
      * (consistent with keepRedeem's InsufficientSyCollateral revert). Replaces the former public wrapRedeem,
@@ -288,19 +321,13 @@ interface IOutrunStakeManager {
      * @param positionId Identifier of the newly created position.
      * @param owner Owner of the created position.
      * @param amountInSY Amount of SY staked.
-     * @param uAssetDebt Initial uAsset debt units minted against the staked SY, denominated in
-     * uAsset decimals (NOT SY or canonical asset units). Equals the position's initial `UAssetMinted`
-     * storage field at stake time.
-     * @param mintedUAsset Amount of uAsset minted for the new position.
+     * @param mintedUAsset Amount of uAsset minted for the new position, denominated in uAsset decimals
+     * (NOT SY or canonical asset units). Equals the position's initial `UAssetMinted` storage field
+     * (its initial debt) at stake time.
      * @param deadline Timestamp when the position lockup expires.
      */
     event Stake(
-        uint256 indexed positionId,
-        address indexed owner,
-        uint256 amountInSY,
-        uint256 uAssetDebt,
-        uint256 mintedUAsset,
-        uint256 deadline
+        uint256 indexed positionId, address indexed owner, uint256 amountInSY, uint256 mintedUAsset, uint256 deadline
     );
 
     /**
@@ -334,10 +361,20 @@ interface IOutrunStakeManager {
 
     event KeepWrapRedeem(address indexed keeper, address indexed receiver, uint256 amountInUAsset, uint256 amountInSY);
 
+    /**
+     * @notice Emitted when a keeper redeems a matured position with keeper-provided uAsset.
+     * @param positionId Identifier of the position redeemed.
+     * @param owner Owner of the redeemed position; receives the excess SY.
+     * @param UAssetBurned Amount of uAsset burned by the keeper.
+     * @param receiver Address receiving the keeper principal in SY.
+     * @param keeperPrincipalSY Debt-equivalent SY sent to the keeper receiver.
+     * @param ownerExcessSY Excess SY sent back to the position owner.
+     * @dev The total SY released from the position is intentionally not a separate field: it always
+     * equals `keeperPrincipalSY + ownerExcessSY`, so indexers recover it from those two fields.
+     */
     event KeepRedeem(
         uint256 indexed positionId,
         address indexed owner,
-        uint256 syRedeemed,
         uint256 UAssetBurned,
         address indexed receiver,
         uint256 keeperPrincipalSY,

@@ -33,6 +33,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 {
     struct OutrunStakingPositionStorage {
         address SY;
+        uint8 canonicalAssetDecimals;
+        uint8 uAssetDecimals;
         uint256 minStake;
         uint256 syTotalStaking;
         uint256 syWrapStaking;
@@ -41,8 +43,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         address revenuePool;
         address keeper;
         mapping(uint256 positionId => Position) positions;
-        uint8 canonicalAssetDecimals;
-        uint8 uAssetDecimals;
     }
 
     OutrunStakingPositionStorage private outrunStakingPositionStorage;
@@ -58,7 +58,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @param revenuePool_ Address that receives harvested wrap-pool yield.
     /// @param sy_ Address of the Standardized Yield token accepted by this contract.
     /// @param uAsset_ Address of the universal asset receipt token.
-    /// @param keeper_ Address authorized to call keepRedeem on matured positions.
+    /// @param keeper_ Address authorized to call keeper-only `keepRedeem` on matured positions and
+    ///        `keepWrapRedeem` for shared wrap-pool SY.
     function initialize(
         address owner_,
         uint256 minStake_,
@@ -139,7 +140,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         return outrunStakingPositionStorage.revenuePool;
     }
 
-    /// @notice Returns the keeper address authorized to trigger position redemptions.
+    /// @notice Returns the keeper address authorized to trigger `keepRedeem` and `keepWrapRedeem`.
     /// @return Keeper address.
     function keeper() public view returns (address) {
         return outrunStakingPositionStorage.keeper;
@@ -163,7 +164,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @notice Previews the uAsset amount mintable from a given SY stake amount.
     /// Rounds down. Quote-only: does not check or reserve the uAsset mint cap.
     /// Returns 0 if floor conversion zeroes the output (tiny SY input after the decimal downscale,
-    /// or an exchange rate below 1). This is a quote-only signal: stake() reverts on zero-mintable
+    /// or an exchange rate below 1); an exactly-zero rate instead reverts ZeroExchangeRate at the
+    /// rate-reading home. This is a quote-only signal: stake() reverts on zero-mintable
     /// inputs (DustRoundedToZero for dust, ZeroInput for zero input), so callers must not treat a 0
     /// return as a stakeable amount. Mirrors previewDrawUAsset, which also
     /// returns 0 where the matching executor reverts.
@@ -184,11 +186,14 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         address _SY = SY();
         UAssetMintable = _syToAsset(amountInSY, _currentExchangeRate(_SY));
         // Floor conversion can make tiny SY inputs mint zero uAsset; reject them before quoting.
+        // An exactly-zero rate never reaches this check: it reverts ZeroExchangeRate first, at the
+        // rate-reading home inside _currentExchangeRate.
         if (UAssetMintable == 0) revert DustRoundedToZero();
     }
 
     /// @notice Previews additional uAsset drawable from a position based on accrued yield.
-    /// Returns 0 if current value has not exceeded previously minted amounts.
+    /// Returns 0 if current value has not exceeded previously minted amounts; an exactly-zero
+    /// exchange rate instead reverts ZeroExchangeRate at the rate-reading home.
     /// Quote-only: does not check or reserve the uAsset mint cap.
     /// @param positionId The position identifier.
     /// @return UAssetMintable Additional uAsset amount that can be drawn.
@@ -227,7 +232,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @notice Previews the SY a keeper would receive from keepWrapRedeem.
-    /// @dev Quote-only. Healthy pool: face value. Undercollateralized: reverts WrapPoolUndercollateralized (mirrors keepWrapRedeem).
+    /// @dev Quote-only. Face value is the SY amount represented by the burned uAsset debt at the current exchange
+    /// rate; the payout rounds down and full-debt coverage rounds up. Undercollateralized: reverts
+    /// WrapPoolUndercollateralized (mirrors keepWrapRedeem).
     /// @param amountInUAsset uAsset amount the keeper would burn.
     /// @return amountInSY SY amount the keeper would receive.
     function previewWrapRedeem(uint256 amountInUAsset) public view returns (uint256 amountInSY) {
@@ -236,8 +243,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
     /// @notice Previews the SY split for a keeper redemption of a matured position.
     /// @dev Quote-only: does not check keeper permission, burn uAsset, or change state. Mirrors keepRedeem's
-    /// keeper/owner SY split and every failure path (position existence, lockup, amount bounds, full-position
-    /// solvency guard, dust, and per-amount defense).
+    /// keeper/owner SY split and every failure path (position existence, lockup, amount bounds, zero exchange
+    /// rate at the shared rate-reading point, full-position solvency guard, dust, and per-amount defense).
     /// @param positionId The position identifier.
     /// @param amountInUAsset The uAsset amount the keeper would burn.
     /// @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
@@ -323,7 +330,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
         // mintingCap is exhausted.
         IUniversalAssets(_uAsset).mint(uAssetReceiver, mintedUAsset);
-        emit Stake(positionId, positionOwner, amountInSY, uAssetDebt, mintedUAsset, deadline256);
+        emit Stake(positionId, positionOwner, amountInSY, mintedUAsset, deadline256);
     }
 
     /// @notice Mints extra uAsset from a position after the staked SY becomes more valuable.
@@ -448,7 +455,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     // slither-disable-next-line reentrancy-no-eth
-    /// @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value. Reverts if the pool is undercollateralized.
+    /// @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value. Face value is the SY amount
+    /// represented by the burned uAsset debt at the current exchange rate; the payout rounds down and full-debt
+    /// coverage rounds up. Reverts if the pool is undercollateralized.
     /// @dev Keeper-only path, mirroring keepRedeem's trust model. Replaces the former public wrapRedeem,
     /// which was removed in favor of this keeper-only all-or-nothing redemption.
     /// Reverts WrapPoolUndercollateralized on an undercollateralized pool — the keeper is trusted and must not bear a
@@ -539,7 +548,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         _transferOut(_SY, receiver, keeperPrincipalSY);
         _transferOut(_SY, positionOwner, ownerExcessSY);
 
-        emit KeepRedeem(positionId, positionOwner, syRedeemed, UAssetBurned, receiver, keeperPrincipalSY, ownerExcessSY);
+        emit KeepRedeem(positionId, positionOwner, UAssetBurned, receiver, keeperPrincipalSY, ownerExcessSY);
     }
 
     function harvestWrapYield(address tokenOut, uint256 minTokenOut)
@@ -616,15 +625,21 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     // These helpers convert using the caller-supplied exchange rate and then rescale across the two decimal domains.
 
     /// @notice Reads the SY exchange rate at a single place.
-    /// @dev Every conversion site below obtains the rate through this function, so a future change to the
-    /// rate-reading convention (zero-rate guard, caching) has one home instead of nine inline copies.
+    /// @dev Every conversion site below obtains the rate through this function, so the zero-rate guard
+    /// lives here (one home), and a future change to the rate-reading convention (caching) also has one
+    /// home instead of nine inline copies.
     /// Callers pass the already-resolved SY address to avoid re-reading the SY storage slot.
     /// @param _SY The Standardized Yield token address.
     function _currentExchangeRate(address _SY) internal view returns (uint256) {
-        return IStandardizedYield(_SY).exchangeRate();
+        uint256 rate = IStandardizedYield(_SY).exchangeRate();
+        // Zero rate means the external SY is reporting a broken state; fail closed with a named
+        // error here (the single rate-reading home) instead of leaking a division panic or a
+        // misleading dust/nothing error into any conversion path.
+        if (rate == 0) revert ZeroExchangeRate();
+        return rate;
     }
 
-    /// @dev Used for stake/draw — minting uAsset against SY principal. Rounds down to avoid over-minting.
+    /// @dev Converts SY principal to uAsset value. Rounds down to avoid over-minting.
     /// @param amountInSY The SY amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _syToAsset(uint256 amountInSY, uint256 exchangeRate_) internal view returns (uint256) {
@@ -632,7 +647,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         return _scaleCanonicalAssetToUAsset(canonicalAssetValue);
     }
 
-    /// @dev Used for wrap redeem — converting uAsset debt back to SY to release. Rounds down to avoid releasing too much SY.
+    /// @dev Converts uAsset debt to SY for repayment. Rounds down to avoid releasing too much SY.
     /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _assetToSy(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
@@ -640,7 +655,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         return SYUtils.assetToSy(exchangeRate_, canonicalAssetValue);
     }
 
-    /// @dev Used for harvest — computing debt in SY terms. Rounds up to leave enough SY covering all debt.
+    /// @dev Converts uAsset debt to SY for coverage checks. Rounds up to leave enough SY covering all debt.
     /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _assetToSyUp(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
@@ -678,8 +693,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @dev Shared keeper-redeem accounting: full-position solvency guard, proportional SY release,
-    /// keeper principal conversion, per-amount defense, and owner excess. Quote-only; makes no state
-    /// change and no external call other than reading `SY.exchangeRate()`.
+    /// keeper principal conversion, keeper dust guard, per-amount defense, and owner excess. Quote-only;
+    /// makes no state change and no external call other than reading `SY.exchangeRate()`.
     /// @param _SY The Standardized Yield token address.
     /// @param syStaked The position's staked SY amount.
     /// @param positionUAssetMinted The position's outstanding uAsset debt.
@@ -698,13 +713,18 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         uint256 exchangeRate_ = _currentExchangeRate(_SY);
         if (_assetToSyUp(positionUAssetMinted, exchangeRate_) > syStaked) revert InsufficientSyCollateral();
 
-        // Proportional SY share uses floor rounding before burning keeper uAsset.
+        // Proportional SY share, rounded down: SY must leave the position no faster than debt is
+        // repaid, so the remaining position stays at least as collateralized as the whole under the
+        // full-position guard above (mirror of the ceil debt burn in _computeRedeemPositionDebt).
         syRedeemed = Math.mulDiv(syStaked, amountInUAsset, positionUAssetMinted);
         // Dust uAsset inputs that round to zero SY must not burn debt without reducing staked SY.
         if (syRedeemed == 0) revert DustRoundedToZero();
 
         // Convert burned uAsset to SY at the current exchange rate (keeperPrincipalSY).
         keeperPrincipalSY = _assetToSy(amountInUAsset, exchangeRate_);
+        // Dust burns whose debt-equivalent SY floors to zero must not pay the keeper nothing while the
+        // whole split goes to the owner; symmetric with the zero-output guard in _validateWrapRedeemAmount.
+        if (keeperPrincipalSY == 0) revert DustRoundedToZero();
         // Provably unreachable under the full-position guard (solvent positions always satisfy
         // keeperPrincipalSY <= syRedeemed); kept as defense-in-depth against future refactors that could
         // otherwise reintroduce an ownerExcessSY underflow.
@@ -749,7 +769,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         position.UAssetMinted = remainingUAsset;
     }
 
-    /// @dev Validates a wrap redemption amount and computes the SY amount to release at face value.
+    /// @dev Validates a wrap redemption amount and computes the SY amount to release at face value, meaning the
+    /// burned uAsset debt's SY equivalent at the current exchange rate.
     /// Reverts WrapPoolUndercollateralized when the wrap pool's SY is below its uAsset debt face value —
     /// keepWrapRedeem is keeper-only and the keeper must not bear a loss-making redemption (all-or-nothing
     /// semantics; no pro-rata partial payout). The exchange rate is read once after the debt check.

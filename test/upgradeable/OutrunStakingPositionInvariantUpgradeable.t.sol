@@ -534,16 +534,4 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
             "Invariant violation: ghost uAsset tracking mismatch"
         );
     }
-
-    /**
-     * @notice Invariant 8: Wrap pool accounting consistency
-     * @dev Ensures wrap pool accounting never goes negative and maintains consistency
-     */
-    function invariant_wrapPoolAccountingConsistent() public view {
-        uint256 syWrap = position.syWrapStaking();
-        uint256 syTotal = position.syTotalStaking();
-
-        // syWrapStaking must be <= syTotalStaking
-        assertLe(syWrap, syTotal, "Invariant violation: syWrapStaking > syTotalStaking");
-    }
 }

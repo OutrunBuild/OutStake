@@ -61,6 +61,8 @@ contract MockPositionUUPSV2 is UUPSUpgradeable {
     /// @dev Matches OutrunStakingPositionUpgradeable.OutrunStakingPositionStorage exactly.
     struct OutrunStakingPositionStorage {
         address SY;
+        uint8 canonicalAssetDecimals;
+        uint8 uAssetDecimals;
         uint256 minStake;
         uint256 syTotalStaking;
         uint256 syWrapStaking;
@@ -69,8 +71,6 @@ contract MockPositionUUPSV2 is UUPSUpgradeable {
         address revenuePool;
         address keeper;
         mapping(uint256 positionId => IOutrunStakeManager.Position) positions;
-        uint8 canonicalAssetDecimals;
-        uint8 uAssetDecimals;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outrun.storage.OutrunStakingPosition")) - 1)) & ~bytes32(uint256(0xff))

@@ -17,6 +17,9 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
     MockSY internal mixedSy;
     MockUAsset internal mixedUAsset;
     OutrunStakingPositionUpgradeable internal mixedPosition;
+    MockSY internal sameDecimalsSy;
+    MockUAsset internal sameDecimalsUAsset;
+    OutrunStakingPositionUpgradeable internal sameDecimalsPosition;
 
     function setUp() external {
         _deployPositionStack();
@@ -516,6 +519,36 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         vm.stopPrank();
     }
 
+    function testKeepRedeemRevertsWhenKeeperPrincipalSyFloorsToZero() external {
+        _setupSameDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = sameDecimalsPosition.stake(1e18, 30, user, keeper);
+
+        // Rate doubles after staking: a 1-wei burn still releases 1 wei of SY (the proportional
+        // share is nonzero, so the existing dust guard does not fire) yet converts to 0 SY for the
+        // keeper; only the keeper-side dust guard catches it.
+        sameDecimalsSy.setExchangeRate(2e18);
+        vm.warp(block.timestamp + 31 days);
+
+        (, uint256 syStakedBefore, uint256 uAssetMintedBefore,) = sameDecimalsPosition.positions(positionId);
+        uint256 userSYBefore = sameDecimalsSy.balanceOf(user);
+        uint256 keeperUAssetBefore = sameDecimalsUAsset.balanceOf(keeper);
+
+        vm.startPrank(keeper);
+        sameDecimalsUAsset.approve(address(sameDecimalsPosition), type(uint256).max);
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+        sameDecimalsPosition.keepRedeem(positionId, 1, keeper);
+        vm.stopPrank();
+
+        // Revert must be atomic: keeper uAsset is not burned and position state is unchanged.
+        (, uint256 syStakedAfter, uint256 uAssetMintedAfter,) = sameDecimalsPosition.positions(positionId);
+        assertEq(syStakedAfter, syStakedBefore);
+        assertEq(uAssetMintedAfter, uAssetMintedBefore);
+        assertEq(sameDecimalsSy.balanceOf(user), userSYBefore);
+        assertEq(sameDecimalsUAsset.balanceOf(keeper), keeperUAssetBefore);
+    }
+
     function testPreviewKeepRedeemMatchesKeepRedeemSplit() external {
         _setupMixedDecimalsPosition();
 
@@ -597,6 +630,19 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         mixedPosition.previewKeepRedeem(positionId, 1);
     }
 
+    function testPreviewKeepRedeemRevertsWhenKeeperPrincipalSyFloorsToZero() external {
+        _setupSameDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = sameDecimalsPosition.stake(1e18, 30, user, keeper);
+
+        sameDecimalsSy.setExchangeRate(2e18);
+        vm.warp(block.timestamp + 31 days);
+
+        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+        sameDecimalsPosition.previewKeepRedeem(positionId, 1);
+    }
+
     function testMixedDecimalsHarvestWrapYieldHarvestsOnlyExcessWithUpRounding() external {
         _setupMixedDecimalsPosition();
 
@@ -615,6 +661,164 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(mixedPosition.syWrapStaking(), expectedDebtInSY);
         assertEq(mixedPosition.wrapUAssetDebt(), minted);
         assertEq(mixedSy.balanceOf(revenuePool), expectedHarvest);
+    }
+
+    // ZeroExchangeRate group: a zero SY exchangeRate() must fail every entry point with the named
+    // error from _currentExchangeRate (the single rate-reading home) before any fund movement or
+    // state change. Before the guard these paths reverted with a misleading DustRoundedToZero /
+    // NothingToDraw or an arithmetic panic (0x12 division by zero, 0x11 underflow in assetToSyUp's
+    // ceil term for an empty wrap pool).
+
+    function testZeroExchangeRateRevertsStakeAndPreviewStake() external {
+        _setupMixedDecimalsPosition();
+        mixedSy.setExchangeRate(0);
+
+        uint256 syTotalStakingBefore = mixedPosition.syTotalStaking();
+        uint256 userSYBefore = mixedSy.balanceOf(user);
+
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.previewStake(1e6);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.stake(1e6, 30, user, user);
+
+        // Revert must be atomic: no SY pulled, no ledger growth, no position created.
+        assertEq(mixedPosition.syTotalStaking(), syTotalStakingBefore);
+        assertEq(mixedSy.balanceOf(user), userSYBefore);
+        (address positionOwner,,,) = mixedPosition.positions(1);
+        assertEq(positionOwner, address(0));
+    }
+
+    function testZeroExchangeRateRevertsWrapStakeAndPreviewWrapStake() external {
+        _setupMixedDecimalsPosition();
+        mixedSy.setExchangeRate(0);
+
+        uint256 wrapUAssetDebtBefore = mixedPosition.wrapUAssetDebt();
+        uint256 userSYBefore = mixedSy.balanceOf(user);
+        uint256 userUAssetBefore = mixedUAsset.balanceOf(user);
+
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.previewWrapStake(1e6);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.wrapStake(1e6, user);
+
+        // Without the guard, rate 0 floors the mint to zero and this path reverts
+        // DustRoundedToZero instead of the named zero-rate error.
+        assertEq(mixedPosition.syWrapStaking(), 0);
+        assertEq(mixedPosition.wrapUAssetDebt(), wrapUAssetDebtBefore);
+        assertEq(mixedSy.balanceOf(user), userSYBefore);
+        assertEq(mixedUAsset.balanceOf(user), userUAssetBefore);
+    }
+
+    function testZeroExchangeRateRevertsDrawUAssetAndPreviewDrawUAsset() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, user);
+
+        mixedSy.setExchangeRate(0);
+
+        (, uint256 syStakedBefore, uint256 uAssetMintedBefore,) = mixedPosition.positions(positionId);
+        uint256 userUAssetBefore = mixedUAsset.balanceOf(user);
+
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.previewDrawUAsset(positionId);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.drawUAsset(positionId, user);
+
+        // Revert must be atomic: position debt and the receiver balance are unchanged.
+        (, uint256 syStakedAfter, uint256 uAssetMintedAfter,) = mixedPosition.positions(positionId);
+        assertEq(syStakedAfter, syStakedBefore);
+        assertEq(uAssetMintedAfter, uAssetMintedBefore);
+        assertEq(mixedUAsset.balanceOf(user), userUAssetBefore);
+    }
+
+    function testZeroExchangeRateRevertsKeepWrapRedeemAndPreviewWrapRedeem() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        mixedPosition.wrapStake(1e6, user);
+        mixedSy.setExchangeRate(0);
+
+        uint256 syWrapStakingBefore = mixedPosition.syWrapStaking();
+        uint256 wrapUAssetDebtBefore = mixedPosition.wrapUAssetDebt();
+        uint256 userSYBefore = mixedSy.balanceOf(user);
+
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.previewWrapRedeem(1e18);
+
+        // The rate read happens before the uAsset repay, so the keeper needs no uAsset here.
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.keepWrapRedeem(1e18, keeper);
+
+        assertEq(mixedPosition.syWrapStaking(), syWrapStakingBefore);
+        assertEq(mixedPosition.wrapUAssetDebt(), wrapUAssetDebtBefore);
+        assertEq(mixedSy.balanceOf(user), userSYBefore);
+    }
+
+    function testZeroExchangeRateRevertsKeepRedeemAndPreviewKeepRedeem() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, keeper);
+
+        vm.warp(block.timestamp + 31 days);
+        mixedSy.setExchangeRate(0);
+
+        (, uint256 syStakedBefore, uint256 uAssetMintedBefore,) = mixedPosition.positions(positionId);
+        uint256 keeperUAssetBefore = mixedUAsset.balanceOf(keeper);
+
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.previewKeepRedeem(positionId, 1e18);
+
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.keepRedeem(positionId, 1e18, keeper);
+
+        // Revert must be atomic: keeper uAsset is not burned and position state is unchanged.
+        (, uint256 syStakedAfter, uint256 uAssetMintedAfter,) = mixedPosition.positions(positionId);
+        assertEq(syStakedAfter, syStakedBefore);
+        assertEq(uAssetMintedAfter, uAssetMintedBefore);
+        assertEq(mixedUAsset.balanceOf(keeper), keeperUAssetBefore);
+    }
+
+    function testZeroExchangeRateRevertsHarvestWrapYieldWithWrapDebt() external {
+        _setupMixedDecimalsPosition();
+
+        // Debt > 0 path: before the guard, the debt-equivalent conversion divided by zero (Panic 0x12).
+        vm.prank(user);
+        mixedPosition.wrapStake(1e6, user);
+        mixedSy.setExchangeRate(0);
+
+        uint256 syWrapStakingBefore = mixedPosition.syWrapStaking();
+        uint256 revenuePoolSYBefore = mixedSy.balanceOf(revenuePool);
+
+        vm.prank(owner);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.harvestWrapYield(address(mixedSy), 0);
+
+        assertEq(mixedPosition.syWrapStaking(), syWrapStakingBefore);
+        assertEq(mixedSy.balanceOf(revenuePool), revenuePoolSYBefore);
+    }
+
+    function testZeroExchangeRateRevertsHarvestWrapYieldOnEmptyWrapPool() external {
+        _setupMixedDecimalsPosition();
+        mixedSy.setExchangeRate(0);
+
+        // Empty-pool corner (wrapUAssetDebt == 0, no wrapStake needed): before the guard, the ceil
+        // term in assetToSyUp underflowed on 0 * ONE + rate - 1 (Panic 0x11).
+        vm.prank(owner);
+        vm.expectRevert(IOutrunStakeManager.ZeroExchangeRate.selector);
+        mixedPosition.harvestWrapYield(address(mixedSy), 0);
+
+        assertEq(mixedPosition.syWrapStaking(), 0);
+        assertEq(mixedSy.balanceOf(revenuePool), 0);
     }
 
     function _setupMixedDecimalsPosition() internal {
@@ -639,5 +843,28 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
 
         vm.prank(user);
         mixedSy.approve(address(mixedPosition), type(uint256).max);
+    }
+
+    function _setupSameDecimalsPosition() internal {
+        // 18/18 decimals throughout (MockSY and MockUAsset both default to 18), so uAsset amounts
+        // reach the SY conversion unscaled; only the exchange rate moves in these tests.
+        sameDecimalsSy = new MockSY(address(new MockERC20("Mock Asset 18", "mA18")));
+        sameDecimalsUAsset = new MockUAsset();
+
+        sameDecimalsPosition = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                abi.encodeCall(
+                    OutrunStakingPositionUpgradeable.initialize,
+                    (owner, 1, revenuePool, address(sameDecimalsSy), address(sameDecimalsUAsset), keeper)
+                )
+            )
+        );
+
+        sameDecimalsUAsset.setMintingCap(address(sameDecimalsPosition), type(uint256).max);
+        sameDecimalsSy.mintShares(user, 10e18);
+
+        vm.prank(user);
+        sameDecimalsSy.approve(address(sameDecimalsPosition), type(uint256).max);
     }
 }

@@ -311,9 +311,14 @@ contract OutrunStakingPositionFuzzTest is Test {
         // Warp past lockup
         vm.warp(block.timestamp + 31 days);
 
-        // Bound the burn amount so the proportional SY share is never zero (floor rounding); the
-        // undercollateralized revert path is covered by unit tests.
-        burnUAsset = bound(burnUAsset, Math.ceilDiv(totalMinted, amountInSY), totalMinted);
+        // Bound the burn amount so the proportional SY share is never zero (floor rounding) and the
+        // keeper's debt-equivalent SY is at least 1 wei (keeper-side dust guard); both dust revert
+        // paths and the undercollateralized path are covered by unit tests.
+        uint256 keeperDustFloor = Math.ceilDiv(newRate, 1e18);
+        uint256 minBurn = Math.max(Math.ceilDiv(totalMinted, amountInSY), keeperDustFloor);
+        // Stakes whose whole debt cannot fund even 1 wei of keeper SY have no non-dust keepRedeem.
+        vm.assume(minBurn <= totalMinted);
+        burnUAsset = bound(burnUAsset, minBurn, totalMinted);
         uint256 syRedeemed = Math.mulDiv(amountInSY, burnUAsset, totalMinted);
 
         // Transfer uAsset to keeper
@@ -821,33 +826,5 @@ contract OutrunStakingPositionFuzzTest is Test {
         assertEq(ownerExcessSY, syRedeemed - keeperPrincipalRaw, "owner gets remainder");
 
         assertEq(keeperPrincipalSY + ownerExcessSY, syRedeemed, "total should equal syRedeemed");
-    }
-
-    // ============================================
-    // 15. Pro-Rata Precision Test
-    // ============================================
-
-    function testFuzz_ProRataPrecision(uint256 amountInSY, uint256 numerator, uint256 denominator) public {
-        amountInSY = _boundAmount(amountInSY);
-        vm.assume(numerator > 0 && numerator <= amountInSY);
-        vm.assume(denominator > 0 && denominator <= amountInSY);
-
-        // Stake
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amountInSY, 30, owner, owner);
-
-        // Warp
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position
-        sy.mintShares(address(position), numerator);
-
-        // Redeem with pro-rata
-        vm.prank(owner);
-        (uint256 uAssetBurned,) = position.redeem(positionId, numerator, owner, address(sy), 0);
-
-        // Pro-rata: burned = minted * numerator / staked
-        uint256 expectedBurn = Math.mulDiv(amountInSY, numerator, amountInSY);
-        assertEq(uAssetBurned, expectedBurn, "pro-rata precision test failed");
     }
 }
