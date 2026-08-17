@@ -127,6 +127,8 @@ contract OutstakeScript is BaseScript {
         // codeless address succeeds with empty returndata, which only this length check catches.
         if (!ok || ret.length != 20) revert FactoryDeployFailed();
         // The proxy returns 20 raw bytes, not a 32-byte ABI word — cast directly, never abi.decode.
+        // ret.length == 20 checked above, so bytes20 cannot truncate.
+        // forge-lint: disable-next-line(unsafe-typecast)
         outrunDeployerAddr = address(uint160(bytes20(ret)));
         console.log("OutrunDeployer deployed on %s", outrunDeployerAddr);
     }

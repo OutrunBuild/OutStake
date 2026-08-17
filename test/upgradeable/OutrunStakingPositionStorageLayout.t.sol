@@ -10,8 +10,12 @@ contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
         bytes32 storageSlot = _erc7201("outrun.storage.OutrunStakingPosition");
         uint256 storageWord = uint256(vm.load(address(position), storageSlot));
 
+        // The storage word is intentionally packed; each cast reads fixed low bits of the same slot.
+        // forge-lint: disable-next-line(unsafe-typecast)
         assertEq(address(uint160(storageWord)), address(sy));
+        // forge-lint: disable-next-line(unsafe-typecast)
         assertEq(uint8(storageWord >> 160), 18);
+        // forge-lint: disable-next-line(unsafe-typecast)
         assertEq(uint8(storageWord >> 168), 18);
     }
 
