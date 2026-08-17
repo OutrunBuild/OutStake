@@ -48,7 +48,7 @@ Every new `.t.sol` test file MUST be registered in `.harness/policy.json::test_m
 - Always cover: zero / max amounts, unauthorized caller (`vm.prank(attacker)` + `vm.expectRevert(...)`).
 - Coverage: `forge coverage` (`--report lcov` for lcov).
 
-## Inheritance (strict — see AGENTS.md "Test Code Rules")
+## Inheritance (strict — see .harness/runtime/editing-conventions.md "Test Code Rules")
 Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). (AGENTS.md is always in context — this is a reminder.)
 
 ## Mock Fidelity

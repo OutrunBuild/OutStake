@@ -25,8 +25,9 @@
 - Dispatch and review are selected by policy-derived `orchestration_profile`.
 - Derive `change_class`, `surface_sensitivity`, `orchestration_profile`, `harness_writer_roles`, `code_writer_roles`, and `code_review_roles` from policy/gate evidence before delegating.
 - For `prod-semantic` work, the main session decides whether spec/docs or other harness-control changes are needed before dispatching `harness_writer_roles`, `code_writer_roles`, or `code_review_roles`.
-- For `prod-semantic` changes the gate emits `doc_round_required=true` and fills `harness_writer_roles` with `process-implementer`. When `doc_round_required=true`, the main session MUST run the product-doc round first — grep the entire `docs/` tree (both `docs/spec/` and `docs/` root-level product docs), output a per-item update/no-update verdict, dispatch `process-implementer` for the affected `docs/` files, then dispatch `spec-reviewer` — before any code writer. The gate does not compute `affected_docs`; that semantic judgment stays with the main session.
+- For `prod-semantic` changes the gate emits `doc_round_required=true` and fills `harness_writer_roles` with `process-implementer`. When `doc_round_required=true`, the main session MUST run the product-doc round first — grep the doc-round scope (`docs/spec/` subtree and `docs/` root-level product docs — `GLOSSARY`, `ARCHITECTURE`, `implementation-map`, `deployment`, `SECURITY_AND_APPROVALS`, `TRACEABILITY`, `VERIFICATION`, `testing-and-evidence`; `docs/superpowers/` and `docs/review/` are excluded) for entries describing the affected behavior, fund flow, permissions, events, or invariants, and output a candidate-doc list with a per-item verdict (update / no-update + reason) before proceeding — a silent decision is not allowed. Dispatch `process-implementer` for the affected `docs/` files, then dispatch `spec-reviewer` — before any code writer. The gate does not compute `affected_docs`; that semantic judgment stays with the main session.
 - If the main session decides spec/docs changes are required, complete that spec/doc writing round first and dispatch `spec-reviewer` immediately after the spec/doc changes are ready, before any code writer is dispatched.
+- Dispatch any other required harness-control writers after the spec/doc round and `spec-reviewer`, before any code writer; run code reviewers after the owning code writer, then run the selected gate profile and report the result.
 - `spec-reviewer` dispatch is a main-session orchestration hook, not a `gate.sh` output field. For `prod-semantic` work the doc round that precedes it is triggered by the gate's `doc_round_required` signal; `spec-reviewer` itself remains a hook, not a routing field.
 
 `requires_spec_authorization_evidence=true` is a path-based gate signal, not proof that authorization, approval, intent, or coverage has been validated.
@@ -91,3 +92,12 @@ A reviewer may set `needs_cross_check: true` on a finding it cannot verify from 
 ## Handling Reviewer needs_fp_check (security)
 
 security-reviewer uses `needs_fp_check: true` (not `needs_cross_check`) when it suspects an exploitable vulnerability but cannot fully trace the call path to confirm exploitability. The main session routes any such finding to the `fp-check` skill for deep verification before acting on it — the security counterpart to needs_cross_check.
+
+## Retry Routing
+
+- surface=solidity_prod/test -> route back to `solidity-implementer`
+- surface=harness_control -> route back to `process-implementer`
+- spec/doc review feedback -> route back to `process-implementer`
+- code review feedback -> route back to the owning code writer
+- Multiple findings, same writer → one re-dispatch with the full findings list (per-finding dispatches rebuild context and re-run suites each time).
+- Multiple findings, different writer surfaces → route each surface's findings to its own writer (e.g. solidity-implementer vs process-implementer).

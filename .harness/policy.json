@@ -74,7 +74,7 @@
       "^\\.gitignore$",
       "^\\.env\\.example$",
       "^\\.harness/policy\\.json$",
-      "^\\.harness/runtime/main-session-contract\\.md$",
+      "^\\.harness/runtime/.*$",
       "^\\.harness/schemas/.*$",
       "^docs/.*$",
       "^foundry\\.toml$",

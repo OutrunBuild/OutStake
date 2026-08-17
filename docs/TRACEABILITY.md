@@ -2,6 +2,9 @@
 
 - Machine truth: .harness/policy.json
 - Session contract: .harness/runtime/main-session-contract.md
+- Forge build/worktree rules: .harness/runtime/forge-build-and-worktree.md
+- Editing conventions: .harness/runtime/editing-conventions.md
+- New `.harness/runtime/` files must be registered in this list in the same change that creates them
 - Policy schema: .harness/schemas/policy.schema.json
 - Claude agents: .claude/agents/*
 - Codex agents: .codex/agents/*
