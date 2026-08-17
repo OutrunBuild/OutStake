@@ -14,27 +14,34 @@ import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 // solhint-disable-next-line gas-small-strings
 contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunStakedUsdsSY") is SYBaseUpgradeable {
     struct OutrunStakedUsdsSYStorage {
-        address USDS;
+        address usds;
     }
 
     OutrunStakedUsdsSYStorage private outrunStakedUsdsSYStorage;
 
-    function initialize(address owner_, address USDS_, address sUSDS_) external initializer {
-        if (USDS_ == address(0)) revert SYZeroAddress();
+    /// @notice Initializes the SY adapter for Sky sUSDS.
+    /// @param owner_ The contract owner address.
+    /// @param usds_ Address of the USDS token.
+    /// @param sUSDS_ Address of the sUSDS yield-bearing token.
+    /// @dev Reverts with SYZeroAddress if usds_ is zero, or via __SYBase_init if sUSDS_ is zero.
+    function initialize(address owner_, address usds_, address sUSDS_) external initializer {
+        if (usds_ == address(0)) revert SYZeroAddress();
         __SYBase_init("SY Sky sUSDS", "SY sUSDS", sUSDS_, owner_);
-        outrunStakedUsdsSYStorage.USDS = USDS_;
+        outrunStakedUsdsSYStorage.usds = usds_;
     }
 
-    function USDS() public view returns (address) {
-        return outrunStakedUsdsSYStorage.USDS;
+    /// @notice Returns the USDS token address.
+    /// @return The USDS address.
+    function usds() public view returns (address) {
+        return outrunStakedUsdsSYStorage.usds;
     }
 
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
-        address _USDS = USDS();
+        address _usds = usds();
         address _yieldBearingToken = yieldBearingToken();
         // Branch 1: deposit USDS into the ERC4626 sUSDS vault to mint sUSDS shares. Branch 2: deposit sUSDS directly 1:1.
-        if (tokenIn == _USDS) {
-            _safeApproveInf(_USDS, _yieldBearingToken);
+        if (tokenIn == _usds) {
+            _safeApproveInf(_usds, _yieldBearingToken);
             amountSharesOut = IERC4626(_yieldBearingToken).deposit(amountDeposited, address(this));
         } else {
             amountSharesOut = amountDeposited;
@@ -47,7 +54,7 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         returns (uint256 amountTokenOut)
     {
         address _yieldBearingToken = yieldBearingToken();
-        if (tokenOut == USDS()) {
+        if (tokenOut == usds()) {
             // Withdraw USDS from the sUSDS vault and send to receiver.
             amountTokenOut = IERC4626(_yieldBearingToken).redeem(amountSharesToRedeem, receiver, address(this));
         } else {
@@ -57,6 +64,8 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         }
     }
 
+    /// @notice Returns the current exchange rate: USDS per 1 sUSDS, scaled by 1e18.
+    /// @return res The ERC4626 convertToAssets(1 ether) rate, which grows as Sky savings yield accrues.
     function exchangeRate() public view override returns (uint256 res) {
         // ERC4626 convertToAssets(1 ether) returns how much USDS 1 sUSDS is worth.
         // The rate grows from 1.0 as Sky protocol yield is added to the savings rate.
@@ -65,30 +74,40 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
 
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         // USDS deposits mint sUSDS through the vault; sUSDS deposits are already shares.
-        if (tokenIn == USDS()) return IERC4626(yieldBearingToken()).previewDeposit(amountTokenToDeposit);
+        if (tokenIn == usds()) return IERC4626(yieldBearingToken()).previewDeposit(amountTokenToDeposit);
         return amountTokenToDeposit;
     }
 
     function _previewRedeem(address tokenOut, uint256 amountSharesToRedeem) internal view override returns (uint256) {
         // Redeeming to USDS exits the ERC4626 vault; redeeming to sUSDS is a direct share transfer.
-        if (tokenOut == USDS()) return IERC4626(yieldBearingToken()).previewRedeem(amountSharesToRedeem);
+        if (tokenOut == usds()) return IERC4626(yieldBearingToken()).previewRedeem(amountSharesToRedeem);
         return amountSharesToRedeem;
     }
 
+    /// @notice Returns all tokens accepted for deposit: sUSDS and USDS.
+    /// @return res Array of accepted deposit token addresses.
     function getTokensIn() public view override returns (address[] memory res) {
-        return ArrayLib.create(yieldBearingToken(), USDS());
+        return ArrayLib.create(yieldBearingToken(), usds());
     }
 
+    /// @notice Returns all tokens accepted for redemption: sUSDS and USDS.
+    /// @return res Array of accepted redemption token addresses.
     function getTokensOut() public view override returns (address[] memory res) {
-        return ArrayLib.create(yieldBearingToken(), USDS());
+        return ArrayLib.create(yieldBearingToken(), usds());
     }
 
+    /// @notice Checks whether the token is accepted for deposit (sUSDS or USDS).
+    /// @param token The token address to check.
+    /// @return True if the token is a valid deposit token.
     function isValidTokenIn(address token) public view override returns (bool) {
-        return token == yieldBearingToken() || token == USDS();
+        return token == yieldBearingToken() || token == usds();
     }
 
+    /// @notice Checks whether the token is accepted for redemption (sUSDS or USDS).
+    /// @param token The token address to check.
+    /// @return True if the token is a valid redemption token.
     function isValidTokenOut(address token) public view override returns (bool) {
-        return token == yieldBearingToken() || token == USDS();
+        return token == yieldBearingToken() || token == usds();
     }
 
     /// @notice Returns asset metadata: canonical asset is USDS, the constructor-injected underlying asset.
@@ -96,6 +115,6 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     /// @return assetAddress address of the USDS token
     /// @return assetDecimals always 18
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
-        return (AssetType.TOKEN, USDS(), 18);
+        return (AssetType.TOKEN, usds(), 18);
     }
 }

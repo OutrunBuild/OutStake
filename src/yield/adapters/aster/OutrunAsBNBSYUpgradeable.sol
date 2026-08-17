@@ -13,10 +13,10 @@ import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 ///      Exchange rate: asBNB→slisBNB via Minter, then slisBNB→BNB via Lista StakeManager.
 contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBSY") is SYBaseUpgradeable {
     struct OutrunAsBNBSYStorage {
-        address AS_BNB_MINTER;
-        address SLIS_BNB;
-        address YIELD_PROXY;
-        address STAKE_MANAGER;
+        address asBnbMinter;
+        address slisBnb;
+        address yieldProxy;
+        address stakeManager;
     }
     OutrunAsBNBSYStorage private outrunAsBNBSYStorage;
 
@@ -36,18 +36,18 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         if (asBNB_ == address(0) || slisBNB_ == address(0) || asBnbMinter_ == address(0)) revert SYZeroAddress();
 
         __SYBase_init("SY Aster asBNB", "SY asBNB", asBNB_, owner_);
-        (address yieldProxy, address stakeManager) = _validateMinter(asBNB_, slisBNB_, asBnbMinter_);
+        (address yieldProxyAddress, address stakeManagerAddress) = _validateMinter(asBNB_, slisBNB_, asBnbMinter_);
         // Store the validated integration addresses used by deposit and preview paths.
-        outrunAsBNBSYStorage.AS_BNB_MINTER = asBnbMinter_;
-        outrunAsBNBSYStorage.SLIS_BNB = slisBNB_;
-        outrunAsBNBSYStorage.YIELD_PROXY = yieldProxy;
-        outrunAsBNBSYStorage.STAKE_MANAGER = stakeManager;
+        outrunAsBNBSYStorage.asBnbMinter = asBnbMinter_;
+        outrunAsBNBSYStorage.slisBnb = slisBNB_;
+        outrunAsBNBSYStorage.yieldProxy = yieldProxyAddress;
+        outrunAsBNBSYStorage.stakeManager = stakeManagerAddress;
     }
 
     function _validateMinter(address asBNB_, address slisBNB_, address asBnbMinter_)
         private
         view
-        returns (address yieldProxy, address stakeManager)
+        returns (address yieldProxyAddress, address stakeManagerAddress)
     {
         // Validate that the minter really mints the configured asBNB from the configured slisBNB.
         address actualAsBnb = IAsBnbMinter(asBnbMinter_).asBnb();
@@ -55,39 +55,39 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         address actualToken = IAsBnbMinter(asBnbMinter_).token();
         if (actualToken != slisBNB_) revert InvalidAsBnbMinterToken(slisBNB_, actualToken);
         // The YieldProxy exposes the Lista StakeManager used later for exchange-rate conversion.
-        yieldProxy = IAsBnbMinter(asBnbMinter_).yieldProxy();
-        if (yieldProxy == address(0)) revert InvalidYieldProxy();
-        stakeManager = IYieldProxy(yieldProxy).stakeManager();
-        if (stakeManager == address(0)) revert InvalidStakeManager();
+        yieldProxyAddress = IAsBnbMinter(asBnbMinter_).yieldProxy();
+        if (yieldProxyAddress == address(0)) revert InvalidYieldProxy();
+        stakeManagerAddress = IYieldProxy(yieldProxyAddress).stakeManager();
+        if (stakeManagerAddress == address(0)) revert InvalidStakeManager();
     }
 
     /// @notice Returns the AsBnbMinter contract address.
     /// @return The AsBnbMinter address.
-    function AS_BNB_MINTER() public view returns (address) {
-        return outrunAsBNBSYStorage.AS_BNB_MINTER;
+    function asBnbMinter() public view returns (address) {
+        return outrunAsBNBSYStorage.asBnbMinter;
     }
 
     /// @notice Returns the slisBNB token address.
     /// @return The slisBNB token address.
-    function SLIS_BNB() public view returns (address) {
-        return outrunAsBNBSYStorage.SLIS_BNB;
+    function slisBnb() public view returns (address) {
+        return outrunAsBNBSYStorage.slisBnb;
     }
 
     /// @notice Returns the YieldProxy contract address.
     /// @return The YieldProxy address.
-    function YIELD_PROXY() public view returns (address) {
-        return outrunAsBNBSYStorage.YIELD_PROXY;
+    function yieldProxy() public view returns (address) {
+        return outrunAsBNBSYStorage.yieldProxy;
     }
 
     /// @notice Returns the Lista StakeManager contract address.
     /// @return The StakeManager address.
-    function STAKE_MANAGER() public view returns (address) {
-        return outrunAsBNBSYStorage.STAKE_MANAGER;
+    function stakeManager() public view returns (address) {
+        return outrunAsBNBSYStorage.stakeManager;
     }
 
     // slither-disable-next-line reentrancy-eth,reentrancy-no-eth
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
-        address _minter = AS_BNB_MINTER();
+        address _minter = asBnbMinter();
         // Branch 1 (NATIVE): Mint asBNB from native BNB via the Aster Minter.
         // Reverts with specific error if yield proxy has ongoing activities (cooldown period).
         if (tokenIn == NATIVE) {
@@ -96,9 +96,9 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
             return amountSharesOut;
         }
         // Branch 2 (SLIS_BNB): Mint asBNB from slisBNB via the Aster Minter.
-        if (tokenIn == SLIS_BNB()) {
-            address _slisBNB = SLIS_BNB();
-            _safeApproveInf(_slisBNB, _minter);
+        if (tokenIn == slisBnb()) {
+            address _slisBnb = slisBnb();
+            _safeApproveInf(_slisBnb, _minter);
             amountSharesOut = IAsBnbMinter(_minter).mintAsBnb(amountDeposited);
             if (amountSharesOut == 0) _revertOnZeroShares();
             return amountSharesOut;
@@ -118,20 +118,22 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     }
 
     // Two-step conversion: asBNB→slisBNB (via Minter), then slisBNB→BNB (via Lista StakeManager).
+    /// @notice Returns the current exchange rate: BNB per 1 asBNB, scaled by 1e18.
+    /// @return res BNB value of 1 asBNB (asBNB→slisBNB via Minter, then slisBNB→BNB via StakeManager).
     function exchangeRate() public view override returns (uint256 res) {
-        uint256 slisBnbPerShare = IAsBnbMinter(AS_BNB_MINTER()).convertToTokens(1 ether);
-        return IListaStakeManager(STAKE_MANAGER()).convertSnBnbToBnb(slisBnbPerShare);
+        uint256 slisBnbPerShare = IAsBnbMinter(asBnbMinter()).convertToTokens(1 ether);
+        return IListaStakeManager(stakeManager()).convertSnBnbToBnb(slisBnbPerShare);
     }
 
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
-        address _minter = AS_BNB_MINTER();
+        address _minter = asBnbMinter();
         if (tokenIn == NATIVE) {
             // Preview mirrors the live path: BNB -> slisBNB -> asBNB.
-            uint256 slisBnbAmount = IListaStakeManager(STAKE_MANAGER()).convertBnbToSnBnb(amountTokenToDeposit);
+            uint256 slisBnbAmount = IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
             return IAsBnbMinter(_minter).convertToAsBnb(slisBnbAmount);
         }
         // slisBNB deposits convert through the Aster minter; asBNB deposits stay 1:1.
-        if (tokenIn == SLIS_BNB()) return IAsBnbMinter(_minter).convertToAsBnb(amountTokenToDeposit);
+        if (tokenIn == slisBnb()) return IAsBnbMinter(_minter).convertToAsBnb(amountTokenToDeposit);
         return amountTokenToDeposit;
     }
 
@@ -139,18 +141,28 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         return amountSharesToRedeem;
     }
 
+    /// @notice Returns all tokens accepted for deposit: native BNB, slisBNB, and asBNB.
+    /// @return res Array of accepted deposit token addresses.
     function getTokensIn() public view override returns (address[] memory res) {
-        return ArrayLib.create(NATIVE, SLIS_BNB(), yieldBearingToken());
+        return ArrayLib.create(NATIVE, slisBnb(), yieldBearingToken());
     }
 
+    /// @notice Returns all tokens accepted for redemption: asBNB only.
+    /// @return res Array of accepted redemption token addresses.
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken());
     }
 
+    /// @notice Checks whether the token is accepted for deposit (native BNB, slisBNB, or asBNB).
+    /// @param token The token address to check.
+    /// @return True if the token is a valid deposit token.
     function isValidTokenIn(address token) public view override returns (bool) {
-        return token == NATIVE || token == SLIS_BNB() || token == yieldBearingToken();
+        return token == NATIVE || token == slisBnb() || token == yieldBearingToken();
     }
 
+    /// @notice Checks whether the token is accepted for redemption (asBNB only).
+    /// @param token The token address to check.
+    /// @return True if the token is a valid redemption token.
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == yieldBearingToken();
     }
@@ -166,7 +178,7 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     // Aster Minter returns 0 shares when yield proxy is processing a batch.
     // Distinguish between ongoing cooldown (retry later) and true zero-output failure.
     function _revertOnZeroShares() private view {
-        if (IYieldProxy(YIELD_PROXY()).activitiesOnGoing()) revert AsBnbMintQueued();
+        if (IYieldProxy(yieldProxy()).activitiesOnGoing()) revert AsBnbMintQueued();
         revert AsBnbMintZeroShares();
     }
 }

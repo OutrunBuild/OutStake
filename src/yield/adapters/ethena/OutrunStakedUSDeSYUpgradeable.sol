@@ -13,36 +13,36 @@ import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 // solhint-disable-next-line gas-small-strings
 contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunStakedUSDeSY") is SYBaseUpgradeable {
     struct OutrunStakedUSDeSYStorage {
-        address USDE;
+        address usde;
     }
     OutrunStakedUSDeSYStorage private outrunStakedUSDeSYStorage;
 
     /// @notice Initializes the SY adapter for Ethena sUSDe.
     /// @param owner_ The contract owner address.
-    /// @param USDe_ Address of the USDe stablecoin.
+    /// @param usde_ Address of the USDe stablecoin.
     /// @param sUSDe_ Address of the sUSDe yield-bearing token (ERC4626 vault).
-    function initialize(address owner_, address USDe_, address sUSDe_) external initializer {
-        if (USDe_ == address(0)) revert SYZeroAddress();
+    function initialize(address owner_, address usde_, address sUSDe_) external initializer {
+        if (usde_ == address(0)) revert SYZeroAddress();
         __SYBase_init("SY Ethena sUSDe", "SY sUSDe", sUSDe_, owner_);
-        outrunStakedUSDeSYStorage.USDE = USDe_;
+        outrunStakedUSDeSYStorage.usde = usde_;
     }
 
     /// @notice Returns the address of the USDe stablecoin.
     /// @return The USDe token address.
-    function USDE() public view returns (address) {
-        return outrunStakedUSDeSYStorage.USDE;
+    function usde() public view returns (address) {
+        return outrunStakedUSDeSYStorage.usde;
     }
 
     /// @param tokenIn The input token address (USDe or sUSDe).
     /// @param amountDeposited The amount of the input token deposited.
     /// @return amountSharesOut The amount of sUSDe shares received (minted 1:1 as SY shares; 1 SY = 1 sUSDe).
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
-        address _USDE = USDE();
+        address _usde = usde();
         address _yieldBearingToken = yieldBearingToken();
         // Branch 1: deposit USDe into the ERC4626 sUSDe vault.
         // Branch 2: deposit sUSDe directly 1:1.
-        if (tokenIn == _USDE) {
-            _safeApproveInf(_USDE, _yieldBearingToken);
+        if (tokenIn == _usde) {
+            _safeApproveInf(_usde, _yieldBearingToken);
             amountSharesOut = IERC4626(_yieldBearingToken).deposit(amountDeposited, address(this));
         } else {
             amountSharesOut = amountDeposited;
@@ -71,7 +71,7 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     /// @param amountTokenToDeposit The amount of the input token to deposit.
     /// @return The expected amount of sUSDe shares received.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
-        if (tokenIn == USDE()) return IERC4626(yieldBearingToken()).previewDeposit(amountTokenToDeposit);
+        if (tokenIn == usde()) return IERC4626(yieldBearingToken()).previewDeposit(amountTokenToDeposit);
         return amountTokenToDeposit;
     }
 
@@ -85,7 +85,7 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     /// @notice Returns the list of accepted input tokens.
     /// @return res Array containing sUSDe and USDe addresses.
     function getTokensIn() public view override returns (address[] memory res) {
-        return ArrayLib.create(yieldBearingToken(), USDE());
+        return ArrayLib.create(yieldBearingToken(), usde());
     }
 
     /// @notice Returns the list of accepted output tokens.
@@ -98,7 +98,7 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     /// @param token The token address to check.
     /// @return True if the token is sUSDe or USDe.
     function isValidTokenIn(address token) public view override returns (bool) {
-        return token == yieldBearingToken() || token == USDE();
+        return token == yieldBearingToken() || token == usde();
     }
 
     /// @notice Checks whether a token is accepted as output.
@@ -113,6 +113,6 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     /// @return assetAddress The USDe token address.
     /// @return assetDecimals Always 18.
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
-        return (AssetType.TOKEN, USDE(), 18);
+        return (AssetType.TOKEN, usde(), 18);
     }
 }

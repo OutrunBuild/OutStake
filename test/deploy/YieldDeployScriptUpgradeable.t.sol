@@ -84,7 +84,7 @@ contract YieldDeployScriptUpgradeableTest is Test {
         assertEq(wstETHSY.owner(), owner);
         assertEq(wstETHSY.name(), "SY Lido wstETH");
         assertEq(wstETHSY.symbol(), "SY wstETH");
-        assertEq(wstETHSY.STETH(), address(stETH));
+        assertEq(wstETHSY.stETH(), address(stETH));
         assertEq(wstETHSY.yieldBearingToken(), address(wstETH));
         _assertPosition(sp, sy, address(ueth));
         assertEq(ueth.mintingCaps(sp), 1_000_000_000 ether);
@@ -105,7 +105,7 @@ contract YieldDeployScriptUpgradeableTest is Test {
         assertEq(sUSDeSY.owner(), owner);
         assertEq(sUSDeSY.name(), "SY Ethena sUSDe");
         assertEq(sUSDeSY.symbol(), "SY sUSDe");
-        assertEq(sUSDeSY.USDE(), address(usde));
+        assertEq(sUSDeSY.usde(), address(usde));
         assertEq(sUSDeSY.yieldBearingToken(), address(susde));
         _assertPosition(sp, sy, address(uusd));
         assertEq(uusd.mintingCaps(sp), 1_000_000_000 ether);

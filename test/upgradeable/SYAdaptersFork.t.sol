@@ -105,9 +105,9 @@ contract SYAdaptersForkTest is Test {
     function testFork_AsBnbLiveWiringMatchesMainnetAddress() external {
         assertEq(IAsBnbMinter(AS_BNB_MINTER).asBnb(), AS_BNB);
         assertEq(IAsBnbMinter(AS_BNB_MINTER).token(), EXPECTED_SLIS_BNB);
-        assertEq(asBnbYieldProxy, asBnbSy.YIELD_PROXY());
+        assertEq(asBnbYieldProxy, asBnbSy.yieldProxy());
         assertEq(asBnbStakeManager, STAKE_MANAGER_PROXY);
-        assertEq(asBnbSy.STAKE_MANAGER(), STAKE_MANAGER_PROXY);
+        assertEq(asBnbSy.stakeManager(), STAKE_MANAGER_PROXY);
     }
 
     function testFork_AsBnbExchangeRateMatchesTwoHopQuote() external {
@@ -124,7 +124,7 @@ contract SYAdaptersForkTest is Test {
     }
 
     function testFork_AsBnbPreviewDepositMatchesActualDeposit() external {
-        assertFalse(IYieldProxy(asBnbSy.YIELD_PROXY()).activitiesOnGoing());
+        assertFalse(IYieldProxy(asBnbSy.yieldProxy()).activitiesOnGoing());
 
         uint256 amount = 1 ether;
         uint256 previewShares = asBnbSy.previewDeposit(address(0), amount);
@@ -252,7 +252,7 @@ contract SYAdaptersMainnetForkTest is Test {
         vm.deal(address(this), amount);
 
         assertEq(lidoSy.yieldBearingToken(), WSTETH);
-        assertEq(lidoSy.STETH(), STETH);
+        assertEq(lidoSy.stETH(), STETH);
         assertEq(lidoSy.exchangeRate(), IWstETH(WSTETH).stEthPerToken());
 
         uint256 previewShares = lidoSy.previewDeposit(address(0), amount);
@@ -273,7 +273,7 @@ contract SYAdaptersMainnetForkTest is Test {
         IERC20(USDE).approve(address(ethenaSy), amount);
 
         assertEq(ethenaSy.yieldBearingToken(), SUSDE);
-        assertEq(ethenaSy.USDE(), USDE);
+        assertEq(ethenaSy.usde(), USDE);
         assertEq(IERC4626(SUSDE).asset(), USDE);
         assertEq(ethenaSy.exchangeRate(), IERC4626(SUSDE).convertToAssets(1 ether));
 
@@ -290,7 +290,7 @@ contract SYAdaptersMainnetForkTest is Test {
         IERC20(USDS).approve(address(skySy), amount);
 
         assertEq(skySy.yieldBearingToken(), SUSDS);
-        assertEq(skySy.USDS(), USDS);
+        assertEq(skySy.usds(), USDS);
         assertEq(IERC4626(SUSDS).asset(), USDS);
         assertEq(skySy.exchangeRate(), IERC4626(SUSDS).convertToAssets(1 ether));
 
@@ -387,9 +387,9 @@ contract SYAdaptersEtherfiMainnetForkTest is Test {
         vm.deal(address(this), amount);
 
         assertEq(etherfiSy.yieldBearingToken(), WEETH);
-        assertEq(etherfiSy.EETH(), EETH);
-        assertEq(etherfiSy.DEPOSIT_ADAPTER(), ETHERFI_DEPOSIT_ADAPTER);
-        assertEq(etherfiSy.LIQUIDITY_POOL(), ETHERFI_LIQUIDITY_POOL);
+        assertEq(etherfiSy.eETH(), EETH);
+        assertEq(etherfiSy.depositAdapter(), ETHERFI_DEPOSIT_ADAPTER);
+        assertEq(etherfiSy.liquidityPool(), ETHERFI_LIQUIDITY_POOL);
         assertEq(etherfiSy.exchangeRate(), ILiquidityPool(ETHERFI_LIQUIDITY_POOL).amountForShare(1 ether));
 
         uint256 eEthQuote = ILiquidityPool(ETHERFI_LIQUIDITY_POOL)
@@ -468,7 +468,7 @@ contract SYAdaptersOptimismForkTest is Test {
         IERC20(OP_WSTETH).approve(address(lidoL2Sy), amount);
 
         assertEq(lidoL2Sy.yieldBearingToken(), OP_WSTETH);
-        assertEq(lidoL2Sy.STETH(), OP_STETH);
+        assertEq(lidoL2Sy.stETH(), OP_STETH);
         assertEq(lidoL2Sy.exchangeRate(), IL2StETH(OP_STETH).getTokensByShares(1 ether));
 
         uint256 previewShares = lidoL2Sy.previewDeposit(OP_WSTETH, amount);
@@ -557,9 +557,9 @@ contract SYAdaptersBaseForkTest is Test {
         IERC20(BASE_USDS).approve(address(skyL2Sy), amount);
 
         assertEq(skyL2Sy.yieldBearingToken(), BASE_SUSDS);
-        assertEq(skyL2Sy.USDC(), BASE_USDC);
-        assertEq(skyL2Sy.USDS(), BASE_USDS);
-        assertEq(skyL2Sy.PSM3(), BASE_PSM3);
+        assertEq(skyL2Sy.usdc(), BASE_USDC);
+        assertEq(skyL2Sy.usds(), BASE_USDS);
+        assertEq(skyL2Sy.psm3(), BASE_PSM3);
         assertEq(skyL2Sy.exchangeRate(), IPSM3(BASE_PSM3).previewSwapExactIn(BASE_SUSDS, BASE_USDS, 1 ether));
 
         uint256 previewShares = skyL2Sy.previewDeposit(BASE_USDS, amount);

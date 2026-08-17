@@ -15,9 +15,9 @@ import {IDepositAdapter} from "../../../integrations/etherfi/interfaces/IDeposit
 ///      Exchange rate comes from LiquidityPool.amountForShare.
 contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHSY") is SYBaseUpgradeable {
     struct OutrunWeETHSYStorage {
-        address EETH;
-        address DEPOSIT_ADAPTER;
-        address LIQUIDITY_POOL;
+        address eETH;
+        address depositAdapter;
+        address liquidityPool;
     }
     OutrunWeETHSYStorage private outrunWeETHSYStorage;
 
@@ -34,27 +34,27 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
             revert SYZeroAddress();
         }
         __SYBase_init("SY Etherfi weETH", "SY weETH", weETH_, owner_);
-        outrunWeETHSYStorage.EETH = eETH_;
-        outrunWeETHSYStorage.DEPOSIT_ADAPTER = depositAdapter_;
-        outrunWeETHSYStorage.LIQUIDITY_POOL = liquidityPool_;
+        outrunWeETHSYStorage.eETH = eETH_;
+        outrunWeETHSYStorage.depositAdapter = depositAdapter_;
+        outrunWeETHSYStorage.liquidityPool = liquidityPool_;
     }
 
     /// @notice The EtherFi eETH token address
     /// @return address of the eETH ERC20 token
-    function EETH() public view returns (address) {
-        return outrunWeETHSYStorage.EETH;
+    function eETH() public view returns (address) {
+        return outrunWeETHSYStorage.eETH;
     }
 
     /// @notice EtherFi DepositAdapter for ETH to weETH conversion
     /// @return address of the DepositAdapter contract
-    function DEPOSIT_ADAPTER() public view returns (address) {
-        return outrunWeETHSYStorage.DEPOSIT_ADAPTER;
+    function depositAdapter() public view returns (address) {
+        return outrunWeETHSYStorage.depositAdapter;
     }
 
     /// @notice EtherFi LiquidityPool used for exchange rate queries
     /// @return address of the LiquidityPool contract
-    function LIQUIDITY_POOL() public view returns (address) {
-        return outrunWeETHSYStorage.LIQUIDITY_POOL;
+    function liquidityPool() public view returns (address) {
+        return outrunWeETHSYStorage.liquidityPool;
     }
 
     /// @param tokenIn the asset being deposited (NATIVE, eETH, or weETH)
@@ -63,11 +63,11 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         if (tokenIn == NATIVE) {
             // Route native ETH through EtherFi's DepositAdapter which handles staking and mints weETH.
-            amountSharesOut = IDepositAdapter(DEPOSIT_ADAPTER()).depositETHForWeETH{value: amountDeposited}(address(0));
-        } else if (tokenIn == EETH()) {
+            amountSharesOut = IDepositAdapter(depositAdapter()).depositETHForWeETH{value: amountDeposited}(address(0));
+        } else if (tokenIn == eETH()) {
             // Wrap existing eETH into weETH via the weETH contract.
             address _yieldBearingToken = yieldBearingToken();
-            _safeApproveInf(EETH(), _yieldBearingToken);
+            _safeApproveInf(eETH(), _yieldBearingToken);
             amountSharesOut = IWeETH(_yieldBearingToken).wrap(amountDeposited);
         } else {
             // Already in weETH form, 1:1 deposit.
@@ -85,11 +85,11 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         returns (uint256 amountTokenOut)
     {
         // Redeem to eETH (unwrap weETH) or transfer weETH directly.
-        address _EETH = EETH();
+        address _eETH = eETH();
         address _yieldBearingToken = yieldBearingToken();
-        if (tokenOut == _EETH) {
+        if (tokenOut == _eETH) {
             amountTokenOut = IWeETH(_yieldBearingToken).unwrap(amountSharesToRedeem);
-            _transferOut(_EETH, receiver, amountTokenOut);
+            _transferOut(_eETH, receiver, amountTokenOut);
         } else {
             amountTokenOut = amountSharesToRedeem;
             _transferOut(_yieldBearingToken, receiver, amountSharesToRedeem);
@@ -97,9 +97,11 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
     }
 
     /// @notice EtherFi LiquidityPool.amountForShare — the ETH value of one weETH share.
+    /// @dev EtherFi identity: 1 weETH == 1 eETH share (weETH.wrap returns the eETH share amount; see the
+    ///      invariant note on IWeETH.wrap), so passing 1 ether of weETH as the share argument is exact.
     /// @return res exchange rate in 1e18 precision
     function exchangeRate() public view override returns (uint256 res) {
-        return ILiquidityPool(LIQUIDITY_POOL()).amountForShare(1 ether);
+        return ILiquidityPool(liquidityPool()).amountForShare(1 ether);
     }
 
     /// @param tokenIn the token being deposited (NATIVE, eETH, or weETH)
@@ -111,14 +113,19 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         override
         returns (uint256 amountSharesOut)
     {
-        address _pool = LIQUIDITY_POOL();
+        address _pool = liquidityPool();
         if (tokenIn == NATIVE) {
             // ETH → eETH → weETH conversion.
             // First compute how much eETH the ETH buys, then how much weETH that eETH represents.
+            // This quote chain approximates the live _deposit route (DepositAdapter.depositETHForWeETH) and may
+            // deviate slightly by rounding (observed within 1 wei on the pinned fork); unfavorable deviations are
+            // rejected by deposit's minSharesOut, so callers should leave slippage headroom below this preview.
             uint256 eETHAmount =
                 ILiquidityPool(_pool).amountForShare(ILiquidityPool(_pool).sharesForAmount(amountTokenToDeposit));
             amountSharesOut = ILiquidityPool(_pool).sharesForAmount(eETHAmount);
-        } else if (tokenIn == EETH()) {
+        } else if (tokenIn == eETH()) {
+            // Matches the executed path (_deposit wraps via IWeETH.wrap) because 1 weETH == 1 eETH share,
+            // so wrap returns the same amount this sharesForAmount quote produces (see IWeETH.wrap @dev).
             amountSharesOut = ILiquidityPool(_pool).sharesForAmount(amountTokenToDeposit);
         } else {
             amountSharesOut = amountTokenToDeposit;
@@ -135,8 +142,8 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         override
         returns (uint256 amountTokenOut)
     {
-        if (tokenOut == EETH()) {
-            amountTokenOut = ILiquidityPool(LIQUIDITY_POOL()).amountForShare(amountSharesToRedeem);
+        if (tokenOut == eETH()) {
+            amountTokenOut = ILiquidityPool(liquidityPool()).amountForShare(amountSharesToRedeem);
         } else {
             amountTokenOut = amountSharesToRedeem;
         }
@@ -145,27 +152,27 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
     /// @notice Returns the list of tokens accepted for deposit.
     /// @return res array containing NATIVE, eETH, and weETH
     function getTokensIn() public view override returns (address[] memory res) {
-        return ArrayLib.create(NATIVE, EETH(), yieldBearingToken());
+        return ArrayLib.create(NATIVE, eETH(), yieldBearingToken());
     }
 
     /// @notice Returns the list of tokens accepted for redemption.
     /// @return res array containing eETH and weETH
     function getTokensOut() public view override returns (address[] memory res) {
-        return ArrayLib.create(EETH(), yieldBearingToken());
+        return ArrayLib.create(eETH(), yieldBearingToken());
     }
 
     /// @notice Checks whether a given token is a valid input for deposit.
     /// @param token address of the token to check
     /// @return true if token is NATIVE, eETH, or weETH
     function isValidTokenIn(address token) public view override returns (bool) {
-        return token == NATIVE || token == EETH() || token == yieldBearingToken();
+        return token == NATIVE || token == eETH() || token == yieldBearingToken();
     }
 
     /// @notice Checks whether a given token is a valid output for redemption.
     /// @param token address of the token to check
     /// @return true if token is eETH or weETH
     function isValidTokenOut(address token) public view override returns (bool) {
-        return token == EETH() || token == yieldBearingToken();
+        return token == eETH() || token == yieldBearingToken();
     }
 
     /// @notice Returns asset metadata: canonical asset is native ETH (NATIVE = address(0) sentinel).

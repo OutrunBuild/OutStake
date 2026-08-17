@@ -15,7 +15,7 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     SYBaseUpgradeable
 {
     struct OutrunL2WrappableWstETHSYStorage {
-        address STETH;
+        address stETH;
         // The asset this SY ultimately represents on Ethereum mainnet
         // (for cross-chain position accounting).
         address underlyingAssetOnEthAddr;
@@ -40,15 +40,15 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
             revert SYZeroAddress();
         }
         __SYBase_init("SY Lido wstETH", "SY wstETH", wstETH_, owner_);
-        outrunL2WrappableWstETHSYStorage.STETH = stETH_;
+        outrunL2WrappableWstETHSYStorage.stETH = stETH_;
         outrunL2WrappableWstETHSYStorage.underlyingAssetOnEthAddr = underlyingAssetOnEthAddr_;
         outrunL2WrappableWstETHSYStorage.underlyingAssetOnEthDecimals = underlyingAssetOnEthDecimals_;
     }
 
     /// @notice Returns the address of the L2 stETH token.
     /// @return The L2 stETH token address.
-    function STETH() public view returns (address) {
-        return outrunL2WrappableWstETHSYStorage.STETH;
+    function stETH() public view returns (address) {
+        return outrunL2WrappableWstETHSYStorage.stETH;
     }
 
     // If depositing stETH: unwrap to get wstETH shares.
@@ -57,8 +57,9 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     /// @param amountDeposited The amount of the input token deposited.
     /// @return amountSharesOut The amount of wstETH shares received (minted 1:1 as SY shares; 1 SY = 1 wstETH).
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
-        address _STETH = STETH();
-        if (tokenIn == _STETH) amountSharesOut = IL2StETH(_STETH).unwrap(amountDeposited);
+        address _stETH = stETH();
+        // L2 stETH.unwrap burns this contract's stETH directly, so no allowance is needed.
+        if (tokenIn == _stETH) amountSharesOut = IL2StETH(_stETH).unwrap(amountDeposited);
         else amountSharesOut = amountDeposited;
     }
 
@@ -74,12 +75,13 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
         override
         returns (uint256 amountTokenOut)
     {
-        address _STETH = STETH();
-        if (tokenOut == _STETH) {
+        address _stETH = stETH();
+        if (tokenOut == _stETH) {
             address _yieldBearingToken = yieldBearingToken();
-            _safeApproveInf(_yieldBearingToken, _STETH);
-            amountTokenOut = IL2StETH(_STETH).wrap(amountSharesToRedeem);
-            _transferOut(_STETH, receiver, amountTokenOut);
+            // L2 stETH.wrap pulls wstETH from this contract via transferFrom, so approve the L2 stETH contract first.
+            _safeApproveInf(_yieldBearingToken, _stETH);
+            amountTokenOut = IL2StETH(_stETH).wrap(amountSharesToRedeem);
+            _transferOut(_stETH, receiver, amountTokenOut);
         } else {
             amountTokenOut = amountSharesToRedeem;
             _transferOut(yieldBearingToken(), receiver, amountTokenOut);
@@ -89,7 +91,7 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     /// @notice Returns the stETH amount for 1 wstETH using the L2 stETH.getTokensByShares.
     /// @return res The amount of stETH equivalent to 1 wstETH (scaled by 1e18).
     function exchangeRate() public view override returns (uint256 res) {
-        return IL2StETH(STETH()).getTokensByShares(1 ether);
+        return IL2StETH(stETH()).getTokensByShares(1 ether);
     }
 
     /// @notice Previews the amount of wstETH shares that would be received for depositing a given token.
@@ -97,8 +99,8 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     /// @param amountTokenToDeposit The amount of the input token to deposit.
     /// @return The expected amount of wstETH shares received.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
-        address _STETH = STETH();
-        if (tokenIn == _STETH) return IL2StETH(_STETH).getSharesByTokens(amountTokenToDeposit);
+        address _stETH = stETH();
+        if (tokenIn == _stETH) return IL2StETH(_stETH).getSharesByTokens(amountTokenToDeposit);
         return amountTokenToDeposit;
     }
 
@@ -107,35 +109,35 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     /// @param amountSharesToRedeem The amount of wstETH shares to redeem.
     /// @return The expected amount of output tokens received.
     function _previewRedeem(address tokenOut, uint256 amountSharesToRedeem) internal view override returns (uint256) {
-        address _STETH = STETH();
-        if (tokenOut == _STETH) return IL2StETH(_STETH).getTokensByShares(amountSharesToRedeem);
+        address _stETH = stETH();
+        if (tokenOut == _stETH) return IL2StETH(_stETH).getTokensByShares(amountSharesToRedeem);
         return amountSharesToRedeem;
     }
 
     /// @notice Returns the list of accepted input tokens.
     /// @return res Array containing stETH and wstETH addresses.
     function getTokensIn() public view override returns (address[] memory res) {
-        return ArrayLib.create(STETH(), yieldBearingToken());
+        return ArrayLib.create(stETH(), yieldBearingToken());
     }
 
     /// @notice Returns the list of accepted output tokens.
     /// @return res Array containing stETH and wstETH addresses.
     function getTokensOut() public view override returns (address[] memory res) {
-        return ArrayLib.create(STETH(), yieldBearingToken());
+        return ArrayLib.create(stETH(), yieldBearingToken());
     }
 
     /// @notice Checks whether a token is accepted as input.
     /// @param token The token address to check.
     /// @return True if the token is stETH or wstETH.
     function isValidTokenIn(address token) public view override returns (bool) {
-        return token == STETH() || token == yieldBearingToken();
+        return token == stETH() || token == yieldBearingToken();
     }
 
     /// @notice Checks whether a token is accepted as output.
     /// @param token The token address to check.
     /// @return True if the token is stETH or wstETH.
     function isValidTokenOut(address token) public view override returns (bool) {
-        return token == STETH() || token == yieldBearingToken();
+        return token == stETH() || token == yieldBearingToken();
     }
 
     /// @notice Returns the asset type and details of the underlying Ethereum mainnet asset this SY represents.
