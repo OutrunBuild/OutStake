@@ -32,7 +32,10 @@
 - **mintingCap**：minter 的铸造上限。
 - **amountInMinted**：minter 的已铸造债务。OFT 跨链铸烧不触碰此台账。
 - **repay**：冲减 minter 自身的 amountInMinted，同时从目标账户转移 uAsset 并 burn。
-- **Genesis**：通过 router 将 locked position 生成的 uAsset 授权并交给 memeverseLauncher 的集成路径。
+- **Memeverse**：Genesis 使用的外部 launch platform；router 只保存 launcher 地址并调用其 `genesis` 接口。
+- **Verse**：由 Memeverse launcher 管理的 launch target；本地 API 不展开其内部属性。
+- **verseId**：launcher 分配并解释的目标 Verse opaque ID（本地不展开含义的标识）；有效值规则由 launcher 负责，`OutrunRouter.sol::genesisByToken` 与 `OutrunRouter.sol::genesisBySY` 原样转发它，不负责校验。
+- **Genesis**：通过 `OutrunRouter.sol::genesisByToken` 或 `OutrunRouter.sol::genesisBySY` 创建 locked position，将生成的 uAsset 授权并交给 `IMemeverseLauncher.sol::genesis` 的集成路径。
 - **OFT (Omnichain Fungible Token)**：基于 LayerZero 的跨链代币标准，OutrunOFT 继承 OFTCore 实现跨链铸烧。
 - **_toSD**：将本地精度数量压缩到 uint64 共享精度的转换函数，溢出时回退 AmountSDOverflowed。
 - **_debit**：OFT 源链侧 burn 本地 token 的函数，且不触碰 minter 债务台账。

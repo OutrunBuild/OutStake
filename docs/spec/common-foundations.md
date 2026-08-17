@@ -141,7 +141,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 - `quoteOFT()` 的 `maxAmountLD` 受 rate limit 封顶：取 `min(amountCanBeSent, uint64.max × decimalConversionRate)` 再去 dust；`window == 0` 时不封顶
 - `window == 0` 表示无限额，只存在于未配置/删除态：`setOutboundRateLimit` 拒绝 `window == 0`（revert `InvalidWindowSeconds`），`removeOutboundRateLimit` 删除配置后回到无限额；该状态下基座 `OutrunRateLimiterUpgradeable.sol::getAmountCanBeSent` 返回无限额哨兵 `(0, type(uint256).max)`，OFT 层 override（`OutrunOFTUpgradeable.sol::getAmountCanBeSent`）返回 SD 域包络 `(0, uint64.max × decimalConversionRate)`
 - checkpoint 语义：每次 `setOutboundRateLimit` 先以 0 记账结算当前 in-flight，再写入新限额；若限额被调低，已 in-flight 可瞬态超过新限额——此时可用额度为 0、outbound 暂时全部 revert，随衰减回补自愈
-- 部署约束：部署脚本对每个远程链强制设置限额与窗口，限额/窗口由 env 显式配置、无生产默认值，任一为 0 即部署 revert；部署测试断言值为 1_000_000 ether / 1h（测试断言值，非生产默认值）
+- 部署约束：部署脚本对每个远程链强制设置限额与窗口，限额/窗口由 env 显式配置、无生产默认值，任一为 0 即部署 revert；部署测试断言值为 1_000_000 ether / 1h（测试断言值，非生产默认值）；该设置路径当前随 uAsset 部署调用（`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB`）在 `OutstakeScript.s.sol::run` 中被注释，启用时生效
 
 ## OFT 换算参数与发送/部署校验语义
 
@@ -156,7 +156,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 部署与升级一致性约束（`OutrunUniversalAssetsUpgradeable`）：
 
 - `OutrunUniversalAssetsUpgradeable.sol::initialize` 强制传入 `decimals_` 等于构造期固化的 `OutrunOFTUpgradeable.sol::localDecimals`，否则 revert `DecimalsMismatch(expected, provided)`：不可用与 localDecimals 不一致的 decimals 部署
-- `OutrunOFTUpgradeable.sol::constructor` 拒绝 `lzEndpoint == address(0)`，revert `InvalidLayerZeroEndpoint`；标准部署脚本的 `OutstakeScript.s.sol::_validateUAssetDeploymentConfig` 可能在 implementation 创建前以 `InvalidEndpoint` 预检同一输入
+- `OutrunOFTUpgradeable.sol::constructor` 拒绝 `lzEndpoint == address(0)`，revert `InvalidLayerZeroEndpoint`；标准部署脚本的 `OutstakeScript.s.sol::_validateUAssetDeploymentConfig` 可能在 implementation 创建前以 `InvalidEndpoint` 预检同一输入；该预检的调用方（uAsset 部署调用）当前在 `OutstakeScript.s.sol::run` 中被注释，启用时生效
 - `OutrunUniversalAssetsUpgradeable.sol::_authorizeUpgrade`（owner-only）比较新实现 getter 返回的 endpoint、decimalConversionRate、localDecimals 与当前值；对忠实报告其构造期配置的实现可拦截参数误配，但 getter 读数来自新实现自身，恶意实现仍可伪造相同 selector 返回值，故该校验只表达诚实实现的一致性约束，不替代 owner 对实现代码的信任与审查
 
 单笔发送的 SD 域 LD 上限 = `uint64.max × decimalConversionRate`；`quoteOFT().maxAmountLD` 为该值与 rate-limit 可用额度的 `min` 再去 dust（`window == 0` 时等于该值），见上文 `## OFT 与 rate limiter` 小节。

@@ -50,6 +50,7 @@
 - `src/router/interfaces/IMemeverseLauncher.sol`
 - 把 token <-> SY <-> staking position/uAsset 组合为单次入口，并承载 memeverseLauncher genesis 集成。
 - `OutrunRouter` 不进入 upgradeable product surface；仍保持非 upgradeable、可重部署 helper，并通过参数或配置调用 proxy-backed uAsset / SY / position。
+- F-091 target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。主网发布前完成清单验收并冻结/移除临时 setter。
 
 ### 1.5 集成与 Oracle 层
 
@@ -97,19 +98,19 @@
 
 ### 2.1 Token / Native -> SY
 
-用户授权 router -> router 从调用者拉取 tokenIn -> 调用 SY.deposit() -> SY 份额 mint 给 receiver。
+owner 先登记 trusted SY；用户授权 router -> router 校验 SY registry -> 从调用者拉取 tokenIn -> 调用 SY.deposit() -> SY 份额 mint 给 receiver。
 
 ### 2.2 SY -> Token
 
-router 路径先把 SY 转入 SY 合约地址（直调路径份额留在调用者账户、不转入）-> 调用 `SYBaseUpgradeable.sol::redeem`（该 SY 实例须由 owner 将当前 router 配置为 trusted router caller）-> adapter `_redeem` 先把目标 token 交付给 receiver -> 随后 burn SY 份额（router 路径从 `address(this)` 烧、直调路径从 `msg.sender` 烧）。非 trusted caller 传入 `burnFromInternalBalance=true` 会回退；`false` 直兑路径保持 caller 余额扣除。重入安全由 `redeem` 的 `nonReentrant` 保证。
+router 路径先校验 trusted SY，再把 SY 转入 SY 合约地址（直调路径份额留在调用者账户、不转入）-> 调用 `SYBaseUpgradeable.sol::redeem`（该 SY 实例须由 owner 将当前 router 配置为 trusted router caller）-> adapter `_redeem` 先把目标 token 交付给 receiver -> 随后 burn SY 份额（router 路径从 `address(this)` 烧、直调路径从 `msg.sender` 烧）。非 trusted caller 传入 `burnFromInternalBalance=true` 会回退；`false` 直兑路径保持 caller 余额扣除。重入安全由 `redeem` 的 `nonReentrant` 保证。
 
 ### 2.3 Token / SY -> Locked Stake
 
-用户授权 -> router 调用 SY 转换 -> position.stake() -> 拉取 SY -> 按 exchangeRate 折算 uAssetDebt -> 写入 position -> uAsset.mint(uAssetReceiver, uAssetDebt)。
+用户授权 -> router 校验 `trustedSYForSP` 与当前 `SP.SY()` -> 调用 SY 转换 -> position.stake() -> 拉取 SY -> 按 exchangeRate 折算 uAssetDebt -> 写入 position -> uAsset.mint(uAssetReceiver, uAssetDebt)。
 
 ### 2.4 Token / SY -> Wrap Stake
 
-用户授权 -> SY 转换 -> position.wrapStake() -> 拉取 SY -> 按 exchangeRate 折算 -> 增加 syTotalStaking / syWrapStaking / wrapUAssetDebt -> uAsset.mint(uAssetReceiver, uAssetDebt)。
+用户授权 -> router 校验 `trustedSYForSP` 与当前 `SP.SY()` -> SY 转换 -> position.wrapStake() -> 拉取 SY -> 按 exchangeRate 折算 -> 增加 syTotalStaking / syWrapStaking / wrapUAssetDebt -> uAsset.mint(uAssetReceiver, uAssetDebt)。
 
 ### 2.5 Wrap Redeem
 
@@ -320,6 +321,7 @@ Harvest:
 ### 3.4 设计约束
 
 - Router **不承担**独立资金池角色，所有资金来自调用者（caller-funded pull 模式）。
+- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`。主网冻结后不接受运行期 target 新增、替换或撤销。
 - 用户也**可直接调用** `SYBaseUpgradeable.sol::deposit`/`redeem` 与 Position.stake/wrapStake，无需经过 Router；直兑 `redeem(..., false)` 从调用者余额烧份额。`redeem(..., true)` 只对每个 SY 实例 owner 配置的 trusted router caller 开放；wrap 池赎回为 keeper-only `keepWrapRedeem`，不经 Router。
 - uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造。
 - Position 合约本身必须先在 uAsset 上被授予 mintingCap，才能继续铸造。
@@ -372,7 +374,7 @@ Harvest:
 1. `CLAUDE.md`（仓库流程与角色约定，5 分钟）
 2. `docs/ARCHITECTURE.md`（本文件，先建立层次与边界，5 分钟）
 3. `docs/GLOSSARY.md`（术语定义基线，3 分钟）
-4. `docs/spec/protocol.md`（系统目标与 8 条用户可见流程，8 分钟）
+4. `docs/spec/protocol.md`（系统目标与模块边界；用户流程见 `docs/spec/router/router-and-user-flows.md`，8 分钟）
 5. `docs/spec/position/state-machines.md`（7 个状态机，8 分钟）
 6. `docs/spec/position/accounting.md`（4 层账务规则，8 分钟）
 7. `docs/spec/access-control.md`（权限边界清单，5 分钟）

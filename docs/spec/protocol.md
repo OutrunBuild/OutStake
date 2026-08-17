@@ -18,6 +18,8 @@
 OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收款人重映射为 `0xdead` 的设计语义以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
 `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定、与 position/wrap 台账的协调迁移关系）以 `docs/spec/common-foundations.md`「基础规则」为准。
 
+另外，redeem/keep 系与 OFT 跨链之间存在本地销债边界：`OutrunStakingPositionUpgradeable.sol::redeem` / `::keepRedeem` / `::keepWrapRedeem` 经 `OutrunUniversalAssetsUpgradeable.sol::repay` 销毁调用者（position owner 或 keeper）在 position 所在链上的 uAsset 余额来销债；OFT 跨链（`OutrunOFTUpgradeable.sol::_debit` / `::_credit`）只移动流通供应、不移动 minter 债务台账，因此被桥出到其他链的 uAsset 必须先桥回（受 `OutrunOFTUpgradeable` 的 peer / outbound rate limit 配置约束）或在本地另行获取，才能用于原链销债。keeper 赎回是独立的信任路径，烧的是 keeper 自己的同链 uAsset，不等同于用户自主赎回。
+
 ### position
 
 当前仓位层由 `OutrunStakingPositionUpgradeable` 实现，维护锁仓仓位与公共 wrap 池。

@@ -8,7 +8,7 @@
 - `script/deploy/OutstakeScript.s.sol`
 - `script/deploy/deployment/OutrunDeployer.sol`
 
-`YieldDeployScript.run()` 默认执行 `_supportAUSDC()`，并通过 `ERC1967Proxy` 部署 `OutrunAaveV3SYUpgradeable` 与 `OutrunStakingPositionUpgradeable`。
+`YieldDeployScript.s.sol::run` 默认执行 `YieldDeployScript.s.sol::_supportAUSDC`，并通过 `ERC1967Proxy` 部署 `OutrunAaveV3SYUpgradeable` 与 `OutrunStakingPositionUpgradeable`。`YieldDeployScript.s.sol::_supportAUSDC` 仅在 `block.chainid` 匹配 `ARBITRUM_SEPOLIA_CHAINID` 或 `BASE_SEPOLIA_CHAINID`（Arbitrum Sepolia / Base Sepolia）时部署；在两个 `*_CHAINID` env 键均已配置的前提下，其余链跳过部署并打印 skip 日志后正常返回，脚本不回退；被求值到的键缺失时 `vm.envUint` 读取失败会使脚本直接 revert（chainid 已匹配前序条件时，后续键不再求值）。
 
 `OutstakeScript.run()` 默认只部署 `OutrunRouter` 与基础链配置。
 
@@ -20,18 +20,29 @@
 - oracle adapter 仍是非 upgradeable helper。
 - SY deploy helper 以 upgradeable 路径为准。
 - 部署期 owner 约束按脚本区分（两个脚本对 `OWNER` 环境变量的要求不同）：
-  - `OutstakeScript`（部署 uAsset / router）：强制 `OWNER == 广播者`，即 `OWNER` 必须等于 `PRIVATE_KEY` 派生地址。`OutrunDeployer` 合约以 `OWNER` 构造、其 `deploy()` 为 `onlyOwner`，脚本在 `_validateUAssetDeploymentConfig` 等处预检 `owner != deployer` 并 `revert InvalidOwner()`，故 `OWNER != 广播者` 时 uAsset / router 部署直接失败。
+  - `OutstakeScript`（部署 uAsset / router；uAsset 部署调用当前在 `OutstakeScript.s.sol::run` 中被注释）：强制 `OWNER == 广播者`，即 `OWNER` 必须等于 `PRIVATE_KEY` 派生地址。`OutrunDeployer` 合约以 `OWNER` 构造、其 `deploy()` 为 `onlyOwner`，脚本在 `_validateUAssetDeploymentConfig` 等处预检 `owner != deployer` 并 `revert InvalidOwner()`，故 `OWNER != 广播者` 时 uAsset / router 部署直接失败。
   - `YieldDeployScript`（部署 SY / position）：无 `owner != deployer` 守卫，`OWNER` 可直接设为终态 multisig（SY / position 的 `initialize` 直接写入该 owner，部署照常成功）。但其 `_deploySP` 调用 uAsset 的 owner-only `setMintingCap`，要求广播者是 uAsset 当前 owner；若 uAsset 已 `transferOwnership` 给 multisig，再次运行 `YieldDeployScript` 新增 SP 时，`setMintingCap` 需由 multisig 作为广播者执行。
-  - 终态 owner 为 multisig 的推荐工作流：`OutstakeScript` 以 `OWNER=<部署 EOA>` 部署 uAsset / router，随后对每个合约 `transferOwnership(<multisig>)`；`YieldDeployScript` 的 `OWNER` 可直接设为 multisig。
-- 跨链同地址部署约束：`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB` 经 `OutstakeScript.s.sol::_configureUAssetOmnichain` 把每条远端链的 peer 设为本链 uAsset 地址（peer = 自身地址设计），该设计只有在各链 uAsset 地址相同时才正确：
+  - 终态 owner 为 multisig 的推荐工作流：`OutstakeScript` 以 `OWNER=<部署 EOA>` 部署 uAsset / router，随后对每个合约 `transferOwnership(<multisig>)`；`YieldDeployScript` 的 `OWNER` 可直接设为 multisig。其中 uAsset 部署调用（`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB`）当前在 `OutstakeScript.s.sol::run` 中被注释，启用时按需解除注释；当前按本工作流执行 `OutstakeScript` 实际仅部署 router。
+  - 新 SP 部署默认参数：`YieldDeployScript.s.sol::_deploySP` 与 `OutstakeScript.s.sol::_supportMockAUSDC` / `_supportMockSUSDS` 部署 SP 时自动设置 `mintingCap = 1_000_000_000 ether`、`minStake = 0`；两者均为硬编码部署默认值，不提供 env 调整项；`OutstakeScript.s.sol::_supportMockAUSDC` / `_supportMockSUSDS` 两个调用点当前在 `OutstakeScript.s.sol::run` 中被注释，启用时按需解除注释。部署后如需调整，由 uAsset owner 调用 `OutrunUniversalAssetsUpgradeable.sol::setMintingCap`、position owner 调用 `OutrunStakingPositionUpgradeable.sol::setMinStake`。
+  - mock 栈测试网限制：mock 栈五个部署/支持入口（`OutstakeScript.s.sol::_deployMockERC20` / `OutstakeScript.s.sol::_deployMockOracle` / `OutstakeScript.s.sol::_deployMockERC20SY` / `OutstakeScript.s.sol::_supportMockAUSDC` / `OutstakeScript.s.sol::_supportMockSUSDS`）仅限测试网与 anvil 本地链，由 `OutstakeScript.s.sol::_assertTestnetChain` 依 `OutstakeScript.s.sol::_testnetChainIds` 的硬编码允许列表（anvil 本地链 31337 + 14 条测试网 chainid，与 `OutstakeScript.s.sol::_chainsInit` 键集同源）强制；在允许列表之外的链上执行这些入口会 revert `NotTestnetChain`（fail-closed 回退，非静默跳过）；禁止对生产 uAsset 运行 mock 栈。
+- 跨链同地址部署约束：`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB` 经 `OutstakeScript.s.sol::_configureUAssetOmnichain` 把每条远端链的 peer 设为本链 uAsset 地址（peer = 自身地址设计），该设计只有在各链 uAsset 地址相同时才正确（三个部署调用当前在 `OutstakeScript.s.sol::run` 中被注释，启用时按需解除注释）：
   - 地址决定链：`CREATE3` 代理地址只依赖 deployer 地址、salt 与固定 proxy bytecode，与 initcode 无关；`OutrunDeployer.sol::deploy` 再把 salt 与 msg.sender 再哈希，故 uAsset 地址 = f(OutrunDeployer 地址, 广播者地址, salt)。
-  - 因此要求：(1) OutrunDeployer 各链同址——经 `OutstakeScript.s.sol::_deployOutrunDeployer` 以同一 `OWNER`、同一 nonce 于各链 CREATE2 部署，或 env 注入的 `OUTRUN_DEPLOYER` 必须为各链同一地址；(2) 广播者 EOA（`PRIVATE_KEY` 派生）各链一致；(3) 部署用 nonce/salt 各链一致。
+  - 因此要求：(1) OutrunDeployer 各链同址——经 `OutstakeScript.s.sol::_deployOutrunDeployer` 以同一 `OWNER`、同一 nonce、同一编译配置（solc、via_ir、optimizer、optimizer_runs）于各链 CREATE2 部署，其跨链同址保证基于 CREATE2 creator 为各链同一链上常量 canonical factory 地址（`0x4e59b44847b379578588920cA78FbF26c0B4956C`，不再依赖「脚本合约在各链同址」），无论经 `OutstakeScript.s.sol::_deployOutrunDeployer` 部署还是 env 注入 `OUTRUN_DEPLOYER`，其地址都必须等于按下方配方可计算的 CREATE2 期望地址且各链同一；编译配置不一致会使 `OutrunDeployer.sol` 的 `creationCode` 变化，进而改变 initcode 哈希与 CREATE2 期望地址；(2) 广播者 EOA（`PRIVATE_KEY` 派生）各链一致；(3) 部署用 nonce/salt 各链一致。
+  - 编译配置落地：`script/ops/deploy.sh` 与 `script/ops/yieldDeploy.sh` 统一以 `optimizer_runs=20000` 传给各链 forge 命令；`foundry.toml` 的 `optimizer_runs = 200` 仅供非部署构建，任何手工 forge 部署命令都必须显式传 `--optimizer-runs 20000`。
   - 违反后果：各链 uAsset 地址不同，源链 burn 后目标链 peer 校验失败、永不到账，已发送的跨链报文不可自动恢复。
-  - 脚本侧约束：`OutstakeScript.s.sol::_assertOutrunDeployer` 对 env 注入的 `OUTRUN_DEPLOYER` 校验其等于按 `OutstakeScript.s.sol::_deployOutrunDeployer` 同款 salt/initcode 配方（salt = keccak256(owner, "OutrunDeployer", nonce)，initcode = creationCode ++ abi.encode(owner)，creator = 脚本合约，即 Foundry 广播时以确定性地址部署脚本合约、以 `address(this)` 表示）计算的 CREATE2 期望地址，偏离即 revert `InvalidDeployer`；且该断言首行要求 `OWNER` 等于广播者，否则 revert `InvalidOwner`，与本文档 owner 约束（`OWNER == 广播者`）一致。断言与 `_deployOutrunDeployer` 调用点共用 `OutstakeScript.s.sol::run` 内同一 nonce 单常量，不存在独立的 nonce env 变量；其中 `_deployOutrunDeployer` 当前在 `OutstakeScript.s.sol::run` 中被注释，跨链部署启用时按需解除注释。
+  - 脚本侧约束：`OutstakeScript.s.sol::_assertOutrunDeployer` 对 env 注入的 `OUTRUN_DEPLOYER` 校验其等于按 `OutstakeScript.s.sol::_deployOutrunDeployer` 同款 salt/initcode 配方（salt = keccak256(owner, "OutrunDeployer", nonce)，initcode = creationCode ++ abi.encode(owner)，creator = canonical deterministic-deployment proxy 常量地址 `0x4e59b44847b379578588920cA78FbF26c0B4956C`，各链同一，不再是脚本合约/`address(this)`）计算的 CREATE2 期望地址，即 CREATE2(FACTORY, salt, keccak256(initcode))，经三参 `Create2.computeAddress(salt, hash, FACTORY)` 计算，偏离即 revert `InvalidDeployer`；且该断言首行要求 `OWNER` 等于广播者，否则 revert `InvalidOwner`，与本文档 owner 约束（`OWNER == 广播者`）一致。工具链约束：仓库 CI 钉定的 Foundry v1.7.1（`.github/workflows/test.yml` 的 `FORGE_VERSION`）实测中，`forge script` 下脚本合约内求值 `address(this)` 即触发硬 revert（脚本合约为 ephemeral、其地址不可依赖），因此部署脚本内不得出现 `address(this)`（含 OZ `Create2.sol` 二参 `computeAddress` 与 `Create2.deploy`，二者内部均使用 `address(this)`），creator 必须取链上常量地址。前置条件——各目标链必须已在上述 canonical factory 地址部署 deterministic-deployment proxy（该地址无代码时须先按其 canonical 部署流程补齐再广播）；`OutstakeScript.s.sol::_assertOutrunDeployer` 为纯地址计算，不校验 factory 是否在链上存在，缺链 factory 只会在 `_deployOutrunDeployer` 广播时以 revert `FactoryDeployFailed` 暴露。断言与 `_deployOutrunDeployer` 调用点共用 `OutstakeScript.s.sol::run` 内同一 nonce 单常量，不存在独立的 nonce env 变量；其中 `_deployOutrunDeployer` 当前在 `OutstakeScript.s.sol::run` 中被注释，跨链部署启用时按需解除注释。
 
 ## 运行时入口
 
 部署脚本依赖环境变量注入 owner、keeper、revenuePool、router、launcher、endpoint 与外部协议地址。
+
+Router target registry wiring：
+
+- router、SY proxy 与 SP proxy 部署完成后，由 router owner 逐个调用 `OutrunRouter.sol::setTrustedSY(SY, true)`，再调用 `OutrunRouter.sol::setTrustedSP(SP, SY)`；后者必须使用该 SP 当前 `SP.SY()` 返回的 canonical SY，且该 SY 已先登记。
+- 注册完成后读取 `OutrunRouter.sol::trustedSY` 与 `OutrunRouter.sol::trustedSYForSP`，并核对 `TrustedSYUpdated` / `TrustedSPUpdated` 事件；所有清单项验收完成前，不开放 router 的用户入口。registry 检查在用户资金 pull、`transferFrom` 和精确 approve 之前执行，未登记 target 或 pair mismatch 会回退且不移动用户资产。
+- `OutrunRouter.sol::setMemeverseLauncher` 成功轮换应发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；代码落地后，部署验收需确认该事件及 `OutrunRouter.sol::memeverseLauncher` 读取值，并将结果记录为验收证据。
+- `setTrustedSY(SY, false)` 会阻断该 SY 的直接路径及引用它的 SP 路径，但不会自动清零 SP mapping；撤销或换对时显式调用 `OutrunRouter.sol::setTrustedSP(SP, address(0))`，再按“注册 SY -> 注册 pair”的顺序接入新配置。撤销不回滚已完成 position、uAsset debt 或 SY share state。
+- 这些 registry setter 与 `OutrunRouter.sol::setMemeverseLauncher` 都是 pre-mainnet wiring。主网发布前完成最终 target 清单、getter/event 验收并冻结/移除临时 owner/admin setter；主网运行不依赖运行期新增、替换或撤销 target。
 
 SY router wiring：
 
