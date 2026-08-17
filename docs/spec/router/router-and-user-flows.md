@@ -33,8 +33,9 @@
 `redeemSyToToken(SY, receiver, tokenOut, amountInSY, minTokenOut)` 是 router 的 `SY` 赎回入口。
 
 - router 会先把 `amountInSY` 从调用者转到 `SY` 合约地址本身，而不是转到 router 自己。
-- 然后 router 调用 `IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, true)`。
-- `burnFromInternalBalance = true` 的含义是：`SYBase.redeem(...)` 会从 `address(this)`，也就是 `SY` 合约自身余额里烧份额。
+- 然后 router 调用 `IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, true)`；该 `SY` 实例必须先由 owner 将当前 router 配置为 trusted router caller。
+- `burnFromInternalBalance = true` 的含义是：`SYBaseUpgradeable.sol::redeem` 会从 `address(this)`，也就是 `SY` 合约自身余额里烧份额；只有 owner 配置的 trusted router caller 可使用该模式，其他 caller 传入 `true` 会回退。
+- `burnFromInternalBalance = false` 仍是直兑模式，从 `msg.sender` 的余额烧份额，不要求 trusted router 配置。
 - 结算顺序是 token-out-before-burn：adapter `_redeem`（含外部调用）先把 tokenOut 交付给 receiver，随后才 burn 份额；重入安全由 `SYBase.redeem` 的 `nonReentrant` 保证，不靠 burn 在前。
 - `SYBase.redeem(...)` 会校验：
   - `tokenOut` 必须是 `isValidTokenOut(tokenOut)` 支持的资产。
@@ -164,6 +165,8 @@
 - `previewStakeFromToken(SP, tokenIn, tokenAmount, stakeParam)`
 - `previewStakeFromSY(...)`
 - `previewWrapStakeFromToken(SP, tokenIn, tokenAmount)`
+
+router 只暴露上述 3 个交易级 preview；SP 级共有 6 个 preview（`previewStake`、`previewWrapStake`、`previewDrawUAsset`、`previewRedeem`、`previewWrapRedeem`、`previewKeepRedeem`）是完整 quote 族。它们的失败面与 0-vs-revert 语义以 [accounting.md §5](./accounting.md) 和 [§11.1](./accounting.md) 为 canonical；其中 `previewStakeFromToken` / `previewStakeFromSY` 会透传 `SP.previewStake` 的 `MinStakeInsufficient` / `ZeroExchangeRate` / dust-返 0，而 `previewWrapStakeFromToken` 会透传 `SP.previewWrapStake` 的 `ZeroInput` / `ZeroExchangeRate` / `DustRoundedToZero`。
 
 当前实现里，这些 preview 的语义边界很明确：
 

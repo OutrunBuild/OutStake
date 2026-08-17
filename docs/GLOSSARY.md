@@ -14,7 +14,7 @@
 - **SYUtils.assetToSy**：按 exchangeRate 将资产值换算为 SY 份额（向下取整）。
 - **SYUtils.assetToSyUp**：按 exchangeRate 将资产值换算为 SY 份额（向上取整）。
 - **Position**：锁仓仓位记录，包含 owner（仓位控制权）、syStaked（质押 SY 数量）、UAssetMinted（已铸造 uAsset 债务）、deadline。
-- **uAssetDebt**：stake/wrapStake 铸出的初始 uAsset 债务单位（uAsset decimals 口径，非 SY 单位）：质押的 SY 数量（stake/wrapStake 入口即 `amountInSY`）先按 exchangeRate 经 SYUtils.syToAsset 折算成 canonical asset 价值，再经 canonical→uAsset 精度重缩放得到（`OutrunStakingPositionUpgradeable.sol::_syToAsset` 两段换算）；它是 `stake` 与 `wrapStake` 共用的初始债务定价结果（locked position 场景即 `Stake` 事件对应字段与 position 初始 `UAssetMinted` 的取值，wrap 池场景累加进 `wrapUAssetDebt`），亦即单位模型中的 `uAssetDebtUnits`。
+- **uAssetDebt**：stake/wrapStake 铸出的初始 uAsset 债务单位（uAsset decimals 口径，非 SY 单位）：质押的 SY 数量（stake/wrapStake 入口即 `amountInSY`）先按 exchangeRate 经 SYUtils.syToAsset 折算成 canonical asset 价值，再经 canonical→uAsset 精度重缩放得到（`OutrunStakingPositionUpgradeable.sol::_syToAsset` 两段换算）；它是 `stake` 与 `wrapStake` 共用的初始债务定价结果（locked position 场景即 position 初始 `UAssetMinted` 的取值，wrap 池场景累加进 `wrapUAssetDebt`），亦即单位模型中的 `uAssetDebtUnits`；locked position 场景下该值由 `Stake` 事件的 `mintedUAsset` 字段携带。
 - **mintedUAsset**：调用级铸出量标识符（`OutrunStakingPositionUpgradeable.sol::stake` / `::drawUAsset` / `::wrapStake` 的返回值与 `Stake`/`DrawUAsset`/`WrapStake` 事件字段（`IOutrunStakeManager.sol` 事件字段））：本次调用实际 mint 的 uAsset 数量（uAsset decimals 口径增量）。stake/wrapStake 场景数值上等于 `uAssetDebt`；drawUAsset 场景为升值差额 `currentValueInUAsset - positionUAssetMinted`。与 storage 域总债务 `position.UAssetMinted`（`Position` 结构体字段/`IOutrunStakeManager.sol::positions` 返回）分属两域、刻意异名。
 - **Wrap Pool**：公共 wrap 池，不建立独立 positionId，维护全池聚合账务（syTotalStaking、syWrapStaking、wrapUAssetDebt）；退出由 keeper 经 keepWrapRedeem 托管，无协议内自助赎回。
 - **syTotalStaking**：position 合约中所有 SY 质押总量（含锁仓仓位与 wrap 池）。

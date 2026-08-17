@@ -15,6 +15,7 @@
 ## 关键约束
 
 - SY、uAsset、position 的当前产品实现都通过 proxy-backed upgradeable variants 部署。
+- `OutrunStakingPositionUpgradeable.sol` 的 V1 storage namespace 将 `SY` 与两个 decimals 配置值打包在 slot0，后续 `minStake` 至 `positions` 的 slot 顺序保持不变。该顺序调整应在 V1 发布前完成；已有旧布局 position proxy 需要先迁移 decimals，再切换实现。
 - router 仍是非 upgradeable helper。
 - oracle adapter 仍是非 upgradeable helper。
 - SY deploy helper 以 upgradeable 路径为准。
@@ -31,4 +32,11 @@
 ## 运行时入口
 
 部署脚本依赖环境变量注入 owner、keeper、revenuePool、router、launcher、endpoint 与外部协议地址。
+
+SY router wiring：
+
+- 每个 `SYBaseUpgradeable.sol` proxy 初始化完成后，由该实例 owner 调用 `SYBaseUpgradeable.sol::setTrustedRouter(OUTRUN_ROUTER)`，再启用 `OutrunRouter.sol::redeemSyToToken`；未配置时 router 的 `burnFromInternalBalance=true` 调用会回退。
+- `SYBaseUpgradeable.sol::trustedRouter` 是验收前的读取点；配置交易应核对 `SetTrustedRouter` 事件的旧值和新值。切换 router 时先设置新地址并确认读取值，再停用旧入口；设置零地址撤销 router 并使 true 分支关闭。
+- owner 轮换不改变 `redeem(..., false)` 的直接赎回语义；该路径从 caller 余额烧份额，不依赖 router wiring。
+
 `OutrunDeployer` 提供 owner-only 的 CREATE3 部署能力。

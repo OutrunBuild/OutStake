@@ -101,7 +101,7 @@
 
 ### 2.2 SY -> Token
 
-router 路径先把 SY 转入 SY 合约地址（直调路径份额留在调用者账户、不转入）-> 调用 SY.redeem() -> adapter `_redeem` 先把目标 token 交付给 receiver -> 随后 burn SY 份额（router 路径从 `address(this)` 烧、直调路径从 `msg.sender` 烧）-> 重入安全由 `redeem` 的 `nonReentrant` 保证。
+router 路径先把 SY 转入 SY 合约地址（直调路径份额留在调用者账户、不转入）-> 调用 `SYBaseUpgradeable.sol::redeem`（该 SY 实例须由 owner 将当前 router 配置为 trusted router caller）-> adapter `_redeem` 先把目标 token 交付给 receiver -> 随后 burn SY 份额（router 路径从 `address(this)` 烧、直调路径从 `msg.sender` 烧）。非 trusted caller 传入 `burnFromInternalBalance=true` 会回退；`false` 直兑路径保持 caller 余额扣除。重入安全由 `redeem` 的 `nonReentrant` 保证。
 
 ### 2.3 Token / SY -> Locked Stake
 
@@ -320,7 +320,7 @@ Harvest:
 ### 3.4 设计约束
 
 - Router **不承担**独立资金池角色，所有资金来自调用者（caller-funded pull 模式）。
-- 用户也**可直接调用** SY.deposit/redeem 与 Position.stake/wrapStake，无需经过 Router；wrap 池赎回为 keeper-only `keepWrapRedeem`，不经 Router。
+- 用户也**可直接调用** `SYBaseUpgradeable.sol::deposit`/`redeem` 与 Position.stake/wrapStake，无需经过 Router；直兑 `redeem(..., false)` 从调用者余额烧份额。`redeem(..., true)` 只对每个 SY 实例 owner 配置的 trusted router caller 开放；wrap 池赎回为 keeper-only `keepWrapRedeem`，不经 Router。
 - uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造。
 - Position 合约本身必须先在 uAsset 上被授予 mintingCap，才能继续铸造。
 

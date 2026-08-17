@@ -56,12 +56,15 @@
 本节定义 mixed-decimals 双段换算语义，按当前实现直接描述。
 
 - `exchangeRate` 的单位是 `canonical asset per 1 SY`，并按 `1e18` 缩放
+- `SYBaseUpgradeable.sol::__SYBase_init` 将 SY 的 decimals 绑定为对应 yield-bearing token 的 decimals；跨 adapter 的 SY 份额单位以该绑定为准
+- `SYBaseUpgradeable.sol::deposit` 将 `SYBaseUpgradeable.sol::_deposit` 返回的份额数量直接作为 `_mint` 数量，不对该返回值按 `exchangeRate` 二次换算；因此 1 SY unit 等于对应 yield-bearing-token domain 的 1 unit
+- SAMPLE（Aave）族的 yield-bearing-token domain 是 `scaledBalanceOf` 使用的 scaled-share domain，而非随流动性指数增长的 nominal balance domain；其存取与份额证据按 scaled-share unit 解释
 - `canonicalAssetDecimals = SY.assetInfo().assetDecimals`
 - `uAssetDecimals = uAsset.decimals()`
 - `syAmount` 表示 `SY` 数量
 - `canonicalAssetValue` 表示 canonical asset 单位下的价值
 - `uAssetDebtUnits` 表示 `uAsset` decimals 口径下的债务单位
-- 代码侧标识符对应：`uAssetDebt`（`OutrunStakingPositionUpgradeable.sol::stake` / `OutrunStakingPositionUpgradeable.sol::wrapStake` 局部变量与 `Stake` 事件字段，即 `uAssetDebt ≡ uAssetDebtUnits`）；**公共入口的** uAsset 输入形参统一命名 `amountInUAsset`（如 `keepWrapRedeem`/`keepRedeem`/`previewWrapRedeem`/`previewKeepRedeem` 的入参与 `_assetToSy`/`_assetToSyUp` 的换算形参；纯数值换算 helper 的通用形参（如 `_scaleUAssetToCanonicalAsset` 的 `amount`）不受此约束）。uAsset 域数量的标识符一律携带显式 uAsset 标记；该规则约束代码标识符与文档中反引号标记的标识符，规则针对**语义命名层**的债务/价值量标识符：storage 总债务域用 `UAssetMinted`（`Position` 字段/`positions()` 返回），调用级铸出量域用 `mintedUAsset`（`stake`/`drawUAsset`/`wrapStake` 返回值与对应事件字段），两域刻意异名；销债域保留 `UAssetBurned`（`redeem`/`keepRedeem` 返回值与 `Redeem`/`KeepRedeem` 事件字段），属调用级销毁量、不属铸出量域，不随本轮更名；preview 族返回值保留 `UAssetMintable` 命名——`-able` 后缀区分「可铸出量报价」与实际铸出量 `mintedUAsset`，属刻意的 quote/actual 命名区分，不随调用级更名；其他如 `uAssetDebt`、`currentValueInUAsset`；`drawUAsset`/`previewDrawUAsset` 内暂存 `position.UAssetMinted` 的局部 `positionUAssetMinted`（域前缀齐全，不属裸短名）；`_scaleUAssetToCanonicalAsset` 的 `amount` 等纯机械换算用途的短名，不视为域语义标识符，不受标记规则约束；不复用指 SY 本金的通名（如 `principal`），不约束中文散文里的『本金（principal）』一词
+- 代码侧标识符对应：`uAssetDebt`（`OutrunStakingPositionUpgradeable.sol::stake` / `OutrunStakingPositionUpgradeable.sol::wrapStake` 局部变量，即 `uAssetDebt ≡ uAssetDebtUnits`）；**公共入口的** uAsset 输入形参统一命名 `amountInUAsset`（如 `keepWrapRedeem`/`keepRedeem`/`previewWrapRedeem`/`previewKeepRedeem` 的入参与 `_assetToSy`/`_assetToSyUp` 的换算形参；纯数值换算 helper 的通用形参（如 `_scaleUAssetToCanonicalAsset` 的 `amount`）不受此约束）。uAsset 域数量的标识符一律携带显式 uAsset 标记；该规则约束代码标识符与文档中反引号标记的标识符，规则针对**语义命名层**的债务/价值量标识符：storage 总债务域用 `UAssetMinted`（`Position` 字段/`positions()` 返回），调用级铸出量域用 `mintedUAsset`（`stake`/`drawUAsset`/`wrapStake` 返回值与对应事件字段），两域刻意异名；销债域保留 `UAssetBurned`（`redeem`/`keepRedeem` 返回值与 `Redeem`/`KeepRedeem` 事件字段），属调用级销毁量、不属铸出量域，不随本轮更名；preview 族返回值保留 `UAssetMintable` 命名——`-able` 后缀区分「可铸出量报价」与实际铸出量 `mintedUAsset`，属刻意的 quote/actual 命名区分，不随调用级更名；其他如 `uAssetDebt`、`currentValueInUAsset`；`drawUAsset`/`previewDrawUAsset` 内暂存 `position.UAssetMinted` 的局部 `positionUAssetMinted`（域前缀齐全，不属裸短名）；`_scaleUAssetToCanonicalAsset` 的 `amount` 等纯机械换算用途的短名，不视为域语义标识符，不受标记规则约束；不复用指 SY 本金的通名（如 `principal`），不约束中文散文里的『本金（principal）』一词
 
 记：
 
@@ -84,6 +87,13 @@
 - `canonical asset -> SY`
   - down: `syAmount = roundDownDiv(canonicalAssetValue * 1e18, exchangeRate)`
   - up: `syAmount = roundUpDiv(canonicalAssetValue * 1e18, exchangeRate)`
+
+### mixed-decimals up/up 双段复合取整偏差
+
+- 当 `canonicalAssetDecimals < uAssetDecimals`（记 `f = 10 ** (uAssetDecimals - canonicalAssetDecimals)`）且 uAsset 数量 a 非 f 整除时，「`uAsset -> canonical asset` 用 up」与「`canonical asset -> SY` 用 up」的逐段复合（内层为 `OutrunStakingPositionUpgradeable.sol::_scaleUAssetToCanonicalAsset` 的 up 分支、外层为 `src/libraries/SYUtils.sol::assetToSyUp`，组合见 `OutrunStakingPositionUpgradeable.sol::_assetToSyUp`）为 `roundUpDiv(roundUpDiv(a, f) * 1e18, exchangeRate)`，超出单次整体取整理想值 `roundUpDiv(a * 1e18, f * exchangeRate)` 至多 `1e18 / exchangeRate + 1` SY wei（exchangeRate ≥ 1e18 时 1 wei）
+- 债务 f 整除性的破坏来源：`OutrunStakingPositionUpgradeable.sol::_computeRedeemPositionDebt` 的 partial redeem ceil 销债、`OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 的任意整数减债、`OutrunStakingPositionUpgradeable.sol::keepRedeem` 的 partial 赎回（经 `OutrunStakingPositionUpgradeable.sol::_applyPositionRedeem` 以 `UAssetBurned = amountInUAsset`（keeper 任选整数）写减 `position.UAssetMinted`）
+- 该偏差是覆盖性守卫（`OutrunStakingPositionUpgradeable.sol::_assetToSyUp` 的调用方）接受的保守取整成本：守卫值恒不低于精确债务面值，只可能误拒、不会放行不足额
+- 若债务 f 整除或 `uAssetDecimals <= canonicalAssetDecimals`，内层换算为精确乘法/no-op，复合结果与单层整体取整逐点相等
 
 ### ray 域换算（Aave 流动性指数）
 
@@ -147,7 +157,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 
 - `OutrunUniversalAssetsUpgradeable.sol::initialize` 强制传入 `decimals_` 等于构造期固化的 `OutrunOFTUpgradeable.sol::localDecimals`，否则 revert `DecimalsMismatch(expected, provided)`：不可用与 localDecimals 不一致的 decimals 部署
 - `OutrunOFTUpgradeable.sol::constructor` 拒绝 `lzEndpoint == address(0)`，revert `InvalidLayerZeroEndpoint`；标准部署脚本的 `OutstakeScript.s.sol::_validateUAssetDeploymentConfig` 可能在 implementation 创建前以 `InvalidEndpoint` 预检同一输入
-- `_authorizeUpgrade`（owner-only）校验新实现与当前值三一致——endpoint、decimalConversionRate、localDecimals 任一不一致即 revert `InvalidOFTUpgradeConfig`：升级不可改变这三项
+- `OutrunUniversalAssetsUpgradeable.sol::_authorizeUpgrade`（owner-only）比较新实现 getter 返回的 endpoint、decimalConversionRate、localDecimals 与当前值；对忠实报告其构造期配置的实现可拦截参数误配，但 getter 读数来自新实现自身，恶意实现仍可伪造相同 selector 返回值，故该校验只表达诚实实现的一致性约束，不替代 owner 对实现代码的信任与审查
 
 单笔发送的 SD 域 LD 上限 = `uint64.max × decimalConversionRate`；`quoteOFT().maxAmountLD` 为该值与 rate-limit 可用额度的 `min` 再去 dust（`window == 0` 时等于该值），见上文 `## OFT 与 rate limiter` 小节。
 

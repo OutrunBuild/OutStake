@@ -21,8 +21,9 @@
 - `OutrunUniversalAssetsUpgradeable` 的 mint cap、repay、OFT shared-decimal envelope 与 rate-limit quote。
 - `OutrunOFTUpgradeable` 的 OFT shared-decimal envelope 与 rate-limit quote。
 - `OutrunStakingPositionUpgradeable` 的建仓、补提债务、到期赎回、keeper 代偿赎回、wrap stake、wrap redeem 与收益 harvest。
+- `test/upgradeable/OutrunStakingPositionStorageLayout.t.sol` 验证 position ERC-7201 namespace 的 `SY` 与两个 decimals 共用 slot0。
 - `OutrunRouter` 的 caller-funded pull 模式、native/erc20 输入约束、wrap 路径与 genesis mock 路径。
-- `SYBaseUpgradeable` 的 initializer、pause、redeem 重入边界。
+- `SYBaseUpgradeable` 的 initializer、pause、redeem 重入边界，以及 trusted-router 配置与权限边界：owner-only setter、零地址撤销、trusted caller 的 `redeem(..., true)`、非 trusted caller 的 `SYUnauthorizedInternalRedeemer` 回退、router 替换后旧 caller 失效、`redeem(..., false)` 的 caller 余额直兑。
 - proxy-backed SY adapters 的核心 deposit / redeem / preview / exchangeRate 行为。
 - oracle-backed upgradeable SY variants 的 owner-only `setExchangeRateOracle(address)` 边界。
 - `OutstakeScript` 与 `YieldDeployScript` 的 upgradeable deployment evidence。

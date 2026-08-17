@@ -25,6 +25,7 @@
   - 跨链限流：`setOutboundRateLimit`、`removeOutboundRateLimit`（逐链出站限额）
   - LayerZero OApp 跨链配置：`setPeer`、`setDelegate`、`setMsgInspector`、`setEnforcedOptions`、`setPreCrime`
   - 注：`setPeer` 与出站限额是部署流程的生产必经路径
+- SY 赎回授权面：每个 `SYBaseUpgradeable.sol` 实例维护一个 `trustedRouter` 地址。owner 通过 `SYBaseUpgradeable.sol::setTrustedRouter` 设置或替换；初始值为零地址，零地址表示暂未配置且 `burnFromInternalBalance=true` 全部拒绝。`SYBaseUpgradeable.sol::trustedRouter` 提供当前值，`SetTrustedRouter(address indexed oldRouter, address indexed newRouter)` 记录轮换；设置零地址可撤销旧 router。`SYBaseUpgradeable.sol::redeem` 在调用 adapter `_redeem` 前检查 caller，非当前 trusted router 使用 `true` 回退 `SYUnauthorizedInternalRedeemer(address caller)`；`false` 仍由 caller 直接赎回。
 
 UUPS 边界：
 
