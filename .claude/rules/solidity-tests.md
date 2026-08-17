@@ -2,7 +2,6 @@
 paths:
   - "test/**/*.sol"
 ---
-
 # Solidity tests (test/)
 
 Auto-loads when you edit `test/` files.
@@ -14,7 +13,7 @@ Auto-loads when you edit `test/` files.
 | `testFuzz_Description` | fuzz | `testFuzz_TransferAnyAmount` |
 | `test_RevertWhen_Condition` | revert | `test_RevertWhen_InsufficientBalance` |
 | `test_RevertIf_Condition` | revert (alt) | `test_RevertIf_NotOwner` |
-| `invariant_Description` | invariant test (below) | `invariant_TotalSupplyConserved` |
+| `invariant_Description` | invariant test (below) | `invariant_positionIdMonotonic` |
 
 ## Organization
 - Test files end with `.t.sol`, test contracts inherit `forge-std/Test.sol`, test functions start with `test`/`test_`.
@@ -22,6 +21,10 @@ Auto-loads when you edit `test/` files.
 - Mirror `src/`: `src/token/Foo.sol` → `test/token/Foo.t.sol`.
 - Group related tests in one contract: `contract FooTransferTest is Test { … }`.
 - Expose internals via a harness in the area's `mocks/` directory (e.g. `exposed_mint` wrapping `_mint`), never by widening production visibility.
+
+## Test mapping registration
+
+Every new `.t.sol` test file MUST be registered in `.harness/policy.json::test_mapping`, or explicitly listed in `.harness/policy.json::testing_gaps` with a reason, before it can be considered part of the test suite. The gate now fails if any `test/**/*.t.sol` is missing from both.
 
 ## Common cheatcodes
 - Impersonate a caller: `vm.prank(alice)` (single) / `vm.startPrank(alice)` … `vm.stopPrank()` (multiple).
@@ -35,7 +38,7 @@ Auto-loads when you edit `test/` files.
 ## Invariant tests
 - Function names start with `invariant_`; Forge asserts the invariant holds after a random sequence of calls during fuzzing.
 - Use a handler contract plus `targetContract()`/`targetSelector()` to restrict which entry points the fuzzer may call, avoiding arbitrary calls to any function.
-- This repo already uses invariant tests — new invariants must follow the same pattern.
+- This repo already uses invariant tests (e.g. `OutrunStakingPositionInvariantUpgradeable`, functions like `invariant_positionIdMonotonic`) — new invariants must follow the same pattern.
 
 ## Fork testing
 - Test against live chain state: `forge test --fork-url <rpc> --fork-block-number <n>` (pin the block number for reproducibility); or set `eth_rpc_url` in `foundry.toml`.
@@ -46,7 +49,13 @@ Auto-loads when you edit `test/` files.
 - Coverage: `forge coverage` (`--report lcov` for lcov).
 
 ## Inheritance (strict — see AGENTS.md "Test Code Rules")
-Never inherit an upgradeable production contract (`Initializable`, proxy/storage-inherited). Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). The only exception: inheriting an upgradeable `src/` contract declared `abstract` (to implement its abstract functions or expose internal `pure`/`view`). (AGENTS.md is always in context — this is a reminder.)
+Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). (AGENTS.md is always in context — this is a reminder.)
+
+## Mock Fidelity
+
+- Every mock contract that implements a production interface must model every seam the tested path depends on.
+- If a mock intentionally models only part of a production interface, its header NatSpec MUST contain `@dev Partial mock:` followed by a list of modeled and unmodeled seams.
+- Token-surface seams are part of fidelity: `getTokensIn`/`getTokensOut` must match `isValidTokenIn`/`isValidTokenOut`, and `redeem` must not mint new mock SY to satisfy a token-out path.
 
 ## Debugging verbosity
 - `-vvv`: traces for failing tests only (most common for debugging).

@@ -2,7 +2,6 @@
 paths:
   - "src/**/*.sol"
 ---
-
 # Solidity production contracts (src/)
 
 Auto-loads when you edit `src/` contracts. Goal: consistency and readability, not "one true way". `forge fmt` is authoritative for whitespace/braces/wrapping — this repo has no `[fmt]` override, so defaults apply (`line_length = 120`, `tab_width = 4`), matching the official Solidity style guide. This rule covers what `forge fmt` does **not** enforce: ordering, naming, NatSpec, imports, security.
@@ -38,7 +37,7 @@ Named imports only — `import {ERC20} from "@openzeppelin/contracts/token/ERC20
 | contract / library / interface / struct / enum / event | CapitalizedWords (PascalCase) | `SimpleToken`, `Position`, `Deposit` |
 | function / parameter / modifier / local & state variable | mixedCase (lowerCamelCase) | `getBalance`, `initialSupply`, `onlyOwner` |
 | `constant` | UPPER_CASE_WITH_UNDERSCORES | `MAX_BLOCKS`, `TOKEN_NAME` |
-| `immutable` | match the surrounding file — follow the repo's dominant convention; the official guide prefers UPPER_SNAKE_CASE for new files with no precedent | `TREASURY` vs `lzEndpoint` |
+| `immutable` | mixedCase — **match the surrounding file** (this repo uses mixedCase for immutables; the official guide and `forge lint` default prefer UPPER_SNAKE_CASE) | `sequencerUptimeFeed` |
 
 - Abbreviations: in PascalCase capitalize all letters (`HTTPServerError`); in mixedCase only the leading one is lowercase (`xmlHTTPRequest`).
 - Never name a single-letter variable `l`, `O`, or `I` (confusable with `1`/`0`).
@@ -68,7 +67,7 @@ Prefer custom errors: `error InsufficientBalance();` + `revert InsufficientBalan
 
 ## Project specifics
 - Compiler: Solidity `0.8.35`, `via_ir = true`, `optimizer_runs = 200`, `evm_version = prague`. Verify deployments use exactly these settings.
-- Naming lints may not flag every deviation depending on the repo's `[lint]` config — apply the naming table above yourself.
+- No `[fmt]` or `[lint]` override in `foundry.toml` → `forge fmt` defaults (`line_length = 120`, `tab_width = 4`); `forge lint` runs its default rule set. Apply the naming table above regardless (immutables here are mixedCase by convention).
 - "Stack too deep": pack variables into structs, split large functions, or rely on `via_ir` (already enabled) as a last resort.
 - On surgical edits, follow the file's existing conventions; do not rename or reorder unrelated code.
 - Before you ship: `forge test -vvvv`, `forge lint`, `forge fmt --check`; `forge taint src/<Contract>.sol` for untrusted-data flows; production keys in keystore/HW (never plaintext, never Anvil defaults); keep `.env` out of VCS.

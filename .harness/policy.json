@@ -72,6 +72,7 @@
       "^\\.github/workflows/pr-template-check\\.yml$",
       "^\\.gitmodules$",
       "^\\.gitignore$",
+      "^\\.env\\.example$",
       "^\\.harness/policy\\.json$",
       "^\\.harness/runtime/main-session-contract\\.md$",
       "^\\.harness/schemas/.*$",
@@ -90,6 +91,7 @@
       "^package\\.json$",
       "^remappings\\.txt$",
       "^script/harness/.*$",
+      "^script/ops/.*\\.sh$",
       "^\\.?solhint.*(\\.config\\.js|\\.json)$"
     ],
     "solidity_prod": [
@@ -127,7 +129,9 @@
       "tests": [
         "test/upgradeable/OutrunStakingPositionUpgradeable.t.sol",
         "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol",
-        "test/upgradeable/OutrunStakingPositionInvariantUpgradeable.t.sol"
+        "test/upgradeable/OutrunStakingPositionInvariantUpgradeable.t.sol",
+        "test/upgradeable/KeepWrapRedeemAccess.t.sol",
+        "test/upgradeable/OutrunStakingPositionStorageLayout.t.sol"
       ],
       "rules": [
         {
@@ -137,11 +141,15 @@
           ],
           "change_tests": [
             "test/upgradeable/OutrunStakingPositionUpgradeable.t.sol",
-            "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol"
+            "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol",
+            "test/upgradeable/KeepWrapRedeemAccess.t.sol",
+            "test/upgradeable/OutrunStakingPositionStorageLayout.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/OutrunStakingPositionUpgradeable.t.sol",
-            "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol"
+            "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol",
+            "test/upgradeable/KeepWrapRedeemAccess.t.sol",
+            "test/upgradeable/OutrunStakingPositionStorageLayout.t.sol"
           ]
         }
       ]
@@ -201,7 +209,8 @@
     "deployment": {
       "tests": [
         "test/deploy/OutstakeScriptUpgradeable.t.sol",
-        "test/deploy/YieldDeployScriptUpgradeable.t.sol"
+        "test/deploy/YieldDeployScriptUpgradeable.t.sol",
+        "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol"
       ],
       "rules": [
         {
@@ -210,10 +219,12 @@
             "^script/deploy/OutstakeScript\\.s\\.sol$"
           ],
           "change_tests": [
-            "test/deploy/OutstakeScriptUpgradeable.t.sol"
+            "test/deploy/OutstakeScriptUpgradeable.t.sol",
+            "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol"
           ],
           "evidence_tests": [
-            "test/deploy/OutstakeScriptUpgradeable.t.sol"
+            "test/deploy/OutstakeScriptUpgradeable.t.sol",
+            "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol"
           ]
         },
         {
@@ -281,7 +292,18 @@
       ]
     }
   },
-  "testing_gaps": {},
+  "testing_gaps": {
+    "unregistered-test-files": [
+      {
+        "id": "outstake-router-drift-fix-gap",
+        "paths": [
+          "test/deploy/OutstakeRouterDriftFix.t.sol"
+        ],
+        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
+        "enforcement": "residual-risk"
+      }
+    ]
+  },
   "verification_profiles": {
     "ci": {
       "required_commands": [

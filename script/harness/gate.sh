@@ -893,6 +893,35 @@ validate_test_mapping_references() {
     [ "$invalid" -eq 0 ]
 }
 
+validate_test_mapping_completeness() {
+    local policy_file="$1"
+    local repo_root="$2"
+    local test_path
+    local referenced_test_paths=()
+    local invalid=0
+
+    mapfile -t referenced_test_paths < <(jq -r '
+        [
+            (.test_mapping | to_entries[] | .value.tests[]?),
+            (.test_mapping | to_entries[] | .value.rules[]? | .change_tests[]?),
+            (.test_mapping | to_entries[] | .value.rules[]? | .evidence_tests[]?),
+            (.testing_gaps[]?[]? | .paths[]?)
+        ]
+        | unique[]
+    ' "$policy_file")
+
+    while IFS= read -r test_path; do
+        [ -n "$test_path" ] || continue
+        test_path="test/${test_path}"
+        if ! printf '%s\n' "${referenced_test_paths[@]}" | grep -Fxq -- "$test_path"; then
+            printf '[gate] ERROR: test file not covered by test_mapping or testing_gaps: %s\n' "$test_path" >&2
+            invalid=1
+        fi
+    done < <(find "$repo_root/test" -name '*.t.sol' -printf '%P\n' | sort)
+
+    [ "$invalid" -eq 0 ]
+}
+
 diff_covers_changed_files() {
     local diff_file="$1"
     shift
@@ -1052,6 +1081,9 @@ if ! validate_json_file_against_schema "$policy_file" "$policy_schema_file"; the
 fi
 if ! validate_test_mapping_references "$policy_file" "$repo_root"; then
     die "test_mapping reference validation failed"
+fi
+if ! validate_test_mapping_completeness "$policy_file" "$repo_root"; then
+    die "test_mapping completeness validation failed"
 fi
 
 mapfile -t solidity_prod_patterns < <(jq -r '.surfaces.solidity_prod[]' "$policy_file")
@@ -1792,6 +1824,24 @@ if [ "$classify_only" -eq 1 ]; then
         exit 1
     fi
     exit 0
+fi
+
+# Verify the generated per-scope .claude/rules/*.md files have not drifted from
+# their single source of truth (the nested src/script/test AGENTS.md). Gate fails
+# on drift so stale generated rules are never silently relied on. Runs in the
+# real verification path (not classify-only) and applies to every change.
+if [ "$hard_blocked" -eq 0 ] && [ -f "$repo_root/script/harness/sync-agent-docs.sh" ]; then
+    sync_check_output="$(mktemp "$repo_root/.harness/tmp/sync-docs.XXXXXX")"
+    register_cleanup "$sync_check_output"
+    set +e
+    bash "$repo_root/script/harness/sync-agent-docs.sh" --check > "$sync_check_output" 2>&1
+    sync_check_exit=$?
+    set -e
+    if [ "$sync_check_exit" -ne 0 ]; then
+        cat "$sync_check_output" >&2
+        verification_failed=1
+        append_finding blocking_findings_json "verifier" "generated .claude/rules/*.md drifted from the nested AGENTS.md source (run bash script/harness/sync-agent-docs.sh)" "sync-agent-docs" "error"
+    fi
 fi
 
 declare -a targeted_test_files=()

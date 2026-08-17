@@ -18,6 +18,10 @@ Auto-loads when you edit `test/` files.
 - Group related tests in one contract: `contract FooTransferTest is Test { … }`.
 - Expose internals via a harness in the area's `mocks/` directory (e.g. `exposed_mint` wrapping `_mint`), never by widening production visibility.
 
+## Test mapping registration
+
+Every new `.t.sol` test file MUST be registered in `.harness/policy.json::test_mapping`, or explicitly listed in `.harness/policy.json::testing_gaps` with a reason, before it can be considered part of the test suite. The gate now fails if any `test/**/*.t.sol` is missing from both.
+
 ## Common cheatcodes
 - Impersonate a caller: `vm.prank(alice)` (single) / `vm.startPrank(alice)` … `vm.stopPrank()` (multiple).
 - Fund an address: `vm.deal(alice, 100 ether)`.
@@ -42,6 +46,12 @@ Auto-loads when you edit `test/` files.
 
 ## Inheritance (strict — see AGENTS.md "Test Code Rules")
 Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). (AGENTS.md is always in context — this is a reminder.)
+
+## Mock Fidelity
+
+- Every mock contract that implements a production interface must model every seam the tested path depends on.
+- If a mock intentionally models only part of a production interface, its header NatSpec MUST contain `@dev Partial mock:` followed by a list of modeled and unmodeled seams.
+- Token-surface seams are part of fidelity: `getTokensIn`/`getTokensOut` must match `isValidTokenIn`/`isValidTokenOut`, and `redeem` must not mint new mock SY to satisfy a token-out path.
 
 ## Debugging verbosity
 - `-vvv`: traces for failing tests only (most common for debugging).

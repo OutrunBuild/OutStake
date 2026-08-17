@@ -77,7 +77,12 @@ Do not override policy or gate evidence with natural-language guesses.
 - Many tiny single-use helpers make code harder to follow because readers must jump around.
 - Extract a helper only when it clearly improves readability, naming, reuse, or testability.
 - Inline trivial single-use logic unless extraction clearly improves comprehension.
-- Solidity style and best practices live in `.claude/rules/` (`solidity-contracts.md` for `src/`, `solidity-tests.md` for `test/`, `solidity-scripts.md` for `script/`), mirrored as lazy-loaded project skills for the other tools: `.dsh/skills/` (DeepSeek Harness), `.codex/skills/` (Codex), `.zcode/skills/` (ZCode), `.pi/skills/` (Pi). Claude Code auto-loads `.claude/rules/` by scope when editing `.sol` files (no manual read needed); Pi also auto-loads them when the project-level `.pi/extensions/claude-rules.ts` loader is installed. The skill files are gitignored (local-only, not shipped with the repo), so on machines where they are absent — or for any tool whose skill mechanism is unavailable — you MUST lazy-load the rules yourself: before writing or modifying Solidity, use the Read tool to read only the rule file matching the file type you are about to touch (`src/**` → solidity-contracts.md, `test/**` → solidity-tests.md, `script/**` → solidity-scripts.md). Do NOT preemptively read all three — read only the relevant one at the moment you start editing Solidity, treat its content as mandatory instructions, and do not restate it in replies. Follow them when writing or modifying Solidity code.
+- Solidity style and best practices for each scope are maintained as nested `AGENTS.md` files whose **single source of truth** is the nested file itself: `src/AGENTS.md`, `script/AGENTS.md`, `test/AGENTS.md`. The per-scope `.claude/rules/*.md` files (`solidity-contracts.md` for `src/`, `solidity-tests.md` for `test/`, `solidity-scripts.md` for `script/`) are **generated from** those nested files — after editing a nested `AGENTS.md`, regenerate them by running `bash script/harness/sync-agent-docs.sh`. The local per-tool skill mirrors (`.dsh/skills/`, `.codex/skills/`, `.zcode/skills/`, `.pi/skills/`) have been removed and must **not** be rebuilt.
+
+## Solidity scope rules
+
+- Tools that auto-load when editing (DSH/Claude Code/Pi via `.claude/rules/solidity-*.md`) will load the matching scope rules themselves — no manual step needed.
+- ZCode, and Codex launched from the repository root, do **not** auto-load scope rules. For those tools you MUST follow these instructions: before editing any `.sol` under `src/`, `script/`, or `test/`, first read that directory's `AGENTS.md` (or, equivalently, the generated `.claude/rules/<scope>.md` — see "High-Priority Beginner-Readable Code" for the mapping). Read only the rule file for the scope you are about to edit; treat it as mandatory.
 
 ## Doc-Code Citation Convention
 
@@ -92,6 +97,7 @@ Do not override policy or gate evidence with natural-language guesses.
 - Mock contracts go in the `mocks/` subdirectory of the test area they serve (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). Do not co-locate mock files with test files.
 - Mock contracts reuse interfaces from `src/`. Define test-only interfaces only when src/ interfaces are insufficient.
 - **Exception:** Test contracts may inherit an upgradeable `src/` contract only when it is declared `abstract contract` — either to implement its abstract functions for unit testing, or to expose its internal `pure`/`view` functions. Such harnesses must live in the area's `mocks/` subdirectory.
+- Mock fidelity is part of Test Code Rules: every mock must model every seam the tested path depends on. A mock that intentionally models only part of a production interface MUST declare `@dev Partial mock:` in its header NatSpec and enumerate the modeled and unmodeled seams. Token-surface seams (`getTokensIn`/`getTokensOut` vs `isValidTokenIn`/`isValidTokenOut`) must be mutually consistent; redeem must not mint new mock SY to satisfy a token-out path.
 
 ## Uncommitted Changes
 
