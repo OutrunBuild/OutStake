@@ -3,7 +3,6 @@ pragma solidity ^0.8.35;
 
 import {ArrayLib} from "../../../src/libraries/ArrayLib.sol";
 import {IExchangeRateOracle} from "../../../src/libraries/oracle/interfaces/IExchangeRateOracle.sol";
-import {SYUtils} from "../../../src/libraries/SYUtils.sol";
 import {SYBaseUpgradeable} from "../../../src/yield/SYBaseUpgradeable.sol";
 
 /**
@@ -88,14 +87,11 @@ abstract contract MockOutrunERC20SYUpgradeableBase is SYBaseUpgradeable {
     /// @notice Concrete mock's wrapped-token unwrap call (IMockAUSDC.unwrap / IMockSUSDS.unwrap).
     function _unwrap(address ybt, uint256 amount) internal virtual returns (uint256);
 
-    // The rate falls back to 1e18 when the wired oracle reverts or answers zero, so a broken
-    // oracle wiring surfaces as a flat rate instead of a revert.
-    function exchangeRate() public view override returns (uint256 res) {
-        try IExchangeRateOracle(oracle()).getExchangeRate() returns (uint256 rate) {
-            if (rate != 0) return rate;
-        } catch {}
-
-        return SYUtils.ONE;
+    // Mirrors the production oracle-backed family (OutrunL2OracleBackedSYUpgradeable): exchangeRate()
+    // propagates the oracle's revert instead of swallowing it, so a broken/zero oracle wiring surfaces
+    // as a revert and the deploy-script _validateMockSupportConfig guard can catch it (fail-closed).
+    function exchangeRate() public view override returns (uint256) {
+        return IExchangeRateOracle(oracle()).getExchangeRate();
     }
 
     function _previewDeposit(address, uint256 amountTokenToDeposit) internal pure override returns (uint256) {

@@ -16,12 +16,9 @@ import {
 } from "./mocks/YieldDeployMocks.sol";
 
 contract YieldDeployScriptHarness is YieldDeployScript {
-    function configure(address ueth, address uusd, address ubnb, address owner_, address revenuePool_, address keeper_)
-        external
-    {
+    function configure(address ueth, address uusd, address owner_, address revenuePool_, address keeper_) external {
         UETH = ueth;
         UUSD = uusd;
-        UBNB = ubnb;
         owner = owner_;
         revenuePool = revenuePool_;
         keeper = keeper_;
@@ -52,14 +49,12 @@ contract YieldDeployScriptUpgradeableTest is Test {
     YieldDeployScriptHarness internal script;
     YieldDeployMockUniversalAsset internal ueth;
     YieldDeployMockUniversalAsset internal uusd;
-    YieldDeployMockUniversalAsset internal ubnb;
 
     function setUp() external {
         script = new YieldDeployScriptHarness();
         ueth = new YieldDeployMockUniversalAsset(address(script));
         uusd = new YieldDeployMockUniversalAsset(address(script));
-        ubnb = new YieldDeployMockUniversalAsset(address(script));
-        script.configure(address(ueth), address(uusd), address(ubnb), owner, revenuePool, keeper);
+        script.configure(address(ueth), address(uusd), owner, revenuePool, keeper);
 
         // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("ETHEREUM_SEPOLIA_CHAINID", vm.toString(ETHEREUM_SEPOLIA_CHAINID));
@@ -131,6 +126,50 @@ contract YieldDeployScriptUpgradeableTest is Test {
         _assertAUSDCSY(sy, address(usdc), address(aUSDC), address(pool));
         _assertPosition(sp, sy, address(uusd));
         assertEq(uusd.mintingCaps(sp), 1_000_000_000 ether);
+    }
+
+    function testSupportAUSDCUsesEnvUUSDWhenUUSDStateIsZero() external {
+        vm.chainId(BASE_SEPOLIA_CHAINID);
+        script.configure(address(0), address(0), owner, revenuePool, keeper);
+        YieldDeployMockUniversalAsset envUUSD = new YieldDeployMockUniversalAsset(address(script));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("UUSD", vm.toString(address(envUUSD)));
+        (YieldDeployMockToken usdc, YieldDeployMockAToken aUSDC, YieldDeployMockAavePool pool) = _setBaseAUSDCEnv();
+
+        script.exposedSupportAUSDC();
+
+        address sp = envUUSD.lastMinter();
+        address sy = OutrunStakingPositionUpgradeable(sp).SY();
+        _assertAUSDCSY(sy, address(usdc), address(aUSDC), address(pool));
+        _assertPosition(sp, sy, address(envUUSD));
+        assertEq(envUUSD.mintingCaps(sp), 1_000_000_000 ether);
+    }
+
+    function testSupportWstETHOnSepoliaUsesEnvUETHWhenUETHStateIsZero() external {
+        vm.chainId(ETHEREUM_SEPOLIA_CHAINID);
+        script.configure(address(0), address(0), owner, revenuePool, keeper);
+        YieldDeployMockUniversalAsset envUETH = new YieldDeployMockUniversalAsset(address(script));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("UETH", vm.toString(address(envUETH)));
+        YieldDeployMockToken stETH = new YieldDeployMockToken("stETH", "stETH", 18);
+        YieldDeployMockToken wstETH = new YieldDeployMockToken("wstETH", "wstETH", 18);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("SEPOLIA_STETH", vm.toString(address(stETH)));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("SEPOLIA_WSTETH", vm.toString(address(wstETH)));
+
+        script.exposedSupportWstETHOnSepolia();
+
+        address sp = envUETH.lastMinter();
+        address sy = OutrunStakingPositionUpgradeable(sp).SY();
+        OutrunWstETHSYUpgradeable wstETHSY = OutrunWstETHSYUpgradeable(payable(sy));
+        assertEq(wstETHSY.owner(), owner);
+        assertEq(wstETHSY.name(), "SY Lido wstETH");
+        assertEq(wstETHSY.symbol(), "SY wstETH");
+        assertEq(wstETHSY.stETH(), address(stETH));
+        assertEq(wstETHSY.yieldBearingToken(), address(wstETH));
+        _assertPosition(sp, sy, address(envUETH));
+        assertEq(envUETH.mintingCaps(sp), 1_000_000_000 ether);
     }
 
     function testSupportAUSDCOnUnsupportedChainNoOps() external {
@@ -239,14 +278,12 @@ contract YieldDeployScriptUpgradeableTest is Test {
         uint64 scriptNonce;
         AssetNoOpState ueth;
         AssetNoOpState uusd;
-        AssetNoOpState ubnb;
     }
 
     function _snapshotNoOpState() internal view returns (NoOpState memory state) {
         state.scriptNonce = vm.getNonce(address(script));
         state.ueth = _snapshotAssetNoOpState(ueth);
         state.uusd = _snapshotAssetNoOpState(uusd);
-        state.ubnb = _snapshotAssetNoOpState(ubnb);
     }
 
     function _snapshotAssetNoOpState(YieldDeployMockUniversalAsset asset)
@@ -263,7 +300,6 @@ contract YieldDeployScriptUpgradeableTest is Test {
         assertEq(vm.getNonce(address(script)), beforeState.scriptNonce);
         _assertAssetNoOpStateUnchanged(ueth, beforeState.ueth);
         _assertAssetNoOpStateUnchanged(uusd, beforeState.uusd);
-        _assertAssetNoOpStateUnchanged(ubnb, beforeState.ubnb);
     }
 
     function _assertAssetNoOpStateUnchanged(YieldDeployMockUniversalAsset asset, AssetNoOpState memory beforeState)

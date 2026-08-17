@@ -8,11 +8,13 @@ import {IOAppCore} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOApp
 import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
 import {OutrunDeployer} from "../../script/deploy/deployment/OutrunDeployer.sol";
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
+import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {OutrunOFTUpgradeable} from "../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
 import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
 import {MockLzEndpoint} from "../upgradeable/mocks/OFTMocks.sol";
 import {EmptyMockLauncher} from "../upgradeable/mocks/EmptyMockLauncher.sol";
+import {DeterministicCreate2FactoryMock} from "./mocks/DeterministicCreate2FactoryMock.sol";
 
 contract OutstakeDeploymentScriptHarness is OutstakeScript {
     uint256 internal rawLimit = 1_000_000 ether;
@@ -66,6 +68,18 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
         _assertOutrunDeployer(nonce);
     }
 
+    function exposedDeployOutrunDeployer(uint256 nonce) external returns (address) {
+        return _deployOutrunDeployer(nonce);
+    }
+
+    function exposedOutrunDeployerRecipe(uint256 nonce) external view returns (bytes32 salt, bytes memory initcode) {
+        return _outrunDeployerRecipe(nonce);
+    }
+
+    function exposedCanonicalCreate2Factory() external pure returns (address) {
+        return CANONICAL_CREATE2_FACTORY;
+    }
+
     function _rawOutboundRateLimitConfig(string memory, string memory)
         internal
         view
@@ -79,6 +93,13 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
 contract OutstakeScriptUpgradeableTest is Test {
     uint32 internal constant LOCAL_CHAIN_ID = 97;
     uint32 internal constant LOCAL_EID = 40_102;
+
+    // First-principles address of the canonical deterministic-deployment proxy (Arachnid): it was
+    // deployed by key 0x3fab...5362 as that account's nonce-0 transaction, so its address is
+    // keccak256(RLP([deployer, nonce]))[12:]. RLP bytes: 0xd6 = list of 22 payload bytes, 0x94 =
+    // 20-byte address, 0x80 = integer 0 encoded as an empty string.
+    address internal constant DERIVED_CANONICAL_CREATE2_FACTORY =
+        address(uint160(uint256(keccak256(hex"d6943fab184622dc19b6109349b94811493bf2a4536280"))));
 
     address internal owner;
 
@@ -173,6 +194,19 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.exposedDeployUETH(1);
     }
 
+    function testDeployUAssetRevertsWhenLocalChainNotInOmnichainSet() external {
+        // Monad Testnet (10143) is fully configured in _chainsInit but excluded from
+        // _sharedOmnichainIds: validation must fail closed before any peer/rate-limit config.
+        uint32 nonMemberChainId = 10143;
+        vm.chainId(nonMemberChainId);
+        script.setEndpoint(nonMemberChainId, address(endpoint));
+        script.setEndpointId(nonMemberChainId, LOCAL_EID);
+        _configureEndpointIds();
+
+        vm.expectRevert(OutstakeScript.InvalidOmnichainId.selector);
+        script.exposedDeployUETH(1);
+    }
+
     function testDeployOutrunRouterRevertsWhenLauncherIsZero() external {
         script.setRouterConfig(address(0), address(0));
 
@@ -212,7 +246,7 @@ contract OutstakeScriptUpgradeableTest is Test {
         OutrunRouter router = new OutrunRouter(owner, address(new EmptyMockLauncher()));
         script.setRouterConfig(address(router), address(0x1234));
 
-        vm.expectRevert(abi.encodeWithSelector(OutrunRouter.InvalidMemeverseLauncher.selector, address(0x1234)));
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.InvalidMemeverseLauncher.selector, address(0x1234)));
         script.exposedUpdateRouterLauncher();
     }
 
@@ -229,11 +263,44 @@ contract OutstakeScriptUpgradeableTest is Test {
     function testAssertOutrunDeployerPassesWhenOutrunDeployerMatchesExpectedAddress() external {
         uint256 nonce = 1;
 
-        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
-        bytes memory initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
-        script.configure(owner, owner, Create2.computeAddress(salt, keccak256(initcode), address(script)));
+        script.configure(owner, owner, _expectedOutrunDeployerAddress(nonce));
 
         script.exposedAssertOutrunDeployer(nonce);
+    }
+
+    function testDeployOutrunDeployerMatchesAssertOutrunDeployer() external {
+        uint256 nonce = 1;
+
+        // Etch the factory stand-in at the canonical address: CREATE2 results depend on the
+        // factory's address, not its code identity, so the deployed address matches production.
+        vm.etch(script.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
+
+        address deployed = script.exposedDeployOutrunDeployer(nonce);
+
+        assertEq(deployed, _expectedOutrunDeployerAddress(nonce));
+        assertEq(OutrunDeployer(deployed).owner(), owner);
+
+        script.configure(owner, owner, deployed);
+        script.exposedAssertOutrunDeployer(nonce);
+    }
+
+    function testCanonicalCreate2FactoryMatchesFirstPrinciplesAddress() external view {
+        // Pins the factory constant independently of the script: without this, a typo'd
+        // CANONICAL_CREATE2_FACTORY would pass every etch/expected-creator check above because
+        // both read the same script constant (circular evidence). Derived = first principles,
+        // literal = the externally known canonical address; all three must agree.
+        assertEq(DERIVED_CANONICAL_CREATE2_FACTORY, 0x4e59b44847b379578588920cA78FbF26c0B4956C);
+        assertEq(script.exposedCanonicalCreate2Factory(), DERIVED_CANONICAL_CREATE2_FACTORY);
+    }
+
+    function testDeployOutrunDeployerRevertsWhenFactoryIsAbsent() external {
+        // Model a chain where the canonical factory was never deployed. Foundry predeploys its own
+        // create2 helper at this address, so clear that code first to reach the codeless state.
+        vm.etch(script.exposedCanonicalCreate2Factory(), "");
+        // The raw call to a codeless address succeeds with empty returndata, so only the 20-byte
+        // return-length check can fail closed.
+        vm.expectRevert(OutstakeScript.FactoryDeployFailed.selector);
+        script.exposedDeployOutrunDeployer(1);
     }
 
     function testAssertOutrunDeployerRevertsWhenOutrunDeployerDoesNotMatchExpectedAddress() external {
@@ -293,6 +360,17 @@ contract OutstakeScriptUpgradeableTest is Test {
             assertEq(rl.limit, 1_000_000 ether);
             assertEq(rl.window, 1 hours);
         }
+    }
+
+    /// @dev Single expected-address definition shared by the assert-path and deploy-path tests:
+    /// CREATE2(factory, salt, keccak256(initcode)). Salt/initcode are re-derived from literals as
+    /// an independent oracle — any drift in the script's recipe must fail these tests. Only the
+    /// factory constant still comes from the script (`exposedCanonicalCreate2Factory`), and it is
+    /// independently pinned by testCanonicalCreate2FactoryMatchesFirstPrinciplesAddress.
+    function _expectedOutrunDeployerAddress(uint256 nonce) internal view returns (address) {
+        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
+        bytes memory initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
+        return Create2.computeAddress(salt, keccak256(initcode), script.exposedCanonicalCreate2Factory());
     }
 
     function _configureEndpoints() internal {
