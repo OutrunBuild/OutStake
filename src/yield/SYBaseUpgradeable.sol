@@ -4,7 +4,7 @@ pragma solidity ^0.8.35;
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
-import {NativeAmountMismatch, TokenHelper} from "../libraries/TokenHelper.sol";
+import {TokenHelper} from "../libraries/TokenHelper.sol";
 import {IStandardizedYield} from "./interfaces/IStandardizedYield.sol";
 import {OutrunERC20PausableUpgradeable} from "../assets/base/OutrunERC20PausableUpgradeable.sol";
 
@@ -103,7 +103,6 @@ abstract contract SYBaseUpgradeable is
     {
         require(isValidTokenIn(tokenIn), SYInvalidTokenIn(tokenIn));
         require(amountTokenToDeposit != 0, SYZeroDeposit());
-        if (tokenIn != NATIVE && msg.value != 0) revert NativeAmountMismatch();
 
         // Pulls input token from caller, converts to SY shares via the adapter's _deposit, then mints shares to receiver.
         _transferIn(tokenIn, msg.sender, amountTokenToDeposit);

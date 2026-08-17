@@ -55,9 +55,13 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param to Address to receive the tokens.
     /// @param amount Amount of token to transfer.
     /// @dev Skips zero amounts; native transfers revert with `NativeTransferFailed` when the call fails.
+    // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
+    // slither-disable-next-line dead-code
     function _transferOut(address token, address to, uint256 amount) internal {
         if (amount == 0) return;
         if (token == NATIVE) {
+            // Native transfers require a low-level call for contract recipients; production callers guard reentrancy.
+            // slither-disable-next-line low-level-calls
             (bool success,) = to.call{value: amount}("");
             if (!success) revert NativeTransferFailed();
         } else {
@@ -69,6 +73,8 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param token Address of the token to query (NATIVE sentinel for ETH/BNB).
     /// @return The token balance held by this contract.
     /// @dev Returns this contract's native balance for the sentinel, otherwise the ERC20 balance.
+    // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
+    // slither-disable-next-line dead-code
     function _selfBalance(address token) internal view returns (uint256) {
         return (token == NATIVE) ? address(this).balance : IERC20(token).balanceOf(address(this));
     }
@@ -89,6 +95,8 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param token Address of the ERC20 token.
     /// @param to Address to approve as spender.
     /// @dev Keeps ERC20 allowance at max once it falls below `LOWER_BOUND_APPROVAL`; native sentinel is ignored.
+    // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
+    // slither-disable-next-line dead-code
     function _safeApproveInf(address token, address to) internal {
         if (token == NATIVE) return;
         if (IERC20(token).allowance(address(this), to) < LOWER_BOUND_APPROVAL) {

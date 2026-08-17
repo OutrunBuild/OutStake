@@ -9,7 +9,9 @@ import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.
 /**
  * @title RouterMockSY
  * @notice Mock Standardized Yield token used in router tests.
- * @dev Supports deposit/redeem with a configurable exchange rate and tracks zero-approve calls.
+ * @dev Partial mock: models deposit pull/minSharesOut and redeem burn/transfer/minTokenOut for
+ *      consumer-level router tests. Does not model exchange-rate-based redeem conversion or a
+ *      production token surface; token surfaces are aligned to the underlying token only.
  */
 contract RouterMockSY is ERC20, IStandardizedYield {
     error RouterDepositTransferFailed();
@@ -17,6 +19,7 @@ contract RouterMockSY is ERC20, IStandardizedYield {
 
     address internal immutable underlying;
     uint256 internal rate;
+    uint256 internal depositRate;
     address internal lastDepositTokenIn;
     uint256 internal lastDepositAmount;
     uint256 internal lastDepositValue;
@@ -25,10 +28,17 @@ contract RouterMockSY is ERC20, IStandardizedYield {
     constructor(address underlying_) ERC20("Mock SY", "mSY") {
         underlying = underlying_;
         rate = 1e18;
+        depositRate = 1e18;
     }
 
     function setExchangeRate(uint256 newRate) external {
         rate = newRate;
+    }
+
+    /// @notice Sets the token-to-SY conversion used by deposit and previewDeposit.
+    /// @dev Kept separate from exchangeRate, which models the SY-to-uAsset conversion in the position mock.
+    function setDepositRate(uint256 newRate) external {
+        depositRate = newRate;
     }
 
     function mintShares(address receiver, uint256 amount) external {
@@ -55,7 +65,7 @@ contract RouterMockSY is ERC20, IStandardizedYield {
                 revert RouterDepositTransferFailed();
             }
         }
-        amountSharesOut = amountTokenToDeposit;
+        amountSharesOut = _convertDepositAmount(tokenIn, amountTokenToDeposit);
         if (amountSharesOut < minSharesOut) revert RouterInsufficientSharesOut(amountSharesOut, minSharesOut);
         _mint(receiver, amountSharesOut);
     }
@@ -64,9 +74,14 @@ contract RouterMockSY is ERC20, IStandardizedYield {
         address receiver,
         uint256 amountSharesToRedeem,
         address tokenOut,
-        uint256,
+        uint256 minTokenOut,
         bool burnFromInternalBalance
     ) external returns (uint256 amountTokenOut) {
+        if (tokenOut != underlying) {
+            revert IStandardizedYield.SYInvalidTokenOut(tokenOut);
+        }
+        if (amountSharesToRedeem == 0) revert IStandardizedYield.SYZeroRedeem();
+
         if (burnFromInternalBalance) {
             _burn(address(this), amountSharesToRedeem);
         } else {
@@ -74,10 +89,9 @@ contract RouterMockSY is ERC20, IStandardizedYield {
         }
 
         amountTokenOut = amountSharesToRedeem;
-        if (tokenOut == address(this)) {
-            _mint(receiver, amountTokenOut);
-        } else {
-            RouterMockERC20(tokenOut).mint(receiver, amountTokenOut);
+        RouterMockERC20(tokenOut).transfer(receiver, amountTokenOut);
+        if (amountTokenOut < minTokenOut) {
+            revert IStandardizedYield.SYInsufficientTokenOut(amountTokenOut, minTokenOut);
         }
     }
 
@@ -96,23 +110,37 @@ contract RouterMockSY is ERC20, IStandardizedYield {
 
     function getTokensOut() external view returns (address[] memory res) {
         res = new address[](1);
-        res[0] = address(this);
+        res[0] = underlying;
     }
 
     function isValidTokenIn(address token) external view returns (bool) {
-        return token == underlying || token == address(this);
+        return token == underlying;
     }
 
     function isValidTokenOut(address token) external view returns (bool) {
-        return token == address(this) || token == underlying;
+        return token == underlying;
     }
 
-    function previewDeposit(address, uint256 amountTokenToDeposit) external pure returns (uint256 amountSharesOut) {
-        amountSharesOut = amountTokenToDeposit;
+    function previewDeposit(address tokenIn, uint256 amountTokenToDeposit)
+        external
+        view
+        returns (uint256 amountSharesOut)
+    {
+        amountSharesOut = _convertDepositAmount(tokenIn, amountTokenToDeposit);
     }
 
     function previewRedeem(address, uint256 amountSharesToRedeem) external pure returns (uint256 amountTokenOut) {
         amountTokenOut = amountSharesToRedeem;
+    }
+
+    function _convertDepositAmount(address tokenIn, uint256 amountTokenToDeposit)
+        internal
+        view
+        returns (uint256 amountSharesOut)
+    {
+        if (tokenIn == address(this)) return amountTokenToDeposit;
+        if (depositRate == 1e18) return amountTokenToDeposit;
+        amountSharesOut = amountTokenToDeposit * depositRate / 1e18;
     }
 
     function lastDeposit() external view returns (address tokenIn, uint256 amount, uint256 value) {

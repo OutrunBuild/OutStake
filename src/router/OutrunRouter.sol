@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// OutrunTODO Delete the Ownable when the mainnet goes live
+// OutrunTODO (pre-mainnet): when mainnet goes live, remove the temporary owner/admin surface.
+// The cleanup list is the full owner/setter surface, not just this import:
+// 1. this Ownable import
+// 2. Ownable inheritance on the contract
+// 3. constructor `_owner` parameter and `Ownable(_owner)` initializer
+// 4. `onlyOwner` modifier on setMemeverseLauncher
+// 5. `setMemeverseLauncher` implementation
+// 6. `IOutrunRouter::setMemeverseLauncher` interface declaration
+// 7. `setTrustedSY` and `trustedSY` registry storage/getter
+// 8. `setTrustedSP` and `trustedSYForSP` registry storage/getter
+// 9. `TrustedSYUpdated` and `TrustedSPUpdated` configuration events
+// 10. `IOutrunRouter` registry declarations
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {IOutrunRouter} from "./interfaces/IOutrunRouter.sol";
 import {IMemeverseLauncher} from "./interfaces/IMemeverseLauncher.sol";
 import {IStandardizedYield} from "../yield/interfaces/IStandardizedYield.sol";
-import {IERC20, NativeAmountMismatch, TokenHelper} from "../libraries/TokenHelper.sol";
+import {IERC20, TokenHelper} from "../libraries/TokenHelper.sol";
 import {IOutrunStakeManager} from "../position/interfaces/IOutrunStakeManager.sol";
 
 /**
@@ -18,15 +29,45 @@ import {IOutrunStakeManager} from "../position/interfaces/IOutrunStakeManager.so
  * SY = Standardized Yield (wrapper token that normalizes yield-bearing assets).
  * SP = Stake Position manager (creates and tracks staking positions).
  * uAsset = universal asset (receipt token minted when staking or wrap-staking).
+ * Memeverse = the external launch platform used by genesis.
+ * A verse is a launcher-managed launch target identified by a launcher-defined `verseId`.
+ * `verseId` is opaque to this router: the launcher interprets it, while the router forwards it unchanged and does not validate it.
  */
 contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
-    error InvalidMemeverseLauncher(address launcher);
+    // These targets are configured during deployment; the owner setters are temporary pre-mainnet wiring.
+    mapping(address => bool) public trustedSY;
+    mapping(address => address) public trustedSYForSP;
 
     // Memeverse is the launch platform; this address is called during genesis flows.
     address public memeverseLauncher;
 
     constructor(address _owner, address _memeverseLauncher) Ownable(_owner) {
         _setMemeverseLauncher(_memeverseLauncher);
+    }
+
+    /**
+     * @notice Registers or revokes a standardized-yield target for router entrypoints.
+     * @dev A registered SY must be a deployed contract. Revocation is allowed with `trusted = false`.
+     */
+    function setTrustedSY(address SY, bool trusted) external onlyOwner {
+        if (trusted && (SY == NATIVE || SY.code.length == 0)) revert UntrustedRouterTarget(SY);
+        trustedSY[SY] = trusted;
+        emit TrustedSYUpdated(SY, trusted);
+    }
+
+    /**
+     * @notice Registers or revokes an SP and its canonical SY pair.
+     * @dev A nonzero SY must already be trusted and must equal `SP.SY()`.
+     */
+    function setTrustedSP(address SP, address SY) external onlyOwner {
+        if (SP == address(0)) revert UntrustedRouterTarget(SP);
+        if (SY != address(0)) {
+            if (SP.code.length == 0 || !trustedSY[SY] || SY.code.length == 0) revert UntrustedRouterTarget(SY);
+            address actualSY = IOutrunStakeManager(SP).SY();
+            if (actualSY != SY) revert RouterTargetMismatch(SP, SY, actualSY);
+        }
+        trustedSYForSP[SP] = SY;
+        emit TrustedSPUpdated(SP, SY);
     }
 
     /**
@@ -61,6 +102,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         external
         returns (uint256 amountInTokenOut)
     {
+        _requireTrustedSY(SY);
         // transferFrom moves caller's SY into the SY contract, then burnFromInternalBalance=true burns from SY's own balance.
         _transferFrom(IERC20(SY), msg.sender, SY, amountInSY);
         amountInTokenOut = IStandardizedYield(SY).redeem(receiver, amountInSY, tokenOut, minTokenOut, true);
@@ -81,8 +123,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         internal
         returns (uint256 amountInSYOut)
     {
-        // NATIVE is the sentinel address(0), meaning native token (ETH/BNB) rather than an ERC20.
-        if (tokenIn != NATIVE && msg.value != 0) revert NativeAmountMismatch();
+        _requireTrustedSY(SY);
 
         _transferIn(tokenIn, msg.sender, amountInput);
 
@@ -94,10 +135,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Quotes the uAsset amount minted when staking from an input token.
      * @dev Derives canonical SY from `SP.SY()`, then uses the SY deposit preview and stake-manager preview.
+     * `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param tokenIn Token to deposit into SY.
      * @param tokenAmount Amount of `tokenIn` to convert.
-     * @param stakeParam Stake settings carried into the preview.
+     * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
      * @return UAssetMintable Estimated uAsset minted by the stake flow.
      */
     function previewStakeFromToken(address SP, address tokenIn, uint256 tokenAmount, StakeParam calldata stakeParam)
@@ -105,7 +147,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         view
         returns (uint256 UAssetMintable)
     {
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
         // No-op: references stakeParam to silence the unused-function-parameter compiler warning; the quote does not depend on lockupDays, and the parameter is kept for ABI consistency.
@@ -115,9 +157,10 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Quotes the uAsset amount minted when staking existing SY.
      * @dev Reads the stake-manager preview for an SY-funded stake without changing state.
+     * `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param amountInSY Amount of SY to stake.
-     * @param stakeParam Stake settings carried into the preview.
+     * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
      * @return UAssetMintable Estimated uAsset minted by the stake flow.
      */
     function previewStakeFromSY(address SP, uint256 amountInSY, StakeParam calldata stakeParam)
@@ -125,6 +168,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         view
         returns (uint256 UAssetMintable)
     {
+        _trustedSYForSP(SP);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
         // No-op: references stakeParam to silence the unused-function-parameter compiler warning; the quote does not depend on lockupDays, and the parameter is kept for ABI consistency.
         stakeParam.lockupDays;
@@ -143,7 +187,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         view
         returns (uint256 UAssetMintable)
     {
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
         UAssetMintable = IOutrunStakeManager(SP).previewWrapStake(amountInSY);
     }
@@ -163,7 +207,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         payable
         returns (uint256 positionId, uint256 mintedUAsset)
     {
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, stakeParam.minSyOut);
         // receiver defaults to owner when not specified (address(0))
         address uAssetReceiver = stakeParam.receiver == address(0) ? stakeParam.owner : stakeParam.receiver;
@@ -185,7 +229,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         public
         returns (uint256 positionId, uint256 mintedUAsset)
     {
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
         // receiver defaults to owner when not specified (address(0))
         address uAssetReceiver = stakeParam.receiver == address(0) ? stakeParam.owner : stakeParam.receiver;
@@ -215,7 +259,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 minUAssetMinted
     ) public payable returns (uint256 mintedUAsset) {
         // Wrap stake enters the shared pool — no individual position id is created, no lockup applies.
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut);
         mintedUAsset = _wrapStakeFromSYBalance(SY, SP, amountInSY, uAssetReceiver, minUAssetMinted);
     }
@@ -234,7 +278,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         returns (uint256 mintedUAsset)
     {
         // Wrap stake enters the shared pool — no individual position id is created, no lockup applies.
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
         mintedUAsset = _wrapStakeFromSYBalance(SY, SP, amountInSY, uAssetReceiver, minUAssetMinted);
     }
@@ -286,6 +330,18 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         _assertMinUAssetMinted(mintedUAsset, minUAssetMinted);
     }
 
+    function _requireTrustedSY(address SY) internal view {
+        if (!trustedSY[SY] || SY.code.length == 0) revert UntrustedRouterTarget(SY);
+    }
+
+    function _trustedSYForSP(address SP) internal view returns (address SY) {
+        SY = trustedSYForSP[SP];
+        if (SY == address(0) || SP.code.length == 0) revert UntrustedRouterTarget(SP);
+        if (!trustedSY[SY] || SY.code.length == 0) revert UntrustedRouterTarget(SY);
+        address actualSY = IOutrunStakeManager(SP).SY();
+        if (actualSY != SY) revert RouterTargetMismatch(SP, SY, actualSY);
+    }
+
     /**
      * @notice Shared genesis tail: stakes SY, enforces the minted uAsset floor and uint128 bound, then approves
      *      and forwards the minted uAsset into the memeverse launcher.
@@ -294,7 +350,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake for genesis.
      * @param lockupDays Lockup duration forwarded to the stake manager.
-     * @param verseId Memeverse verse identifier to launch against.
+     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
      * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
      */
@@ -308,16 +364,18 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 minUAssetMinted
     ) internal {
         address uAsset = IOutrunStakeManager(SP).uAsset();
+        address launcher = memeverseLauncher;
+        // The entry point completes step (1): token entry points mint SY, while the SY entry point pulls SY into the router.
         // (2) Stake SY to create a locked position for genesisUser.
         (, uint256 mintedUAsset) = _stakeFromSYBalance(SY, SP, amountInSY, lockupDays, genesisUser, address(this));
         _assertMinUAssetMinted(mintedUAsset, minUAssetMinted);
         if (mintedUAsset > type(uint128).max) revert InvalidParam();
         // (3) Approve uAsset to the launcher.
-        _approveExact(uAsset, memeverseLauncher, mintedUAsset);
+        _approveExact(uAsset, launcher, mintedUAsset);
         // (4) Call launcher genesis with the staked uAsset.
         // mintedUAsset is bounded by type(uint128).max immediately before this cast.
         // forge-lint: disable-next-line(unsafe-typecast)
-        IMemeverseLauncher(memeverseLauncher).genesis(verseId, uint128(mintedUAsset), genesisUser);
+        IMemeverseLauncher(launcher).genesis(verseId, uint128(mintedUAsset), genesisUser);
     }
 
     /**
@@ -350,8 +408,10 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param _memeverseLauncher New launcher contract address (must be a deployed contract).
      */
     function _setMemeverseLauncher(address _memeverseLauncher) internal {
+        address oldLauncher = memeverseLauncher;
         if (_memeverseLauncher.code.length == 0) revert InvalidMemeverseLauncher(_memeverseLauncher);
         memeverseLauncher = _memeverseLauncher;
+        emit SetMemeverseLauncher(oldLauncher, _memeverseLauncher);
     }
 
     /**
@@ -362,22 +422,22 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param tokenIn Token to deposit into SY before staking.
      * @param tokenAmount Amount of `tokenIn` to convert and stake.
      * @param minSyOut Minimum acceptable SY output from the deposit step.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
      * @param lockupDays Lockup duration forwarded to the stake manager.
-     * @param verseId Memeverse verse identifier to launch against.
+     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
      */
     function genesisByToken(
         address SP,
         address tokenIn,
         uint256 tokenAmount,
         uint256 minSyOut,
-        uint256 minUAssetMinted,
         uint128 lockupDays,
         uint256 verseId,
-        address genesisUser
+        address genesisUser,
+        uint256 minUAssetMinted
     ) external payable {
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         // (1) Mint SY from the input token.
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut);
         _genesisFromSYBalance(SY, SP, amountInSY, lockupDays, verseId, genesisUser, minUAssetMinted);
@@ -386,22 +446,24 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Creates a genesis position starting from existing SY.
      * @dev Derives canonical SY from `SP.SY()`, stakes it for `genesisUser`, then launches genesis.
+     * `amountInSY` is uint256 (no input-side cap); the uint128 bound applies to the minted uAsset forwarded to the
+     * launcher and is enforced in `_genesisFromSYBalance` (revert InvalidParam).
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake for genesis.
      * @param lockupDays Lockup duration forwarded to the stake manager.
-     * @param verseId Memeverse verse identifier to launch against.
+     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
      * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
      */
     function genesisBySY(
         address SP,
-        uint128 amountInSY,
+        uint256 amountInSY,
         uint128 lockupDays,
         uint256 verseId,
         address genesisUser,
         uint256 minUAssetMinted
     ) external {
-        address SY = IOutrunStakeManager(SP).SY();
+        address SY = _trustedSYForSP(SP);
         // (1) Pull caller's SY into the router.
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
         _genesisFromSYBalance(SY, SP, amountInSY, lockupDays, verseId, genesisUser, minUAssetMinted);
@@ -409,7 +471,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
     /**
      * @notice Updates the memeverse launcher address.
-     * @dev Owner-only maintenance hook for the pre-mainnet launcher wiring. OutrunTODO: delete when mainnet goes live.
+     * @dev Owner-only maintenance hook for the pre-mainnet launcher wiring.
+     * OutrunTODO: delete this function when mainnet goes live as part of the owner/setter cleanup list documented above.
      * @param _memeverseLauncher New launcher contract address.
      */
     function setMemeverseLauncher(address _memeverseLauncher) external onlyOwner {

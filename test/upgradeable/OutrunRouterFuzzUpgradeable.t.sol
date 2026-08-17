@@ -50,6 +50,11 @@ contract OutrunRouterFuzzTest is Test {
         );
         router = new OutrunRouter(owner, address(launcher));
 
+        vm.prank(owner);
+        router.setTrustedSY(address(sy), true);
+        vm.prank(owner);
+        router.setTrustedSP(address(position), address(sy));
+
         uAsset.setMintingCap(address(position), type(uint256).max);
 
         // Fund user with tokens
@@ -402,6 +407,9 @@ contract OutrunRouterFuzzTest is Test {
             lockupDays: 30, minSyOut: 0, minUAssetMinted: 0, owner: user, receiver: address(0)
         });
 
+        sy.setDepositRate(2e18);
+        assertEq(sy.previewDeposit(address(underlying), amount), amount * 2, "deposit preview should be non-identity");
+
         uint256 preview = router.previewStakeFromToken(address(position), address(underlying), amount, stakeParam);
 
         vm.prank(user);
@@ -429,6 +437,9 @@ contract OutrunRouterFuzzTest is Test {
     /// forge-config: default.fuzz.runs = 256
     function testFuzz_PreviewWrapStakeMatchesActual(uint256 amount) public {
         amount = bound(amount, 1, 1000e18);
+
+        sy.setDepositRate(2e18);
+        assertEq(sy.previewDeposit(address(underlying), amount), amount * 2, "deposit preview should be non-identity");
 
         uint256 preview = router.previewWrapStakeFromToken(address(position), address(underlying), amount);
 
@@ -462,7 +473,7 @@ contract OutrunRouterFuzzTest is Test {
         uint256 userBalanceBefore = underlying.balanceOf(user);
 
         vm.prank(user);
-        router.genesisByToken{value: 0}(address(position), address(underlying), amount, 0, 0, lockupDays, verseId, user);
+        router.genesisByToken{value: 0}(address(position), address(underlying), amount, 0, lockupDays, verseId, user, 0);
 
         // Verify position created
         (address positionOwner, uint256 syStaked, uint256 uAssetMinted, uint128 deadline) = position.positions(1);
@@ -537,7 +548,7 @@ contract OutrunRouterFuzzTest is Test {
         vm.deal(user, amount);
 
         vm.prank(user);
-        router.genesisByToken{value: amount}(address(position), address(0), amount, 0, 0, lockupDays, verseId, user);
+        router.genesisByToken{value: amount}(address(position), address(0), amount, 0, lockupDays, verseId, user, 0);
 
         // Verify genesis called correctly
         (uint256 launcherVerseId, uint128 launcherUAsset, address launcherUser) = launcher.snapshot();
@@ -558,7 +569,7 @@ contract OutrunRouterFuzzTest is Test {
         underlying.approve(address(router), type(uint256).max);
 
         vm.prank(user);
-        router.genesisByToken{value: 0}(address(position), address(underlying), uint256(amount), 0, 0, 30, 1, user);
+        router.genesisByToken{value: 0}(address(position), address(underlying), uint256(amount), 0, 30, 1, user, 0);
 
         // Verify genesis called correctly
         (, uint128 launcherUAsset,) = launcher.snapshot();

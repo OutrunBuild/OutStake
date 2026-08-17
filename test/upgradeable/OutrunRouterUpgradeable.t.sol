@@ -5,25 +5,15 @@ import {Test} from "forge-std/Test.sol";
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
+import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
+import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset, RouterMockLauncher} from "./mocks/RouterMocks.sol";
 
-interface IOutrunRouterPrefundless {
-    function mintSYFromToken(address SY, address tokenIn, address receiver, uint256 amountInput, uint256 minSyOut)
-        external
-        payable
-        returns (uint256 amountInSYOut);
-
-    function redeemSyToToken(address SY, address receiver, address tokenOut, uint256 amountInSY, uint256 minTokenOut)
-        external
-        returns (uint256 amountInTokenOut);
-}
-
 contract OutrunRouterTest is Test {
-    bytes4 internal constant NATIVE_AMOUNT_MISMATCH_SELECTOR = bytes4(keccak256("NativeAmountMismatch()"));
-    bytes4 internal constant INVALID_MEMEVERSE_LAUNCHER_SELECTOR =
-        bytes4(keccak256("InvalidMemeverseLauncher(address)"));
+    bytes4 internal constant NATIVE_AMOUNT_MISMATCH_SELECTOR = IOutrunRouter.NativeAmountMismatch.selector;
+    bytes4 internal constant INVALID_MEMEVERSE_LAUNCHER_SELECTOR = IOutrunRouter.InvalidMemeverseLauncher.selector;
     RouterMockERC20 internal underlying;
     RouterMockSY internal sy;
     RouterMockUAsset internal uAsset;
@@ -51,6 +41,11 @@ contract OutrunRouterTest is Test {
             )
         );
         router = new OutrunRouter(owner, address(launcher));
+
+        vm.prank(owner);
+        router.setTrustedSY(address(sy), true);
+        vm.prank(owner);
+        router.setTrustedSP(address(position), address(sy));
 
         uAsset.setMintingCap(address(position), type(uint256).max);
 
@@ -99,6 +94,9 @@ contract OutrunRouterTest is Test {
     function testSetMemeverseLauncherAcceptsContract() external {
         RouterMockLauncher newLauncher = new RouterMockLauncher(address(uAsset));
 
+        vm.expectEmit(true, true, false, true);
+        emit IOutrunRouter.SetMemeverseLauncher(address(launcher), address(newLauncher));
+
         vm.prank(owner);
         router.setMemeverseLauncher(address(newLauncher));
 
@@ -111,8 +109,8 @@ contract OutrunRouterTest is Test {
         underlying.mint(address(router), 50e18);
 
         vm.prank(owner);
-        uint256 syOut = IOutrunRouterPrefundless(address(router))
-            .mintSYFromToken(address(sy), address(underlying), receiver, 100e18, 0);
+        uint256 syOut =
+            IOutrunRouter(address(router)).mintSYFromToken(address(sy), address(underlying), receiver, 100e18, 0);
 
         assertEq(syOut, 100e18);
         assertEq(underlying.balanceOf(owner), 900e18);
@@ -126,9 +124,7 @@ contract OutrunRouterTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
-        IOutrunRouterPrefundless(address(router)).mintSYFromToken{value: 1}(
-            address(sy), address(underlying), owner, 100e18, 0
-        );
+        IOutrunRouter(address(router)).mintSYFromToken{value: 1}(address(sy), address(underlying), owner, 100e18, 0);
     }
 
     function testMintSYFromTokenSupportsNativePath() external {
@@ -137,9 +133,8 @@ contract OutrunRouterTest is Test {
         vm.deal(owner, 100e18);
 
         vm.prank(owner);
-        uint256 syOut = IOutrunRouterPrefundless(address(router)).mintSYFromToken{value: 100e18}(
-            address(sy), address(0), receiver, 100e18, 0
-        );
+        uint256 syOut =
+            IOutrunRouter(address(router)).mintSYFromToken{value: 100e18}(address(sy), address(0), receiver, 100e18, 0);
 
         (address tokenIn, uint256 amount, uint256 value) = sy.lastDeposit();
 
@@ -153,16 +148,40 @@ contract OutrunRouterTest is Test {
     function testRedeemSyToTokenPullsCallerSharesAndKeepsPrefundedInternalBalance() external {
         address receiver = address(0xBEEF);
 
+        underlying.mint(address(sy), 100e18);
         sy.mintShares(address(sy), 40e18);
 
         vm.prank(owner);
-        uint256 tokenOut = IOutrunRouterPrefundless(address(router))
-            .redeemSyToToken(address(sy), receiver, address(underlying), 100e18, 0);
+        uint256 tokenOut =
+            IOutrunRouter(address(router)).redeemSyToToken(address(sy), receiver, address(underlying), 100e18, 0);
 
         assertEq(tokenOut, 100e18);
         assertEq(sy.balanceOf(owner), 900e18);
         assertEq(sy.balanceOf(address(sy)), 40e18);
         assertEq(underlying.balanceOf(receiver), 100e18);
+    }
+
+    function testRedeemSyToTokenRevertsWhenTokenOutputIsBelowMinimum() external {
+        underlying.mint(address(sy), 100e18);
+        sy.mintShares(address(sy), 40e18);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IStandardizedYield.SYInsufficientTokenOut.selector, 100e18, 101e18));
+        router.redeemSyToToken(address(sy), owner, address(underlying), 100e18, 101e18);
+    }
+
+    function testRedeemSyToTokenRevertsWhenRedeemAmountIsZero() external {
+        vm.prank(owner);
+        vm.expectRevert(IStandardizedYield.SYZeroRedeem.selector);
+        router.redeemSyToToken(address(sy), owner, address(underlying), 0, 0);
+    }
+
+    function testRedeemSyToTokenRevertsWhenTokenOutIsInvalid() external {
+        address invalidTokenOut = address(0xBAD);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IStandardizedYield.SYInvalidTokenOut.selector, invalidTokenOut));
+        router.redeemSyToToken(address(sy), owner, invalidTokenOut, 100e18, 0);
     }
 
     function testWrapStakeFromSYMintsUAssetToRecipient() external {
@@ -212,7 +231,7 @@ contract OutrunRouterTest is Test {
         assertEq(sy.allowance(address(router), address(position)), 0);
         assertEq(sy.getZeroApproveCount(), 0);
 
-        router.genesisByToken(address(position), address(underlying), 1e18, 0, 0, 30, 1, owner);
+        router.genesisByToken(address(position), address(underlying), 1e18, 0, 30, 1, owner, 0);
         assertEq(underlying.allowance(address(router), address(sy)), 0);
         assertEq(sy.allowance(address(router), address(position)), 0);
         assertEq(uAsset.allowance(address(router), address(launcher)), 0);
@@ -235,8 +254,53 @@ contract OutrunRouterTest is Test {
         underlying.mint(owner, maxDepositAmount - underlying.balanceOf(owner));
 
         vm.prank(owner);
+        router.setTrustedSY(address(freshSy), true);
+
+        vm.prank(owner);
         vm.expectRevert(INVALID_PARAM_SELECTOR);
         router.mintSYFromToken(address(freshSy), address(underlying), owner, maxDepositAmount, 0);
+    }
+
+    function testMintSYFromTokenRevertsWhenSYIsNotTrustedBeforePullingFunds() external {
+        RouterMockSY untrustedSy = new RouterMockSY(address(underlying));
+        uint256 ownerBalanceBefore = underlying.balanceOf(owner);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.UntrustedRouterTarget.selector, address(untrustedSy)));
+        router.mintSYFromToken(address(untrustedSy), address(underlying), owner, 100e18, 0);
+
+        assertEq(underlying.balanceOf(owner), ownerBalanceBefore);
+        assertEq(underlying.balanceOf(address(router)), 0);
+    }
+
+    function testStakeFromSYRevertsWhenSPIsRevokedBeforePullingFunds() external {
+        IOutrunRouter.StakeParam memory stakeParam =
+            IOutrunRouter.StakeParam({lockupDays: 30, minSyOut: 0, minUAssetMinted: 0, owner: owner, receiver: owner});
+        uint256 ownerBalanceBefore = sy.balanceOf(owner);
+
+        vm.prank(owner);
+        router.setTrustedSP(address(position), address(0));
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.UntrustedRouterTarget.selector, address(position)));
+        router.stakeFromSY(address(position), 100e18, stakeParam);
+
+        assertEq(sy.balanceOf(owner), ownerBalanceBefore);
+        assertEq(sy.balanceOf(address(router)), 0);
+    }
+
+    function testSetTrustedSPRevertsWhenRegisteredSYDoesNotMatchSP() external {
+        vm.mockCall(
+            address(position), abi.encodeWithSelector(IOutrunStakeManager.SY.selector), abi.encode(address(underlying))
+        );
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOutrunRouter.RouterTargetMismatch.selector, address(position), address(sy), address(underlying)
+            )
+        );
+        router.setTrustedSP(address(position), address(sy));
     }
 
     function testGenesisBySYUsesLockedStakeInsteadOfWrapStake() external {
@@ -385,12 +449,20 @@ contract OutrunRouterTest is Test {
     function testGenesisByTokenRevertsWhenSyBelowMinimum() external {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(RouterMockSY.RouterInsufficientSharesOut.selector, 100e18, 101e18));
-        router.genesisByToken(address(position), address(underlying), 100e18, 101e18, 0, 30, 1, owner);
+        router.genesisByToken(address(position), address(underlying), 100e18, 101e18, 30, 1, owner, 0);
     }
 
     function testGenesisBySYRevertsWhenUAssetBelowMinimum() external {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.InsufficientUAssetMinted.selector, 100e18, 101e18));
         router.genesisBySY(address(position), 100e18, 30, 1, owner, 101e18);
+    }
+
+    function testGenesisBySYRevertsWhenMintedUAssetExceedsUint128Max() external {
+        uint256 amountAboveCap = uint256(type(uint128).max) + 1;
+        sy.mintShares(owner, amountAboveCap - sy.balanceOf(owner));
+        vm.prank(owner);
+        vm.expectRevert(INVALID_PARAM_SELECTOR);
+        router.genesisBySY(address(position), amountAboveCap, 30, 1, owner, 0);
     }
 }

@@ -54,6 +54,8 @@ interface IOutrunStakeManager {
      * @dev Router flows treat this as the canonical SY for this manager and do not accept a separate SY address.
      * @return Address of the standardized yield token.
      */
+    // `SY` is part of the external protocol ABI; changing it would change the function selector.
+    // slither-disable-next-line naming-convention
     function SY() external view returns (address);
 
     /**
@@ -298,23 +300,23 @@ interface IOutrunStakeManager {
     /**
      * @notice Updates the minimum SY stake required for opening a position.
      * @dev Only the owner may update this threshold.
-     * @param minStake New minimum stake amount.
+     * @param minStake_ New minimum stake amount.
      */
-    function setMinStake(uint256 minStake) external;
+    function setMinStake(uint256 minStake_) external;
 
     /**
      * @notice Updates the revenue pool receiving harvested wrap yield.
      * @dev Only the owner may update this destination address.
-     * @param revenuePool Address of the new revenue pool.
+     * @param revenuePool_ Address of the new revenue pool.
      */
-    function setRevenuePool(address revenuePool) external;
+    function setRevenuePool(address revenuePool_) external;
 
     /**
      * @notice Updates the keeper address.
      * @dev Only the owner may grant keeper permissions.
-     * @param keeper Address granted keeper permissions.
+     * @param keeper_ Address granted keeper permissions.
      */
-    function setKeeper(address keeper) external;
+    function setKeeper(address keeper_) external;
 
     /**
      * @notice Emitted when a new locked position is created by `stake`.
