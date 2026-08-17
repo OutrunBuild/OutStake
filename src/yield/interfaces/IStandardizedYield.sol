@@ -24,6 +24,8 @@ interface IStandardizedYield is IERC20Metadata {
 
     error SYZeroRedeem();
 
+    error SYZeroSharesOut();
+
     error SYInsufficientSharesOut(uint256 actualSharesOut, uint256 requiredSharesOut);
 
     error SYInsufficientTokenOut(uint256 actualTokenOut, uint256 requiredTokenOut);
@@ -55,7 +57,9 @@ interface IStandardizedYield is IERC20Metadata {
     /**
      * @notice Mints SY shares by depositing a supported input token.
      * @dev Pulls `amountTokenToDeposit` from `msg.sender` unless `tokenIn` is the native token sentinel. Mints
-     * shares to `receiver` and reverts if output is below `minSharesOut`.
+     * shares to `receiver` and reverts if output is below `minSharesOut`, or with `SYZeroSharesOut` when the
+     * quoted output floors to zero (dust below the exchange-rate quantum; observable only when `minSharesOut`
+     * is zero — a positive `minSharesOut` fails the slippage check first).
      * @param receiver Shares recipient address.
      * @param tokenIn Address of the input token, or the native token sentinel when supported.
      * @param amountTokenToDeposit Amount of input token funded by `msg.sender`.
