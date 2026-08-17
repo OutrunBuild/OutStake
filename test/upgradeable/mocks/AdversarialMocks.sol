@@ -10,6 +10,9 @@ import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.
 /**
  * @title MockSYWithRateControl
  * @notice Mock SY that allows rate manipulation for adversarial testing
+ * @dev Partial mock: models deposit/redeem around the underlying token for adversarial consumer tests.
+ *      Does not model exchange-rate-based redeem conversion or a production token surface;
+ *      token surfaces are aligned to the underlying token only.
  */
 contract MockSYWithRateControl is ERC20, IStandardizedYield {
     address internal immutable underlying;
@@ -26,6 +29,8 @@ contract MockSYWithRateControl is ERC20, IStandardizedYield {
 
     function mintShares(address receiver, uint256 amount) external {
         _mint(receiver, amount);
+        // Minted test shares need matching backing so redeem exercises a real transfer path.
+        MockERC20ForAdversarial(underlying).mint(address(this), amount);
     }
 
     function deposit(address receiver, address, uint256 amountTokenToDeposit, uint256)
@@ -41,9 +46,14 @@ contract MockSYWithRateControl is ERC20, IStandardizedYield {
         address receiver,
         uint256 amountSharesToRedeem,
         address tokenOut,
-        uint256,
+        uint256 minTokenOut,
         bool burnFromInternalBalance
     ) external returns (uint256 amountTokenOut) {
+        if (tokenOut != underlying) {
+            revert IStandardizedYield.SYInvalidTokenOut(tokenOut);
+        }
+        if (amountSharesToRedeem == 0) revert IStandardizedYield.SYZeroRedeem();
+
         if (burnFromInternalBalance) {
             _burn(address(this), amountSharesToRedeem);
         } else {
@@ -51,10 +61,9 @@ contract MockSYWithRateControl is ERC20, IStandardizedYield {
         }
 
         amountTokenOut = amountSharesToRedeem;
-        if (tokenOut == address(this)) {
-            _mint(receiver, amountTokenOut);
-        } else {
-            MockERC20ForAdversarial(tokenOut).mint(receiver, amountTokenOut);
+        MockERC20ForAdversarial(tokenOut).transfer(receiver, amountTokenOut);
+        if (amountTokenOut < minTokenOut) {
+            revert IStandardizedYield.SYInsufficientTokenOut(amountTokenOut, minTokenOut);
         }
     }
 
@@ -73,15 +82,15 @@ contract MockSYWithRateControl is ERC20, IStandardizedYield {
 
     function getTokensOut() external view returns (address[] memory res) {
         res = new address[](1);
-        res[0] = address(this);
+        res[0] = underlying;
     }
 
     function isValidTokenIn(address token) external view returns (bool) {
-        return token == underlying || token == address(this);
+        return token == underlying;
     }
 
     function isValidTokenOut(address token) external view returns (bool) {
-        return token == address(this) || token == underlying;
+        return token == underlying;
     }
 
     function previewDeposit(address, uint256 amountTokenToDeposit) external pure returns (uint256 amountSharesOut) {
@@ -179,6 +188,9 @@ contract MockUAssetForAdversarial is ERC20, IUniversalAssets {
 /**
  * @title MaliciousSY
  * @notice Malicious SY that attempts reentrancy attacks on position
+ * @dev Partial mock: models deposit/redeem around the underlying token for adversarial consumer tests.
+ *      Does not model exchange-rate-based redeem conversion or a production token surface;
+ *      token surfaces are aligned to the underlying token only.
  */
 contract MaliciousSY is ERC20, IStandardizedYield {
     address internal immutable underlying;
@@ -208,6 +220,8 @@ contract MaliciousSY is ERC20, IStandardizedYield {
 
     function mintShares(address receiver, uint256 amount) external {
         _mint(receiver, amount);
+        // Minted test shares need matching backing so redeem exercises a real transfer path.
+        MockERC20ForAdversarial(underlying).mint(address(this), amount);
     }
 
     function deposit(address receiver, address, uint256 amountTokenToDeposit, uint256)
@@ -223,9 +237,14 @@ contract MaliciousSY is ERC20, IStandardizedYield {
         address receiver,
         uint256 amountSharesToRedeem,
         address tokenOut,
-        uint256,
+        uint256 minTokenOut,
         bool burnFromInternalBalance
     ) external returns (uint256 amountTokenOut) {
+        if (tokenOut != underlying) {
+            revert IStandardizedYield.SYInvalidTokenOut(tokenOut);
+        }
+        if (amountSharesToRedeem == 0) revert IStandardizedYield.SYZeroRedeem();
+
         if (burnFromInternalBalance) {
             _burn(address(this), amountSharesToRedeem);
         } else {
@@ -233,11 +252,7 @@ contract MaliciousSY is ERC20, IStandardizedYield {
         }
 
         amountTokenOut = amountSharesToRedeem;
-        if (tokenOut == address(this)) {
-            _mint(receiver, amountTokenOut);
-        } else {
-            MockERC20ForAdversarial(tokenOut).mint(receiver, amountTokenOut);
-        }
+        MockERC20ForAdversarial(tokenOut).transfer(receiver, amountTokenOut);
 
         // Attempt malicious reentrancy
         if (address(targetPosition) != address(0) && attackSelector != bytes4(0)) {
@@ -261,6 +276,9 @@ contract MaliciousSY is ERC20, IStandardizedYield {
                 lastAttackRevertData = revertData;
             }
         }
+        if (amountTokenOut < minTokenOut) {
+            revert IStandardizedYield.SYInsufficientTokenOut(amountTokenOut, minTokenOut);
+        }
     }
 
     function exchangeRate() external view returns (uint256 res) {
@@ -278,15 +296,15 @@ contract MaliciousSY is ERC20, IStandardizedYield {
 
     function getTokensOut() external view returns (address[] memory res) {
         res = new address[](1);
-        res[0] = address(this);
+        res[0] = underlying;
     }
 
     function isValidTokenIn(address token) external view returns (bool) {
-        return token == underlying || token == address(this);
+        return token == underlying;
     }
 
     function isValidTokenOut(address token) external view returns (bool) {
-        return token == address(this) || token == underlying;
+        return token == underlying;
     }
 
     function previewDeposit(address, uint256 amountTokenToDeposit) external pure returns (uint256 amountSharesOut) {
