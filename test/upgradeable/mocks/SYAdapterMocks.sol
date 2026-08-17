@@ -226,7 +226,9 @@ contract MockStETH is MockToken {
 
     function submit(address) external payable returns (uint256) {
         _mint(msg.sender, msg.value);
-        return msg.value;
+        // Real Lido submit returns the minted share amount, not the submitted ETH amount
+        // (same formula as getSharesByPooledEth, inlined because that function is external).
+        return msg.value * 1e18 / pooledEthPerShare;
     }
 }
 
@@ -360,6 +362,8 @@ contract MockVault is MockToken, IERC4626 {
     }
 
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
+        // Real ERC-4626 vaults pull the deposited assets from the caller before minting shares.
+        MockToken(ASSET).transferFrom(msg.sender, address(this), assets);
         shares = convertToShares(assets);
         _mint(receiver, shares);
     }
@@ -388,7 +392,8 @@ contract MockVault is MockToken, IERC4626 {
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares) {
         shares = convertToShares(assets);
         _burn(owner, shares);
-        MockToken(ASSET).mint(receiver, assets);
+        // ERC-4626 withdraw pays out from the vault's own asset holdings, not from thin air.
+        MockToken(ASSET).transfer(receiver, assets);
     }
 
     function maxRedeem(address owner) external view returns (uint256) {
@@ -402,7 +407,8 @@ contract MockVault is MockToken, IERC4626 {
     function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets) {
         _burn(owner, shares);
         assets = convertToAssets(shares);
-        MockToken(ASSET).mint(receiver, assets);
+        // ERC-4626 redeem pays out from the vault's own asset holdings, not from thin air.
+        MockToken(ASSET).transfer(receiver, assets);
     }
 }
 
@@ -486,7 +492,9 @@ contract MockYieldProxy {
 
 /// @notice Mock asBNB minter with a configurable asBNB-per-slisBNB rate and queue-aware minting.
 /// @dev `rate` is slisBNB per asBNB (convertToAsBnb divisor). mintAsBnb returns 0 while the yield
-/// proxy reports ongoing activities, modelling Aster's queued-request behaviour.
+/// proxy reports ongoing activities, modelling Aster's queued-request behaviour. Outside the queue,
+/// mintAsBnb models real delivery: it mints the quoted asBNB to the caller, and the converting
+/// overload first pulls the caller's slisBNB (`token` immutable) like the real minter does.
 contract MockAsBnbMinter {
     address public immutable asBnb;
     address public immutable token;
@@ -505,12 +513,17 @@ contract MockAsBnbMinter {
 
     function mintAsBnb() external payable returns (uint256) {
         if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
-        return msg.value * 1e18 / rate;
+        uint256 out = msg.value * 1e18 / rate;
+        MockToken(asBnb).mint(msg.sender, out);
+        return out;
     }
 
     function mintAsBnb(uint256 amount) external returns (uint256) {
         if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
-        return amount * 1e18 / rate;
+        uint256 out = amount * 1e18 / rate;
+        MockToken(token).transferFrom(msg.sender, address(this), amount);
+        MockToken(asBnb).mint(msg.sender, out);
+        return out;
     }
 
     function convertToTokens(uint256 asBnbAmount) external view returns (uint256) {
@@ -524,15 +537,25 @@ contract MockAsBnbMinter {
 
 /// @notice Mock EtherFi deposit adapter: native ETH -> weETH at a configurable rate.
 /// @dev `shareRate` must match MockLiquidityPool.shareRate so the adapter's native preview path
-/// and the deposit execution path stay consistent.
+/// and the deposit execution path stay consistent. When `weETH` is set, depositETHForWeETH mints
+/// weETH to the caller (mirroring real EtherFi delivery); otherwise it only returns the quote.
 contract MockDepositAdapter {
     uint256 public shareRate = 1e18;
+    MockToken public weETH;
 
     function setShareRate(uint256 rate_) external {
         shareRate = rate_;
     }
 
+    function setWeETHToken(MockToken token_) external {
+        weETH = token_;
+    }
+
     function depositETHForWeETH(address) external payable returns (uint256) {
-        return msg.value * 1e18 / shareRate;
+        uint256 weEthAmount = msg.value * 1e18 / shareRate;
+        // Real EtherFi mints weETH to the caller for the staked ETH; deliver it so the native
+        // deposit branch leaves the SY with real weETH backing.
+        if (address(weETH) != address(0)) weETH.mint(msg.sender, weEthAmount);
+        return weEthAmount;
     }
 }
