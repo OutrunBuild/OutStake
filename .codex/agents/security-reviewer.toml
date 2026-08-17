@@ -1,6 +1,6 @@
 name = "security-reviewer"
 description = "Review Solidity changes for security vulnerabilities — reentrancy, overflow, access control, upgrade safety, flash-loan surface."
-model = "gpt-5.6-terra"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "max"
 sandbox_mode = "read-only"
 developer_instructions = """
