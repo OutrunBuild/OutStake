@@ -183,7 +183,10 @@ contract MockUAsset is ERC20, IUniversalAssets {
 
     function mint(address receiver, uint256 amount) external {
         MintingStatus storage status = mintingStatusTable[msg.sender];
-        require(status.amountInMinted + amount <= status.mintingCap, "Mint cap reached");
+        require(
+            status.mintingCap >= status.amountInMinted && amount <= status.mintingCap - status.amountInMinted,
+            ReachMintCap()
+        );
         status.amountInMinted += amount;
         _mint(receiver, amount);
     }
@@ -195,7 +198,7 @@ contract MockUAsset is ERC20, IUniversalAssets {
 
     function repay(address account, uint256 amount) external {
         MintingStatus storage status = mintingStatusTable[msg.sender];
-        require(status.amountInMinted >= amount, "Burn cap reached");
+        require(status.amountInMinted >= amount, ReachBurnCap());
         _spendAllowance(account, msg.sender, amount);
         status.amountInMinted -= amount;
 

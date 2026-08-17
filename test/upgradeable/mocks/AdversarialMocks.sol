@@ -14,9 +14,6 @@ import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.
 contract MockSYWithRateControl is ERC20, IStandardizedYield {
     address internal immutable underlying;
     uint256 internal rate;
-    bool internal shouldReenterOnRedeem;
-    address internal reentrancyTarget;
-    bytes internal reentrancyCalldata;
 
     constructor(address underlying_) ERC20("Mock SY", "mSY") {
         underlying = underlying_;
@@ -25,12 +22,6 @@ contract MockSYWithRateControl is ERC20, IStandardizedYield {
 
     function setExchangeRate(uint256 newRate) external {
         rate = newRate;
-    }
-
-    function setReentrancyOnRedeem(bool enabled, address target, bytes calldata data) external {
-        shouldReenterOnRedeem = enabled;
-        reentrancyTarget = target;
-        reentrancyCalldata = data;
     }
 
     function mintShares(address receiver, uint256 amount) external {
@@ -64,14 +55,6 @@ contract MockSYWithRateControl is ERC20, IStandardizedYield {
             _mint(receiver, amountTokenOut);
         } else {
             MockERC20ForAdversarial(tokenOut).mint(receiver, amountTokenOut);
-        }
-
-        // Attempt reentrancy if configured
-        if (shouldReenterOnRedeem && reentrancyTarget != address(0)) {
-            // solhint-disable-next-line avoid-low-level-calls
-            (bool success,) = reentrancyTarget.call(reentrancyCalldata);
-            // Intentionally ignore result - we're testing that reentrancy is blocked
-            success;
         }
     }
 
@@ -202,6 +185,8 @@ contract MaliciousSY is ERC20, IStandardizedYield {
     uint256 internal rate;
     OutrunStakingPositionUpgradeable internal targetPosition;
     bytes4 internal attackSelector;
+    bool private lastAttackSuccess;
+    bytes private lastAttackRevertData;
 
     constructor(address underlying_) ERC20("Malicious SY", "malSY") {
         underlying = underlying_;
@@ -215,6 +200,10 @@ contract MaliciousSY is ERC20, IStandardizedYield {
     function setAttackTarget(OutrunStakingPositionUpgradeable position, bytes4 selector) external {
         targetPosition = position;
         attackSelector = selector;
+    }
+
+    function attackResult() external view returns (bool success, bytes memory revertData) {
+        return (lastAttackSuccess, lastAttackRevertData);
     }
 
     function mintShares(address receiver, uint256 amount) external {
@@ -255,19 +244,21 @@ contract MaliciousSY is ERC20, IStandardizedYield {
             // Try to call stake during redeem callback
             if (attackSelector == IOutrunStakeManager.stake.selector) {
                 // solhint-disable-next-line avoid-low-level-calls
-                // Adversarial test: intentionally ignore return value
-                (bool success,) = address(targetPosition)
+                // Record the result so the test can distinguish the guard from downstream failures.
+                (bool success, bytes memory revertData) = address(targetPosition)
                     .call(abi.encodeWithSelector(attackSelector, 1e18, uint128(30), receiver, receiver));
-                success; // suppress unused-variable warning
+                lastAttackSuccess = success;
+                lastAttackRevertData = revertData;
             }
             // Try to call drawUAsset during redeem callback
             else if (attackSelector == IOutrunStakeManager.drawUAsset.selector) {
                 // Need a valid positionId - try with 1
-                // Adversarial test: intentionally ignore return value
+                // Record the result so adversarial tests can inspect the callback outcome.
                 // solhint-disable-next-line avoid-low-level-calls
-                (bool success,) =
+                (bool success, bytes memory revertData) =
                     address(targetPosition).call(abi.encodeWithSelector(attackSelector, uint256(1), receiver));
-                success; // suppress unused-variable warning
+                lastAttackSuccess = success;
+                lastAttackRevertData = revertData;
             }
         }
     }

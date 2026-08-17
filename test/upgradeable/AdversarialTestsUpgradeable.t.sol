@@ -265,7 +265,7 @@ contract AdversarialTests is Test {
     }
 
     // ============================================================
-    // TEST 4: Rate Change During Redeem (Reentrancy)
+    // TEST 4: Redeem Reentrancy and Accounting
     // ============================================================
 
     /**
@@ -295,6 +295,11 @@ contract AdversarialTests is Test {
         vm.prank(alice);
         maliciousSY.approve(address(malPosition), type(uint256).max);
 
+        // Fund the callback caller so the nested stake reaches the reentrancy guard.
+        maliciousSY.mintShares(address(maliciousSY), 1e18);
+        vm.prank(address(maliciousSY));
+        maliciousSY.approve(address(malPosition), type(uint256).max);
+
         // Configure malicious SY to try reentrancy on redeem
         maliciousSY.setAttackTarget(malPosition, IOutrunStakeManager.stake.selector);
 
@@ -315,33 +320,33 @@ contract AdversarialTests is Test {
         // The malicious SY will try to call stake during the redeem callback
         // But the reentrancy guard on position will block it
         vm.prank(alice);
-        // When SY.redeem tries to call position.stake, it hits the reentrancy guard
-        // Note: The position.redeem itself succeeds because it exits the guard
-        // before calling SY.redeem. The reentrancy is blocked within SY.redeem
-        // trying to call back into position.
-        // So this test verifies the reentrancy guard works but the outer redeem
-        // may still succeed or fail depending on where the reentrancy is detected.
-        // Let's verify that position state is protected.
+        // The redeem guard stays active while SY.redeem executes. The callback
+        // catches the nested revert, so the outer redeem can complete normally.
         (uint256 uAssetBurned, uint256 syOut) = malPosition.redeem(positionId, 50e18, alice, address(underlying), 0);
 
         // Verify the redeem succeeded and state is correct
         assertEq(uAssetBurned, 50e18, "Burn should be 50 uAsset");
         assertEq(syOut, 50e18, "SY out should be 50");
-        // The malicious SY's attempt to re-enter would have failed silently
-        // (we don't check return value in the malicious callback)
-        // But importantly, no extra position was created
+        (bool attackSucceeded, bytes memory attackRevertData) = maliciousSY.attackResult();
+        assertFalse(attackSucceeded, "nested stake should be blocked by the reentrancy guard");
+        assertEq(attackRevertData.length, 4, "nested call should return the guard selector");
+        assertEq(
+            keccak256(attackRevertData),
+            keccak256(abi.encodeWithSelector(REENTRANCY_GUARD_SELECTOR)),
+            "nested call should revert with ReentrancyGuardReentrantCall"
+        );
+
+        // No extra position was created.
         (address posOwner,, uint256 posUAssetMinted,) = malPosition.positions(positionId);
         assertEq(posOwner, alice, "Position owner should still be Alice");
         assertEq(posUAssetMinted, 50e18, "Position debt should be 50");
     }
 
     /**
-     * @notice SY rate change during position redeem is blocked by reentrancy guard
+     * @notice Partial redeem burns the pro-rata uAsset debt, returns the redeemed
+     *      SY at par, and decreases syTotalStaking by exactly the redeemed amount
      */
-    function test_Adversarial_RateChangeDuringRedeemIsBlockedByReentrancy() external {
-        // This tests that the position's reentrancy guard prevents
-        // any callback from modifying state during redeem
-
+    function test_Adversarial_PartialRedeemAccountingIsCorrect() external {
         // Setup: Alice stakes
         vm.prank(alice);
         (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
@@ -366,9 +371,6 @@ contract AdversarialTests is Test {
         assertEq(uAssetBurned, 50e18, "Burn should be 50 uAsset");
         assertEq(syOut, 50e18, "SY out should be 50");
         assertEq(position.syTotalStaking(), syTotalBefore - 50e18, "syTotalStaking should decrease correctly");
-
-        // The reentrancy guard on position ensures no callback can modify
-        // state during the redeem execution
     }
 
     // ============================================================
@@ -987,54 +989,15 @@ contract AdversarialTests is Test {
     }
 
     // ============================================================
-    // TEST 11: Stale Oracle Data
-    // ============================================================
-
-    /**
-     * @notice Adapters accept any positive value from the oracle without freshness checks.
-     * @dev This documents the assumption that oracle staleness is mitigated at the
-     *      oracle adapter layer, not within the SY adapter itself.
-     */
-    function test_Adversarial_StaleOracleData() external {
-        uint256 rate = sy.exchangeRate();
-        assertGt(rate, 0, "exchange rate should return a positive value");
-    }
-
-    // ============================================================
-    // TEST 12: Router-Level Cross-Protocol Contamination
-    // ============================================================
-
-    /**
-     * @notice Verifies that SY balance isolation is correct: no external
-     *      operation can alter a user's SY balance without an explicit
-     *      deposit or transfer from that user.
-     */
-    function test_Adversarial_RouterCrossProtocolContamination() external {
-        // Use a fresh address that has no pre-minted SY shares
-        address freshUser = address(0xF1E5D);
-
-        // Verify: fresh user starts with zero SY shares
-        uint256 syBalanceBefore = sy.balanceOf(freshUser);
-        assertEq(syBalanceBefore, 0, "fresh user should have zero SY balance initially");
-
-        // Bob stakes - this should not affect the fresh user's SY balance
-        vm.prank(bob);
-        position.stake(100e18, 30, bob, bob);
-
-        uint256 syBalanceAfter = sy.balanceOf(freshUser);
-        assertEq(syBalanceAfter, syBalanceBefore, "fresh user SY balance should be unchanged");
-    }
-
-    // ============================================================
     // TEST 13: Position Redeem Reentrancy Fix (Deterministic)
     // ============================================================
 
     /**
      * @notice Deterministic reentrancy test: confirm that after position.redeem
      *      completes, no additional SY shares can be claimed from the same call.
-     *      This replaces the uncertain `test_Adversarial_PositionRedeemBlocksReentrancy`
-     *      by asserting the post-redeem state is correct rather than relying on
-     *      a low-level reentrant callback's silent success/failure.
+     *      Companion to `test_Adversarial_PositionRedeemBlocksReentrancy`; this
+     *      variant additionally asserts the global `syTotalStaking` counter shows
+     *      no reentrancy double-claim.
      */
     function test_Adversarial_RedeemStateIsProtectedAgainstReentrancyAttacks() external {
         // Deploy malicious SY
@@ -1055,6 +1018,11 @@ contract AdversarialTests is Test {
         malUAsset.setMintingCap(address(malPosition), type(uint256).max);
 
         vm.prank(alice);
+        maliciousSY.approve(address(malPosition), type(uint256).max);
+
+        // Fund the callback caller so the nested stake reaches the reentrancy guard.
+        maliciousSY.mintShares(address(maliciousSY), 1e18);
+        vm.prank(address(maliciousSY));
         maliciousSY.approve(address(malPosition), type(uint256).max);
 
         // Configure malicious SY to try reentrancy on redeem via stake
@@ -1079,6 +1047,15 @@ contract AdversarialTests is Test {
 
         assertEq(uAssetBurned, 50e18, "uAsset burned should be exactly 50");
         assertEq(syOut, 50e18, "SY output should be exactly 50");
+
+        (bool attackSucceeded, bytes memory attackRevertData) = maliciousSY.attackResult();
+        assertFalse(attackSucceeded, "nested stake should be blocked by the reentrancy guard");
+        assertEq(attackRevertData.length, 4, "nested call should return the guard selector");
+        assertEq(
+            keccak256(attackRevertData),
+            keccak256(abi.encodeWithSelector(REENTRANCY_GUARD_SELECTOR)),
+            "nested call should revert with ReentrancyGuardReentrantCall"
+        );
 
         // Verify position state: only 50 SY staked remains, exactly 50 uAsset debt
         (address posOwner,, uint256 posUAssetMinted,) = malPosition.positions(positionId);

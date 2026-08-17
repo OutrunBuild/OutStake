@@ -31,13 +31,13 @@ contract WadRayMathTest is Test {
     }
 
     function testRayDivRevertsOnZeroDivisor() public {
-        vm.expectRevert();
+        vm.expectRevert(bytes(""));
         helper.rayDivZero(1e27);
     }
 
     function testRayDivRevertsOnOverflow() public {
         // a > (2^256 - 1 - b / 2) / RAY silently wraps in unchecked Yul, so the guard must revert.
-        vm.expectRevert();
+        vm.expectRevert(bytes(""));
         helper.rayDivOverflow(type(uint256).max, 1e27);
     }
 

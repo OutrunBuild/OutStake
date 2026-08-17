@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import {Test} from "forge-std/Test.sol";
 
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
+import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
@@ -106,5 +107,14 @@ contract KeepWrapRedeemAccess is Test {
         vm.prank(keeper);
         vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
         position.keepWrapRedeem(minted, keeper);
+    }
+
+    function test_MockUAssetMintNearUint256BoundaryRevertsWithReachMintCap() external {
+        MockUAsset cappedUAsset = new MockUAsset();
+        cappedUAsset.setMintingCap(address(this), type(uint256).max);
+        cappedUAsset.mint(address(this), type(uint256).max - 1);
+
+        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
+        cappedUAsset.mint(address(this), 2);
     }
 }
