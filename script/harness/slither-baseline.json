@@ -102,6 +102,24 @@
       "location": "src/position/OutrunStakingPositionUpgradeable.sol#L446-L491",
       "summary": "OutrunStakingPositionUpgradeable.keepRedeem(uint256,uint256,address) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.keepRedeem(uint256,uint256,address) uses timestamp for comparisons"
+    },
+    {
+      "id": "52f4d40c6bab83c280a96965d444a8ee9603a2222a455375fc1e8b49376ea6d4",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L290-L341",
+      "summary": "OutrunStakingPositionUpgradeable.stake(uint256,uint128,address,address) uses timestamp for comparisons",
+      "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.stake(uint256,uint128,address,address) uses timestamp for comparisons"
+    },
+    {
+      "id": "47f6f708ffac961434087a6793f572248a2638a500befdc1d35782e3257e8093",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L259-L278",
+      "summary": "OutrunStakingPositionUpgradeable.previewKeepRedeem(uint256,uint256) uses timestamp for comparisons",
+      "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.previewKeepRedeem(uint256,uint256) uses timestamp for comparisons"
     }
   ]
 }
