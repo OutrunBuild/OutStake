@@ -21,20 +21,6 @@ library SYUtils {
         return (syAmount * exchangeRate) / ONE;
     }
 
-    /// @notice Converts SY amount to canonical asset amount, rounded up.
-    /// @param exchangeRate Canonical asset per SY, scaled by 1e18.
-    /// @param syAmount Amount of SY to convert.
-    /// @return The equivalent asset amount, rounded up.
-    /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale into uAsset
-    /// decimals.
-    // Rounds up — use when an asset value must be counted without leaving fractional dust behind.
-    // The ceil term (+ ONE - 1) moves the checked-add overflow threshold to syAmount * exchangeRate >
-    // type(uint256).max - ONE,
-    // slightly narrower than the floor variant's 2^256 - 1. Real supplies and rates stay far below it.
-    function syToAssetUp(uint256 exchangeRate, uint256 syAmount) internal pure returns (uint256) {
-        return (syAmount * exchangeRate + ONE - 1) / ONE;
-    }
-
     /// @notice Converts canonical asset amount to SY amount, rounded down.
     /// @param exchangeRate Canonical asset per SY, scaled by 1e18.
     /// @param assetAmount Amount of asset to convert.

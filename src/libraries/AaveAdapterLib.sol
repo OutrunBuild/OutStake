@@ -20,7 +20,7 @@ library AaveAdapterLib {
     /// @param amountAssets Amount of assets to convert.
     /// @param index Ray-scaled (1e27) liquidity index.
     /// @return The equivalent share amount, rounded half up.
-    // Rounding mode differs from the SYUtils "Up" family (syToAssetUp, assetToSyUp), which
+    // Rounding mode differs from the SYUtils assetToSyUp ceiling round, which
     // always round toward the ceiling. The name states the mode explicitly so callers do not
     // mistake this for a true ceiling round.
     function calcSharesFromAssetHalfUp(uint256 amountAssets, uint256 index) internal pure returns (uint256) {

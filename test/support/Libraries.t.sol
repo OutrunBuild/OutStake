@@ -100,16 +100,6 @@ contract SYUtilsTest is Test {
         assertEq(result, 400);
     }
 
-    function testSyToAssetUpRoundsUp() public {
-        // rate 3, 1 wei SY: floor (1*3)/1e18 = 0, ceil (1*3 + 1e18 - 1)/1e18 = 1
-        uint256 exchangeRate = 3;
-        uint256 syAmount = 1;
-        uint256 down = SYUtils.syToAsset(exchangeRate, syAmount);
-        uint256 up = SYUtils.syToAssetUp(exchangeRate, syAmount);
-        assertEq(down, 0);
-        assertEq(up, 1);
-    }
-
     function testAssetToSyReturnsCorrectValue() public {
         // With rate 1:1 (1e18), 100 asset -> 100 SY
         uint256 exchangeRate = 1e18;
@@ -134,16 +124,6 @@ contract SYUtilsTest is Test {
         uint256 up = SYUtils.assetToSyUp(exchangeRate, assetAmount);
         assertEq(down, 333_333_333_333_333_333);
         assertEq(up, 333_333_333_333_333_334);
-    }
-
-    function testSyToAssetUpAlwaysGreaterOrEqualToSyToAsset() public {
-        // rate 1e18+1, 1e18-1 SY: floor = 1e18-1, ceil = 1e18 (rounds the remainder up)
-        uint256 exchangeRate = 1e18 + 1; // Non-trivial rate
-        uint256 syAmount = 1e18 - 1;
-        uint256 down = SYUtils.syToAsset(exchangeRate, syAmount);
-        uint256 up = SYUtils.syToAssetUp(exchangeRate, syAmount);
-        assertEq(down, 1e18 - 1);
-        assertEq(up, 1e18);
     }
 
     function testAssetToSyUpAlwaysGreaterOrEqualToAssetToSy() public {
