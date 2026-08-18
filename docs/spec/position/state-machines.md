@@ -28,18 +28,19 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 5. 资产进入：`SY` 被转入 `OutrunStakingPositionUpgradeable`。
 6. 状态进入：SY transfer 成功后增加 `syTotalStaking`，计算 `deadline256 = block.timestamp + uint256(lockupDays) * 1 days`。若 `deadline256 > type(uint128).max`，则 `LockupDaysOutOfRange(lockupDays)`；虽然该检查位于 transfer 和总账暂增之后，revert 会原子回滚这两步以及后续全部状态。
 7. 状态写入：生成新的 `positionId`，写入 position；随后调用 `uAsset.mint(uAssetReceiver, mintedUAsset)`（stake 场景 `mintedUAsset = uAssetDebt`）。uAsset mint cap 等依赖错误会使整笔 stake 回滚。
-8. 完成状态：position 进入“已创建、可 draw”的活跃状态；若 `lockupDays > 0`，新 position 未到期、不可 redeem；若 `lockupDays == 0`，`deadline == block.timestamp`，新 position 可立即 redeem。成功后发出 `Stake`，其字段与索引含义见 [accounting.md §11.2](./accounting.md)。
+8. 完成状态：position 进入活跃状态；若 `lockupDays > 0`，锁定期内（`block.timestamp < deadline`）可 draw、未到期不可 redeem；若 `lockupDays == 0`，`deadline == block.timestamp`，创建即到期、可立即 redeem 但不可 draw（draw 于 `block.timestamp >= deadline` revert `LockTimeExpired()`，见 §3）。成功后发出 `Stake`，其字段与索引含义见 [accounting.md §11.2](./accounting.md)。
 
 ## 3. Draw 生命周期
 
 `OutrunStakingPositionUpgradeable.sol::drawUAsset` 只作用于已存在 position，当前状态机如下：
 
 1. 前置状态：position 不存在或 caller 不是记录 owner 时由 `onlyPositionOwner` revert `PositionAccessDenied()`；`uAssetReceiver` 为零时 `ZeroInput()`；合约不能 paused。
-2. 估值阶段：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`），先于 NothingToDraw 判定；原先误归 `NothingToDraw()`（previewDrawUAsset 0-返回）收敛为具名错误。
-3. 可追加额度计算：若 `currentValueInUAsset <= position.UAssetMinted`，则 `NothingToDraw()`；`previewDrawUAsset` 在同一条件返回 0（rate==0 时先在汇率读取点 revert `ZeroExchangeRate()`，不进入本条件）。否则差额即 `mintedUAsset`（`drawUAsset` 返回值与 `DrawUAsset` 事件字段，调用级铸出量；非 `position.UAssetMinted` 总债务）。
-4. 状态更新：将 `position.UAssetMinted` 写为 `currentValueInUAsset`（不是把当前 debt 再加一遍）。
-5. cap 校验与铸造：检查 `uAsset` mint cap，随后铸造新的 `uAsset` 到 `uAssetReceiver`；依赖错误会回滚第 4 步。
-6. 完成状态：position 仍是活跃仓位，但未偿 debt 增大；成功后发出 `DrawUAsset`，事件只记录本次新增量，当前总 debt 要结合 `positions(positionId)` 读取，详见 [accounting.md §11.2](./accounting.md)。
+2. 到期守卫：`block.timestamp >= position.deadline` 时 revert `LockTimeExpired(position.deadline)`；语义：draw 仅在锁定期内可用，deadline 起该入口关闭，与 `redeem`/`keepRedeem` 的 `LockTimeNotExpired`（`< deadline`）在 deadline 时刻精确互补。该守卫位于 position 存在性/owner 校验之后、估值阶段汇率读取与一切状态写入之前。
+3. 估值阶段：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`），先于 NothingToDraw 判定；原先误归 `NothingToDraw()`（previewDrawUAsset 0-返回）收敛为具名错误。
+4. 可追加额度计算：若 `currentValueInUAsset <= position.UAssetMinted`，则 `NothingToDraw()`；`previewDrawUAsset` 在同一条件返回 0（rate==0 时先在汇率读取点 revert `ZeroExchangeRate()`，不进入本条件）。否则差额即 `mintedUAsset`（`drawUAsset` 返回值与 `DrawUAsset` 事件字段，调用级铸出量；非 `position.UAssetMinted` 总债务）。
+5. 状态更新：将 `position.UAssetMinted` 写为 `currentValueInUAsset`（不是把当前 debt 再加一遍）。
+6. cap 校验与铸造：检查 `uAsset` mint cap，随后铸造新的 `uAsset` 到 `uAssetReceiver`；依赖错误会回滚第 5 步。
+7. 完成状态：position 仍是活跃仓位，但未偿 debt 增大；成功后发出 `DrawUAsset`，事件只记录本次新增量，当前总 debt 要结合 `positions(positionId)` 读取，详见 [accounting.md §11.2](./accounting.md)。
 
 因此，draw 不会改变 lock deadline，也不会改变 `syStaked`。
 
@@ -183,7 +184,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `OutrunStakingPositionUpgradeable.sol::setMinStake` 由 owner 调用并更新 SY 最小 stake；允许设置为 0，成功后发出 `SetMinStake(minStake)`。
 - `OutrunStakingPositionUpgradeable.sol::setRevenuePool` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 harvest 收款目的地并发出 indexed `SetRevenuePool(revenuePool)`。
 - `OutrunStakingPositionUpgradeable.sol::setKeeper` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 keeper 权限并发出 indexed `SetKeeper(keeper)`。
-- 三个配置事件只记录新值/新地址，不记录旧值；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 16 个 manager errors。
+- 三个配置事件只记录新值/新地址，不记录旧值；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 17 个 manager errors。
 
 ## 8. Pause / unpause 的影响
 
@@ -211,7 +212,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `SY.redeem`（函数级 `whenNotPaused`）
 - 常规 `SY` transfer 行为（经 `_update` 的 `whenNotPaused`）
 
-因此，在 position 未 paused 且 uAsset 未 paused 时，SY pause 会阻断 `stake`、`wrapStake`、`redeem`、`keepWrapRedeem`、`keepRedeem`，以及存在可提取盈余时的 `harvestWrapYield`（均经 SY transfer 或 `SY.redeem`）；`drawUAsset` 只读取 `exchangeRate` 并调用 `uAsset.mint`，有可追加额度时仍可运行。`harvestWrapYield` 无盈余时会在覆盖计算后直接返回 0，不触发 SY 写路径。
+因此，在 position 未 paused 且 uAsset 未 paused 时，SY pause 会阻断 `stake`、`wrapStake`、`redeem`、`keepWrapRedeem`、`keepRedeem`，以及存在可提取盈余时的 `harvestWrapYield`（均经 SY transfer 或 `SY.redeem`）；`drawUAsset` 只读取 `exchangeRate` 并调用 `uAsset.mint`，在未到期（`block.timestamp < position.deadline`）且有可追加额度时仍可运行。`harvestWrapYield` 无盈余时会在覆盖计算后直接返回 0，不触发 SY 写路径。
 
 ### 8.3 uAsset 级 pause
 

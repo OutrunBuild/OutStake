@@ -9,7 +9,8 @@ interface IOutrunStakeManager {
     /**
      * @notice Locked position accounting record.
      * @dev `owner` controls draw and owner-redemption paths. `syStaked` is principal in SY units, and
-     * `UAssetMinted` is this position's outstanding uAsset debt. `deadline` gates owner and keeper redemption.
+     * `UAssetMinted` is this position's outstanding uAsset debt. `deadline` closes draw at maturity and
+     * gates owner and keeper redemption.
      */
     struct Position {
         address owner;
@@ -29,6 +30,10 @@ interface IOutrunStakeManager {
     error ZeroExchangeRate();
     error PermissionDenied();
     error LockTimeNotExpired(uint128 deadline);
+    /// @dev Reverts when drawUAsset/previewDrawUAsset runs at or after the position deadline: from the
+    /// deadline on, draw is closed and redemption opens (redeem/keepRedeem guard the `< deadline` early
+    /// side with LockTimeNotExpired), so a matured position has only the redeem paths to exit.
+    error LockTimeExpired(uint128 deadline);
     /// @dev Reverts when `lockupDays` is so large that `block.timestamp + lockupDays * 1 days` no
     /// longer fits in uint128, which would let the deadline cast wrap into the past and bypass the lock.
     error LockupDaysOutOfRange(uint128 lockupDays);
@@ -146,8 +151,9 @@ interface IOutrunStakeManager {
     /**
      * @notice Previews additional uAsset drawable from an existing position.
      * @dev Quote-only. Returns only the current value above the position's existing debt; it does not update
-     * position debt or reserve uAsset mint cap. Reverts `PositionAccessDenied` when the position is missing and
-     * `ZeroExchangeRate` when the rate reads zero. Returns 0 when the current value does not exceed the
+     * position debt or reserve uAsset mint cap. Reverts `PositionAccessDenied` when the position is missing,
+     * `LockTimeExpired` once `block.timestamp >= deadline` (draw is lockup-window-only, mirroring `drawUAsset`),
+     * and `ZeroExchangeRate` when the rate reads zero. Returns 0 when the current value does not exceed the
      * position's existing debt (mirrors `drawUAsset` reverting `NothingToDraw`).
      * @param positionId Identifier of the position to inspect.
      * @return UAssetMintable Additional uAsset currently drawable from the position.
@@ -221,6 +227,8 @@ interface IOutrunStakeManager {
     /**
      * @notice Mints newly drawable uAsset from an existing position.
      * @dev Position-owner path. Uses current SY asset value to mint only appreciation above existing position debt.
+     * Draw is lockup-window-only: reverts `LockTimeExpired` once `block.timestamp >= deadline` — a matured
+     * position exits through redemption instead.
      * @param positionId Identifier of the position to draw against.
      * @param uAssetReceiver Address receiving the minted uAsset.
      * @return mintedUAsset Additional (per-call incremental) uAsset minted to the uAssetReceiver; not the position's

@@ -821,6 +821,104 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(mixedSy.balanceOf(revenuePool), 0);
     }
 
+    // LockTimeExpired group: draw (and its preview) are lockup-window-only. From the deadline on,
+    // drawUAsset/previewDrawUAsset revert LockTimeExpired — the exact complement of redeem/keepRedeem's
+    // LockTimeNotExpired early-side guard — so a matured position has only the redeem paths to exit.
+
+    function testDrawUAssetSucceedsJustBeforeDeadline() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, user);
+
+        mixedSy.setExchangeRate(2e18);
+        (,,, uint128 deadline) = mixedPosition.positions(positionId);
+        vm.warp(deadline - 1);
+
+        vm.prank(user);
+        uint256 drawn = mixedPosition.drawUAsset(positionId, user);
+
+        assertEq(drawn, 1e18, "draw one second before deadline still mints appreciation");
+        assertEq(mixedUAsset.balanceOf(user), 2e18);
+    }
+
+    function testDrawUAssetRevertsAtExactlyDeadline() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, user);
+
+        // Appreciation exists but cannot be drawn: the window closed at the deadline.
+        mixedSy.setExchangeRate(2e18);
+        (,,, uint128 deadline) = mixedPosition.positions(positionId);
+        vm.warp(deadline);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeExpired.selector, deadline));
+        mixedPosition.drawUAsset(positionId, user);
+    }
+
+    function testDrawUAssetRevertsAfterDeadline() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, user);
+
+        mixedSy.setExchangeRate(2e18);
+        (,,, uint128 deadline) = mixedPosition.positions(positionId);
+        vm.warp(deadline + 1 days);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeExpired.selector, deadline));
+        mixedPosition.drawUAsset(positionId, user);
+
+        // Revert must be atomic: position debt and the receiver balance are unchanged.
+        (, uint256 syStaked, uint256 uAssetMinted,) = mixedPosition.positions(positionId);
+        assertEq(syStaked, 1e6);
+        assertEq(uAssetMinted, 1e18);
+        assertEq(mixedUAsset.balanceOf(user), 1e18);
+    }
+
+    function testPreviewDrawUAssetRevertsAfterDeadline() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 30, user, user);
+
+        mixedSy.setExchangeRate(2e18);
+        (,,, uint128 deadline) = mixedPosition.positions(positionId);
+        vm.warp(deadline + 1);
+
+        // The preview mirrors the executor's revert (LockTimeExpired), not a 0 return.
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeExpired.selector, deadline));
+        mixedPosition.previewDrawUAsset(positionId);
+    }
+
+    function testZeroLockupDaysDrawRevertsSameBlockWhileRedeemSucceeds() external {
+        _setupMixedDecimalsPosition();
+
+        vm.prank(user);
+        (uint256 positionId,) = mixedPosition.stake(1e6, 0, user, user);
+
+        // lockupDays == 0 sets deadline = now, so the same-block draw already sits past the window.
+        (,,, uint128 deadline) = mixedPosition.positions(positionId);
+        assertEq(deadline, uint128(block.timestamp), "zero-day deadline equals now");
+        mixedSy.setExchangeRate(2e18);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeExpired.selector, deadline));
+        mixedPosition.drawUAsset(positionId, user);
+
+        // The same-block redeem path (the >= deadline side) stays open.
+        vm.startPrank(user);
+        mixedUAsset.approve(address(mixedPosition), type(uint256).max);
+        (uint256 burned, uint256 syOut) = mixedPosition.redeem(positionId, 1e6, user, address(mixedSy), 0);
+        vm.stopPrank();
+
+        assertEq(burned, 1e18, "full redeem burns all remaining debt");
+        assertEq(syOut, 1e6, "redeem returns the staked SY");
+    }
+
     function _setupMixedDecimalsPosition() internal {
         mixedUnderlying = new MockERC20("Mock USDC", "mUSDC");
         mixedUnderlying.setDecimals(6);

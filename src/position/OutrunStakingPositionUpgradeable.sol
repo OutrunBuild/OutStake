@@ -195,11 +195,18 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Returns 0 if current value has not exceeded previously minted amounts; an exactly-zero
     /// exchange rate instead reverts ZeroExchangeRate at the rate-reading home.
     /// Quote-only: does not check or reserve the uAsset mint cap.
+    /// Reverts LockTimeExpired once block.timestamp >= deadline (mirrors drawUAsset): draw is
+    /// lockup-window-only, so a matured position previews only its redemption paths.
     /// @param positionId The position identifier.
     /// @return UAssetMintable Additional uAsset amount that can be drawn.
     function previewDrawUAsset(uint256 positionId) public view returns (uint256 UAssetMintable) {
         Position storage position = outrunStakingPositionStorage.positions[positionId];
         if (position.owner == address(0)) revert PositionAccessDenied();
+        // From the deadline on, draw is closed and redeem opens: redeem/keepRedeem guard the early side
+        // (< deadline) with LockTimeNotExpired, and this guard covers >= deadline exactly, so a matured
+        // position has only the redeem paths to exit.
+        uint128 deadline = position.deadline;
+        if (block.timestamp >= deadline) revert LockTimeExpired(deadline);
         address _SY = SY();
         uint256 currentValueInUAsset = _syToAsset(position.syStaked, _currentExchangeRate(_SY));
         uint256 positionUAssetMinted = position.UAssetMinted;
@@ -335,6 +342,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
 
     /// @notice Mints extra uAsset from a position after the staked SY becomes more valuable.
     /// Only the position owner can call this. Reverts if the position has no extra value to mint against.
+    /// Draw is lockup-window-only: reverts LockTimeExpired once block.timestamp >= deadline —
+    /// a matured position exits through redemption instead.
     /// @param positionId The position identifier.
     /// @param uAssetReceiver Address that receives the newly minted uAsset.
     /// @return mintedUAsset Additional uAsset amount minted.
@@ -347,6 +356,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     {
         if (uAssetReceiver == address(0)) revert ZeroInput();
         Position storage position = outrunStakingPositionStorage.positions[positionId];
+
+        // From the deadline on, draw is closed and redeem opens: redeem/keepRedeem guard the early side
+        // (< deadline) with LockTimeNotExpired, and this guard covers >= deadline exactly, so a matured
+        // position has only the redeem paths to exit.
+        uint128 deadline = position.deadline;
+        if (block.timestamp >= deadline) revert LockTimeExpired(deadline);
 
         address _SY = SY();
         uint256 currentValueInUAsset = _syToAsset(position.syStaked, _currentExchangeRate(_SY));
