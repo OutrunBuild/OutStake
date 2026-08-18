@@ -255,6 +255,10 @@ contract MaliciousSY is ERC20, IStandardizedYield {
         MockERC20ForAdversarial(tokenOut).transfer(receiver, amountTokenOut);
 
         // Attempt malicious reentrancy
+        // The state writes below intentionally follow the external call: they record
+        // the attack outcome for test assertions, and reentrancy is the behavior
+        // under test in this mock, not a vulnerability.
+        // solhint-disable reentrancy
         if (address(targetPosition) != address(0) && attackSelector != bytes4(0)) {
             // Try to call stake during redeem callback
             if (attackSelector == IOutrunStakeManager.stake.selector) {
@@ -276,6 +280,7 @@ contract MaliciousSY is ERC20, IStandardizedYield {
                 lastAttackRevertData = revertData;
             }
         }
+        // solhint-enable reentrancy
         if (amountTokenOut < minTokenOut) {
             revert IStandardizedYield.SYInsufficientTokenOut(amountTokenOut, minTokenOut);
         }
