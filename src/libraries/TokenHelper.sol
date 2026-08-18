@@ -94,16 +94,21 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// because some tokens reject non-zero-to-non-zero.
     /// @param token Address of the ERC20 token.
     /// @param to Address to approve as spender.
-    /// @dev Keeps ERC20 allowance at max once it falls below `LOWER_BOUND_APPROVAL`; native sentinel is ignored.
+    /// @dev On each invocation, refreshes an ERC20 allowance to max when it is below `LOWER_BOUND_APPROVAL`;
+    ///      does not maintain a persistent max-allowance invariant. Native sentinel is ignored.
     // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
     // slither-disable-next-line dead-code
     function _safeApproveInf(address token, address to) internal {
         if (token == NATIVE) return;
-        if (IERC20(token).allowance(address(this), to) < LOWER_BOUND_APPROVAL) {
+        uint256 currentAllowance = IERC20(token).allowance(address(this), to);
+        if (currentAllowance < LOWER_BOUND_APPROVAL) {
             // Explicit two-step: resetting to 0 first makes each approve succeed on the first try for
             // tokens that reject non-zero-to-non-zero changes. forceApprove's fallback would also recover,
-            // but only after one wasted failed call. Then set to max.
-            _safeApprove(token, to, 0);
+            // but only after one wasted failed call. Then set to max. When the allowance is already 0 the
+            // zero step is skipped — such tokens accept 0-to-max directly.
+            if (currentAllowance != 0) {
+                _safeApprove(token, to, 0);
+            }
             _safeApprove(token, to, type(uint256).max);
         }
     }

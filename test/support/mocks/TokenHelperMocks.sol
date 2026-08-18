@@ -46,6 +46,38 @@ contract MockERC20 is ERC20 {
     }
 }
 
+// USDT-like ERC20: rejects non-zero-to-non-zero approve changes and records every approve(amount) call.
+contract MockUSDTLikeToken is ERC20 {
+    uint256[] internal _approveLog;
+
+    constructor(string memory _name, string memory _symbol, uint8 _decimals) ERC20(_name, _symbol) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    /// @notice Approves spender an allowance, rejecting non-zero-to-non-zero changes (USDT behavior),
+    ///         and records the requested amount for call-sequence assertions.
+    function approve(address spender, uint256 amount) public override returns (bool) {
+        uint256 currentAllowance = allowance(msg.sender, spender);
+        if (currentAllowance != 0 && amount != 0) {
+            revert("non-zero to non-zero");
+        }
+        _approveLog.push(amount);
+        return super.approve(spender, amount);
+    }
+
+    /// @notice Returns the number of approve calls recorded.
+    function approveLogLength() external view returns (uint256) {
+        return _approveLog.length;
+    }
+
+    /// @notice Returns the approve amount recorded at the given index.
+    function approveLog(uint256 index) external view returns (uint256) {
+        return _approveLog[index];
+    }
+}
+
 // Contract that always reverts in receive()
 contract RevertingReceiver {
     receive() external payable {

@@ -3,8 +3,9 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {NativeAmountMismatch, NativeTransferFailed} from "../../src/libraries/TokenHelper.sol";
-import {TokenHelperHarness, MockERC20, RevertingReceiver} from "./mocks/TokenHelperMocks.sol";
+import {TokenHelperHarness, MockERC20, MockUSDTLikeToken, RevertingReceiver} from "./mocks/TokenHelperMocks.sol";
 
 contract TokenHelperTest is Test {
     TokenHelperHarness internal harness;
@@ -21,7 +22,7 @@ contract TokenHelperTest is Test {
 
     // ============ _transferIn tests ============
 
-    function testTransferInNativeChecksMsgValue() external {
+    function testTransferInERC20RejectsNonZeroMsgValue() external {
         // ERC20 input with msg.value > 0 should revert
         vm.deal(address(harness), 0);
 
@@ -61,8 +62,10 @@ contract TokenHelperTest is Test {
     }
 
     function testTransferInERC20SkipsOnZeroAmount() external {
-        // Zero amount should skip the transfer
+        vm.expectCall(address(token), abi.encodeCall(IERC20.transferFrom, (user, address(harness), 0)), 0);
+
         harness.exposedTransferIn(address(token), user, 0);
+
         assertEq(token.balanceOf(address(harness)), 0);
     }
 
@@ -88,11 +91,22 @@ contract TokenHelperTest is Test {
     function testTransferOutSkipsOnZeroAmount() external {
         vm.deal(address(harness), 1 ether);
 
-        // Should not transfer anything
+        vm.expectCall(address(token), abi.encodeCall(IERC20.transfer, (recipient, 0)), 0);
+
         harness.exposedTransferOut(address(token), recipient, 0);
 
         assertEq(token.balanceOf(recipient), 0);
         assertEq(address(harness).balance, 1 ether); // unchanged
+    }
+
+    function testTransferOutNativeSkipsOnZeroAmount() external {
+        RevertingReceiver receiver = new RevertingReceiver();
+        vm.deal(address(harness), 1 ether);
+
+        vm.expectCall(address(receiver), 0, bytes(""), 0);
+        harness.exposedTransferOut(address(0), address(receiver), 0);
+
+        assertEq(address(harness).balance, 1 ether);
     }
 
     function testTransferOutERC20Succeeds() external {
@@ -168,6 +182,37 @@ contract TokenHelperTest is Test {
         // Should return immediately for native token without any approval
         harness.exposedSafeApproveInf(address(0), recipient);
         // No assertion needed, just ensure no revert
+    }
+
+    function testSafeApproveInfWhenAllowanceZeroIssuesSingleMaxApprove() external {
+        MockUSDTLikeToken usdt = new MockUSDTLikeToken("USDT", "USDT", 6);
+        usdt.mint(address(harness), 1_000e6);
+
+        // Current allowance is 0 (< LOWER_BOUND_APPROVAL); must approve(max) directly with no approve(0).
+        harness.exposedSafeApproveInf(address(usdt), recipient);
+
+        assertEq(usdt.approveLogLength(), 1);
+        assertEq(usdt.approveLog(0), type(uint256).max);
+        assertEq(usdt.allowance(address(harness), recipient), type(uint256).max);
+    }
+
+    function testSafeApproveInfWhenAllowanceBelowLowerBoundIssuesZeroThenMax() external {
+        MockUSDTLikeToken usdt = new MockUSDTLikeToken("USDT", "USDT", 6);
+        usdt.mint(address(harness), 1_000e6);
+
+        // Set a non-zero allowance below LOWER_BOUND_APPROVAL (0 -> non-zero succeeds on USDT-like token).
+        uint256 initialAllowance = 100e6;
+        harness.exposedSafeApprove(address(usdt), recipient, initialAllowance);
+        assertEq(usdt.allowance(address(harness), recipient), initialAllowance);
+
+        // Non-zero -> non-zero must fail (USDT behavior); so only the reset-to-zero path is USDT-safe.
+        harness.exposedSafeApproveInf(address(usdt), recipient);
+
+        assertEq(usdt.approveLogLength(), 3);
+        assertEq(usdt.approveLog(0), initialAllowance);
+        assertEq(usdt.approveLog(1), 0);
+        assertEq(usdt.approveLog(2), type(uint256).max);
+        assertEq(usdt.allowance(address(harness), recipient), type(uint256).max);
     }
 
     // ============ _selfBalance tests ============
