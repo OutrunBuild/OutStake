@@ -167,24 +167,6 @@
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.previewDrawUAsset(uint256) uses timestamp for comparisons"
     },
     {
-      "id": "38e65c51b7e5dcb26b2e935567a8dd5ca53cd4bc60527f400b4e170f79ae4642",
-      "check": "reentrancy-balance",
-      "impact": "High",
-      "confidence": "Medium",
-      "location": "src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol#L43-L54",
-      "summary": "Reentrancy in OutrunSlisBNBSYUpgradeable._deposit(address,uint256):",
-      "key": "reentrancy-balance|src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol|Reentrancy in OutrunSlisBNBSYUpgradeable._deposit(address,uint256):"
-    },
-    {
-      "id": "3923b3077fe15c4540bd7bf52543215d138f8cdbb9c9b3086468a97efcdc37b6",
-      "check": "incorrect-equality",
-      "impact": "Medium",
-      "confidence": "High",
-      "location": "src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol#L43-L54",
-      "summary": "OutrunSlisBNBSYUpgradeable._deposit(address,uint256) uses a dangerous strict equality:",
-      "key": "incorrect-equality|src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol|OutrunSlisBNBSYUpgradeable._deposit(address,uint256) uses a dangerous strict equality:"
-    },
-    {
       "id": "c12a20c47eba15e038aa4d47e972830cee8152b1b50b93adebccbf5e1c8e6d8a",
       "check": "timestamp",
       "impact": "Low",
