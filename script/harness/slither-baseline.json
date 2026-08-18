@@ -165,6 +165,87 @@
       "location": "src/position/OutrunStakingPositionUpgradeable.sol#L202-L215",
       "summary": "OutrunStakingPositionUpgradeable.previewDrawUAsset(uint256) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.previewDrawUAsset(uint256) uses timestamp for comparisons"
+    },
+    {
+      "id": "38e65c51b7e5dcb26b2e935567a8dd5ca53cd4bc60527f400b4e170f79ae4642",
+      "check": "reentrancy-balance",
+      "impact": "High",
+      "confidence": "Medium",
+      "location": "src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol#L43-L54",
+      "summary": "Reentrancy in OutrunSlisBNBSYUpgradeable._deposit(address,uint256):",
+      "key": "reentrancy-balance|src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol|Reentrancy in OutrunSlisBNBSYUpgradeable._deposit(address,uint256):"
+    },
+    {
+      "id": "3923b3077fe15c4540bd7bf52543215d138f8cdbb9c9b3086468a97efcdc37b6",
+      "check": "incorrect-equality",
+      "impact": "Medium",
+      "confidence": "High",
+      "location": "src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol#L43-L54",
+      "summary": "OutrunSlisBNBSYUpgradeable._deposit(address,uint256) uses a dangerous strict equality:",
+      "key": "incorrect-equality|src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol|OutrunSlisBNBSYUpgradeable._deposit(address,uint256) uses a dangerous strict equality:"
+    },
+    {
+      "id": "c12a20c47eba15e038aa4d47e972830cee8152b1b50b93adebccbf5e1c8e6d8a",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunRateLimiterUpgradeable.sol#L100-L132",
+      "summary": "OutrunRateLimiterUpgradeable._amountCanBeSent(uint192,uint64,uint192,uint64) uses timestamp for comparisons",
+      "key": "timestamp|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|OutrunRateLimiterUpgradeable._amountCanBeSent(uint192,uint64,uint192,uint64) uses timestamp for comparisons"
+    },
+    {
+      "id": "ea4119e590a983258733bca63f5e75d880ad41b1b9d4bba2bb6ff485ddb421fe",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunRateLimiterUpgradeable.sol#L147-L163",
+      "summary": "OutrunRateLimiterUpgradeable._checkAndUpdateRateLimit(OutrunRateLimiterUpgradeable.RateLimit,uint256) uses timestamp for comparisons",
+      "key": "timestamp|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|OutrunRateLimiterUpgradeable._checkAndUpdateRateLimit(OutrunRateLimiterUpgradeable.RateLimit,uint256) uses timestamp for comparisons"
+    },
+    {
+      "id": "fa60777dd4e63f90359a778b68f5d7e0fa62a0b9e5157148cb19aeda05396a56",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L193-L199",
+      "summary": "OutrunOFTUpgradeable._maxQuoteAmountLD(uint32) uses timestamp for comparisons",
+      "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._maxQuoteAmountLD(uint32) uses timestamp for comparisons"
+    },
+    {
+      "id": "93896171b8971049ffa5476d22d997f822bbe0ea5b3cc34b52ee99c79bd0953a",
+      "check": "assembly",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/assets/omnichain/OutrunRateLimiterUpgradeable.sol#L38-L42",
+      "summary": "OutrunRateLimiterUpgradeable._getOutrunRateLimiterStorage() uses assembly",
+      "key": "assembly|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|OutrunRateLimiterUpgradeable._getOutrunRateLimiterStorage() uses assembly"
+    },
+    {
+      "id": "2622cff01c633727496896801554db732fa15ca3ab8a2db78fa6a667a8da5f63",
+      "check": "assembly",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/OutrunL2OracleBackedSYUpgradeable.sol#L38-L42",
+      "summary": "OutrunL2OracleBackedSYUpgradeable._getOutrunL2OracleBackedSYStorage() uses assembly",
+      "key": "assembly|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|OutrunL2OracleBackedSYUpgradeable._getOutrunL2OracleBackedSYStorage() uses assembly"
+    },
+    {
+      "id": "0014bbf8ae56ca31d5b058e7531935a68014ec09d11d47180e26fa5198a001a9",
+      "check": "assembly",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L72-L76",
+      "summary": "SYBaseUpgradeable._getSYBaseStorage() uses assembly",
+      "key": "assembly|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable._getSYBaseStorage() uses assembly"
+    },
+    {
+      "id": "d7d8c919751d8ca33937804bb300892546d137e726a2734d572b32209ee301ed",
+      "check": "assembly",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/assets/base/OutrunERC20Upgradeable.sol#L33-L37",
+      "summary": "OutrunERC20Upgradeable._getOutrunERC20Storage() uses assembly",
+      "key": "assembly|src/assets/base/OutrunERC20Upgradeable.sol|OutrunERC20Upgradeable._getOutrunERC20Storage() uses assembly"
     }
   ]
 }

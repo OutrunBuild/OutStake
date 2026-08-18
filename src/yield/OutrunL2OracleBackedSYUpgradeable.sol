@@ -36,7 +36,6 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
         0x57aa7d79a56b64c6a75a8df5f30e533361d1c41ef1173e8a4529d9a05db56b00;
 
     function _getOutrunL2OracleBackedSYStorage() private pure returns (OutrunL2OracleBackedSYStorage storage $) {
-        // slither-disable-next-line assembly
         assembly {
             $.slot := OUTRUN_L2_ORACLE_BACKED_SY_STORAGE_LOCATION
         }

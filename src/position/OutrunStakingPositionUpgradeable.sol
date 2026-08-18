@@ -317,7 +317,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // Compute the deadline in full uint256 precision, then confirm it fits in uint128 before the
         // narrowing cast below. Without this check, a huge lockupDays would silently wrap the deadline
         // into a past timestamp and let the position be redeemed before its declared lockup ends.
-        // slither-disable-next-line timestamp
         uint256 deadline256 = block.timestamp + uint256(lockupDays) * 1 days;
         if (deadline256 > type(uint128).max) revert LockupDaysOutOfRange(lockupDays);
 
@@ -423,7 +422,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         emit WrapStake(amountInSY, mintedUAsset, uAssetReceiver);
     }
 
-    // slither-disable-next-line reentrancy-no-eth,timestamp
     /// @notice Redeems SY from a matured position, repaying uAsset debt and sending tokenOut to the receiver.
     /// Only the position owner can call. The position deadline must have passed.
     /// @dev Debt is repaid proportionally: if all SY is redeemed, all remaining uAsset debt is burned.
@@ -469,7 +467,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         emit Redeem(positionId, msg.sender, syRedeemed, UAssetBurned, receiver, tokenOut, amountTokenOut);
     }
 
-    // slither-disable-next-line reentrancy-no-eth
     /// @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value. Face value is the SY amount
     /// represented by the burned uAsset debt at the current exchange rate; the payout rounds down and full-debt
     /// coverage rounds up. Reverts if the pool is undercollateralized.
@@ -514,7 +511,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         emit KeepWrapRedeem(msg.sender, receiver, amountInUAsset, amountInSY);
     }
 
-    // slither-disable-next-line reentrancy-no-eth,timestamp
     /// @notice Keeper burns uAsset to trigger redemption of a matured position.
     /// Debt-equivalent SY goes to receiver; any excess SY above debt goes back to position owner.
     /// @dev Reverts with InsufficientSyCollateral if the position's staked SY value is below its debt face

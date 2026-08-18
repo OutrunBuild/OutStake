@@ -190,7 +190,6 @@ abstract contract OutrunOFTUpgradeable is
     /// @notice Returns the maximum quoted amount for a destination, capped by the rate limit.
     /// @param dstEid Destination endpoint ID
     /// @return Max amount that can be quoted (uint64 max * decimalConversionRate, or rate-limited)
-    // slither-disable-next-line timestamp
     function _maxQuoteAmountLD(uint32 dstEid) internal view returns (uint256) {
         uint256 maxAmountLD = _maxOFTAmountLD();
         RateLimit memory rl = rateLimits(dstEid);

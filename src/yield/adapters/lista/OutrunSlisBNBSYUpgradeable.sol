@@ -40,7 +40,6 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
 
     // Deposit BNB into Lista StakeManager and measure received slisBNB by balance difference.
     // Using balance diff rather than return value because the StakeManager's deposit() doesn't return the amount.
-    // slither-disable-next-line reentrancy-eth,reentrancy-balance
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         if (tokenIn == NATIVE) {
             address _yieldBearingToken = yieldBearingToken();
@@ -48,7 +47,6 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
             IListaStakeManager(stakeManager()).deposit{value: amountDeposited}();
             uint256 afterBalance = _selfBalance(_yieldBearingToken);
             amountSharesOut = afterBalance - beforeBalance;
-            // slither-disable-next-line incorrect-equality
             if (amountSharesOut == 0) revert StakeManagerDepositZero();
             return amountSharesOut;
         }

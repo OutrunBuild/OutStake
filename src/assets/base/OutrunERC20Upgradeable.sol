@@ -31,7 +31,6 @@ abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, I
         0x77d1373660b69e27ef6b7052ba58efede68bac459506eb86ffbe444e4aa4d100;
 
     function _getOutrunERC20Storage() private pure returns (OutrunERC20Storage storage $) {
-        // slither-disable-next-line assembly
         assembly {
             $.slot := OUTRUN_ERC20_STORAGE_LOCATION
         }

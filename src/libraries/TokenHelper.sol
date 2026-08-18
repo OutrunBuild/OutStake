@@ -56,12 +56,10 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param amount Amount of token to transfer.
     /// @dev Skips zero amounts; native transfers revert with `NativeTransferFailed` when the call fails.
     // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
-    // slither-disable-next-line dead-code
     function _transferOut(address token, address to, uint256 amount) internal {
         if (amount == 0) return;
         if (token == NATIVE) {
             // Native transfers require a low-level call for contract recipients; production callers guard reentrancy.
-            // slither-disable-next-line low-level-calls
             (bool success,) = to.call{value: amount}("");
             if (!success) revert NativeTransferFailed();
         } else {
@@ -74,7 +72,6 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @return The token balance held by this contract.
     /// @dev Returns this contract's native balance for the sentinel, otherwise the ERC20 balance.
     // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
-    // slither-disable-next-line dead-code
     function _selfBalance(address token) internal view returns (uint256) {
         return (token == NATIVE) ? address(this).balance : IERC20(token).balanceOf(address(this));
     }
@@ -97,7 +94,6 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @dev On each invocation, refreshes an ERC20 allowance to max when it is below `LOWER_BOUND_APPROVAL`;
     ///      does not maintain a persistent max-allowance invariant. Native sentinel is ignored.
     // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
-    // slither-disable-next-line dead-code
     function _safeApproveInf(address token, address to) internal {
         if (token == NATIVE) return;
         uint256 currentAllowance = IERC20(token).allowance(address(this), to);

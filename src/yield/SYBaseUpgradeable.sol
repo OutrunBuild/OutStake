@@ -70,7 +70,6 @@ abstract contract SYBaseUpgradeable is
     }
 
     function _getSYBaseStorage() private pure returns (SYBaseStorage storage $) {
-        // slither-disable-next-line assembly
         assembly {
             $.slot := SY_BASE_STORAGE_LOCATION
         }

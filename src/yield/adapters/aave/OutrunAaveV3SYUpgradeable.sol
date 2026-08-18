@@ -57,7 +57,6 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// @param tokenIn the asset being deposited (underlying or aToken)
     /// @param amountDeposited amount of tokenIn to deposit
     /// @return amountSharesOut scaled shares credited (minted 1:1 as SY shares; 1 SY = 1 scaled share)
-    // slither-disable-next-line reentrancy-no-eth
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _underlying = underlying();
         address _pool = aavePool();

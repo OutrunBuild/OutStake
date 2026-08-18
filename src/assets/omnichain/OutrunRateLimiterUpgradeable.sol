@@ -36,7 +36,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     error RateLimitExceeded();
 
     function _getOutrunRateLimiterStorage() private pure returns (OutrunRateLimiterStorage storage $) {
-        // slither-disable-next-line assembly
         assembly {
             $.slot := OUTRUN_RATE_LIMITER_STORAGE_LOCATION
         }
@@ -98,7 +97,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     /// @param window Time window in seconds for full capacity refill
     /// @return currentAmountInFlight In-flight amount after applying time-based decay
     /// @return amountCanBeSent Remaining capacity available to send
-    // slither-disable-next-line timestamp
     function _amountCanBeSent(uint192 amountInFlight, uint64 lastUpdated, uint192 limit, uint64 window)
         internal
         view
@@ -115,7 +113,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         uint256 timeSinceLastUpdate;
         uint256 decay;
         unchecked {
-            // slither-disable-next-line timestamp
             timeSinceLastUpdate = block.timestamp - lastUpdated;
             if (timeSinceLastUpdate >= window) return (0, limit);
             decay = (uint256(limit) * timeSinceLastUpdate) / window;
@@ -137,7 +134,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     /// @notice Records an outflow against the rate limit for a destination.
     /// @param dstEid Destination endpoint ID
     /// @param amount Amount of tokens being sent
-    // slither-disable-next-line timestamp
     function _outflow(uint32 dstEid, uint256 amount) internal virtual {
         OutrunRateLimiterStorage storage $ = _getOutrunRateLimiterStorage();
         RateLimit storage rl = $.rateLimits[dstEid];
@@ -148,7 +144,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     /// @dev Accepts storage directly so callers that already loaded the rate limit do not resolve it again.
     /// @param rl Stored rate limit to checkpoint and update
     /// @param amount Outflow amount to record
-    // slither-disable-next-line timestamp
     function _checkAndUpdateRateLimit(RateLimit storage rl, uint256 amount) internal {
         if (rl.window == 0) return;
         (uint256 currentAmountInFlight, uint256 amountCanBeSent) =
@@ -164,7 +159,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
             // forge-lint: disable-next-line(unsafe-typecast)
             rl.amountInFlight = uint192(currentAmountInFlight + amount);
         }
-        // slither-disable-next-line timestamp
         rl.lastUpdated = uint64(block.timestamp);
     }
 

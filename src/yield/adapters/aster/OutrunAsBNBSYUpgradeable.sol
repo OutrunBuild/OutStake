@@ -85,7 +85,6 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         return outrunAsBNBSYStorage.stakeManager;
     }
 
-    // slither-disable-next-line reentrancy-eth,reentrancy-no-eth
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _minter = asBnbMinter();
         // Branch 1 (NATIVE): Mint asBNB from native BNB via the Aster Minter.

@@ -63,7 +63,6 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
         else amountSharesOut = amountDeposited;
     }
 
-    // slither-disable-next-line reentrancy-no-eth
     // If redeeming to stETH: wrap wstETH shares into stETH and transfer.
     // If redeeming to wstETH: transfer directly.
     /// @param receiver The address receiving the output tokens.

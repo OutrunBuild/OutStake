@@ -38,7 +38,6 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
         return outrunWstETHSYStorage.stETH;
     }
 
-    // slither-disable-next-line reentrancy-eth,reentrancy-benign
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _stETH = stETH();
         address _yieldBearingToken = yieldBearingToken();
