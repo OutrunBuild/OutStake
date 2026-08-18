@@ -109,10 +109,17 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         // Decay = (limit * timeSinceLastUpdate) / window.
         // Current in-flight = max(0, previousInFlight - decay).
         // Available = limit - currentInFlight.
-        // slither-disable-next-line timestamp
-        uint256 timeSinceLastUpdate = block.timestamp - lastUpdated;
-        if (timeSinceLastUpdate >= window) return (0, limit);
-        uint256 decay = (uint256(limit) * timeSinceLastUpdate) / window;
+        // Zero in-flight already means the full limit is available; the decay below
+        // would only be discarded, so short-circuit before computing it.
+        if (amountInFlight == 0) return (0, limit);
+        uint256 timeSinceLastUpdate;
+        uint256 decay;
+        unchecked {
+            // slither-disable-next-line timestamp
+            timeSinceLastUpdate = block.timestamp - lastUpdated;
+            if (timeSinceLastUpdate >= window) return (0, limit);
+            decay = (uint256(limit) * timeSinceLastUpdate) / window;
+        }
         if (amountInFlight > decay) {
             // The guard prevents underflow.
             unchecked {
@@ -132,15 +139,6 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     /// @param amount Amount of tokens being sent
     // slither-disable-next-line timestamp
     function _outflow(uint32 dstEid, uint256 amount) internal virtual {
-        _checkAndUpdateRateLimit(dstEid, amount);
-    }
-
-    /// @notice Checks and updates the rate limit for a destination: reverts if the outflow would exceed capacity.
-    /// @dev Updates in-flight counter after applying time-based decay. The counter decays automatically.
-    /// @param dstEid Destination endpoint ID
-    /// @param amount Outflow amount to record
-    // slither-disable-next-line timestamp
-    function _checkAndUpdateRateLimit(uint32 dstEid, uint256 amount) internal {
         OutrunRateLimiterStorage storage $ = _getOutrunRateLimiterStorage();
         RateLimit storage rl = $.rateLimits[dstEid];
         _checkAndUpdateRateLimit(rl, amount);
@@ -162,8 +160,10 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         // equals the decayed stored amountInFlight, itself already a uint192. An owner lowering
         // the limit can leave in-flight above the new limit — that over-limit state is expected
         // and decays back under the limit over time.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        rl.amountInFlight = uint192(currentAmountInFlight + amount);
+        unchecked {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            rl.amountInFlight = uint192(currentAmountInFlight + amount);
+        }
         // slither-disable-next-line timestamp
         rl.lastUpdated = uint64(block.timestamp);
     }

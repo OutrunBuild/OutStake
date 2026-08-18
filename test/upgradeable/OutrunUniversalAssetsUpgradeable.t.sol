@@ -9,7 +9,11 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
 import {MockLzEndpoint} from "./mocks/OFTMocks.sol";
-import {MockUAssetUUPSV2, MockUAssetUUPSV2DifferentSharedDecimals} from "./mocks/MockUUPSVersion.sol";
+import {
+    MockUAssetUUPSV2,
+    MockUAssetUUPSV2DifferentLocalDecimals,
+    MockUAssetUUPSV2DifferentSharedDecimals
+} from "./mocks/MockUUPSVersion.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 
 contract OutrunUniversalAssetsUpgradeableTest is Test {
@@ -25,7 +29,7 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         endpoint = new MockLzEndpoint();
         OutrunUniversalAssetsUpgradeable implementation = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
         bytes memory initData = abi.encodeCall(
-            OutrunUniversalAssetsUpgradeable.initialize, ("Omnichain Universal Assets ETH", "UETH", 18, owner)
+            OutrunUniversalAssetsUpgradeable.initialize, ("Omnichain Universal Assets ETH", "UETH", owner)
         );
         uAsset = OutrunUniversalAssetsUpgradeable(ProxyTestHelper.deploy(address(implementation), initData));
     }
@@ -39,35 +43,60 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
 
     function testInitializeRevertsWhenCalledTwice() external {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        uAsset.initialize("x", "x", 18, owner);
+        uAsset.initialize("x", "x", owner);
     }
 
     function testImplementationCannotBeInitializedDirectly() external {
         OutrunUniversalAssetsUpgradeable implementation = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        implementation.initialize("x", "x", 18, owner);
+        implementation.initialize("x", "x", owner);
     }
 
-    function testDecimalsMustMatchConstructorLocalDecimals() external {
-        OutrunUniversalAssetsUpgradeable implementation = new OutrunUniversalAssetsUpgradeable(18, address(endpoint));
-        bytes memory initData = abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("Bad", "BAD", 6, owner));
-        vm.expectRevert(abi.encodeWithSelector(OutrunUniversalAssetsUpgradeable.DecimalsMismatch.selector, 18, 6));
-        ProxyTestHelper.deploy(address(implementation), initData);
+    function testDecimalsDeriveFromConstructorLocalDecimals() external {
+        // Use a non-18 localDecimals so the assertion distinguishes "decimals derived from the
+        // constructor-frozen localDecimals()" from a metadata hardcoded to 18.
+        OutrunUniversalAssetsUpgradeable dec = new OutrunUniversalAssetsUpgradeable(6, address(endpoint));
+        bytes memory initData = abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("Dec", "DEC", owner));
+        dec = OutrunUniversalAssetsUpgradeable(ProxyTestHelper.deploy(address(dec), initData));
+        assertEq(dec.decimals(), dec.localDecimals());
+        assertEq(dec.decimals(), 6);
     }
 
     function testOwnerCanUpgradeAndStateSurvives() external {
         vm.prank(owner);
         uAsset.setMintingCap(minter, 100e18);
 
+        // Seed real state in every storage namespace that must survive an upgrade (ERC20
+        // balances/totalSupply, rate-limiter ledger, pause) so the post-upgrade reads prove the
+        // new implementation still reads the same storage. Mint precedes pause: mint is whenNotPaused.
+        vm.prank(minter);
+        uAsset.mint(receiver, 40e18);
+        vm.prank(owner);
+        uAsset.setOutboundRateLimit(101, 10e18, 1 days);
+        vm.prank(owner);
+        uAsset.pause();
+
         uint256 amountReceivedBefore = _quoteAmountReceived(1e18);
         MockUAssetUUPSV2 implementationV2 = new MockUAssetUUPSV2(18, address(endpoint));
         vm.prank(owner);
         uAsset.upgradeToAndCall(address(implementationV2), "");
 
-        assertEq(uAsset.checkMintableAmount(minter), 100e18);
+        // Minter ledger survives: checkMintableAmount is 60e18 = 100e18 cap − 40e18 minted
+        // debt, so both the cap and the debt persisted across the upgrade.
+        assertEq(uAsset.checkMintableAmount(minter), 60e18);
         assertEq(uAsset.owner(), owner);
         assertEq(MockUAssetUUPSV2(address(uAsset)).version(), 2);
         assertEq(_quoteAmountReceived(1e18), amountReceivedBefore);
+
+        // ERC20 state, rate-limiter ledger, pause, and metadata survive the upgrade.
+        assertEq(uAsset.balanceOf(receiver), 40e18);
+        assertEq(uAsset.totalSupply(), 40e18);
+        (, uint256 amountCanBeSent) = uAsset.getAmountCanBeSent(101);
+        assertEq(amountCanBeSent, 10e18);
+        assertTrue(uAsset.paused());
+        assertEq(uAsset.name(), "Omnichain Universal Assets ETH");
+        assertEq(uAsset.symbol(), "UETH");
+        assertEq(uAsset.decimals(), 18);
     }
 
     function testNonOwnerCannotUpgrade() external {
@@ -88,6 +117,19 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
 
     function testOwnerCannotUpgradeToDifferentLocalDecimals() external {
         MockUAssetUUPSV2 implementationV2 = new MockUAssetUUPSV2(6, address(endpoint));
+
+        vm.prank(owner);
+        vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidOFTUpgradeConfig.selector);
+        uAsset.upgradeToAndCall(address(implementationV2), "");
+    }
+
+    function testOwnerCannotUpgradeToDifferentLocalDecimalsWithSameOtherOFTConfig() external {
+        MockUAssetUUPSV2DifferentLocalDecimals implementationV2 =
+            new MockUAssetUUPSV2DifferentLocalDecimals(19, address(endpoint));
+
+        assertEq(address(implementationV2.endpoint()), address(endpoint));
+        assertEq(implementationV2.decimalConversionRate(), uAsset.decimalConversionRate());
+        assertTrue(implementationV2.localDecimals() != uAsset.localDecimals());
 
         vm.prank(owner);
         vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidOFTUpgradeConfig.selector);

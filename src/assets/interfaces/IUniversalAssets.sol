@@ -43,7 +43,9 @@ interface IUniversalAssets {
     /**
      * @notice Transfers outstanding minted debt from one minter record to another.
      * @dev Owner-only debt accounting operation. Does not mint, burn, transfer, or change total supply.
-     * `from` and `to` must be nonzero, distinct minter records.
+     * `from` and `to` must be nonzero, distinct minter records. Migrates only uAsset minter-level debt; if the
+     * minter is also constrained by position, wrap, or other module ledgers, those ledgers must be migrated in
+     * the same coordinated flow because this operation does not update them.
      * @param from Minter whose outstanding debt is decreased.
      * @param to Minter whose outstanding debt is increased.
      * @param amount Amount of outstanding debt to transfer.

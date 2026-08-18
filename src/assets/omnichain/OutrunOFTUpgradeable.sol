@@ -20,28 +20,32 @@ abstract contract OutrunOFTUpgradeable is
     uint8 private immutable _localDecimals;
 
     error InvalidLayerZeroEndpoint();
+    error InvalidDecimalConversionRate();
     error InvalidWindowSeconds();
+    error AmountTooSmall();
 
     event OutboundRateLimitSet(uint32 indexed eid, uint192 limit, uint64 window);
     event OutboundRateLimitRemoved(uint32 indexed eid);
 
     constructor(uint8 localDecimals_, address lzEndpoint) OFTCoreUpgradeable(localDecimals_, lzEndpoint) {
         if (lzEndpoint == address(0)) revert InvalidLayerZeroEndpoint();
+        // Every uint64 shared-decimal amount must remain representable in local decimals.
+        if (decimalConversionRate > type(uint256).max / type(uint64).max) {
+            revert InvalidDecimalConversionRate();
+        }
         _localDecimals = localDecimals_;
         _disableInitializers();
     }
 
     /// @notice Initializes the OFT with ERC20, rate limiter, and OFT core.
+    /// @dev ERC20 `decimals()` derives from the constructor-frozen `localDecimals()` — decimals and OFT local
+    ///      decimals are a single source of truth, so no separate decimals argument is accepted.
     /// @param name_ Token name
     /// @param symbol_ Token symbol
-    /// @param decimals_ Token decimals
     /// @param owner_ Initial owner address
     // solhint-disable-next-line func-name-mixedcase
-    function __OutrunOFT_init(string memory name_, string memory symbol_, uint8 decimals_, address owner_)
-        internal
-        onlyInitializing
-    {
-        __OutrunERC20Pausable_init(name_, symbol_, decimals_, owner_);
+    function __OutrunOFT_init(string memory name_, string memory symbol_, address owner_) internal onlyInitializing {
+        __OutrunERC20Pausable_init(name_, symbol_, localDecimals(), owner_);
         __OutrunRateLimiter_init();
         __OFTCore_init(owner_);
     }
@@ -85,6 +89,8 @@ abstract contract OutrunOFTUpgradeable is
     /// @param limit Maximum amount that can be in-flight at once
     /// @param window Time window (in seconds) over which the limit fully refills
     function setOutboundRateLimit(uint32 dstEid, uint192 limit, uint64 window) external onlyOwner {
+        // window == 0 is reserved by OutrunRateLimiterUpgradeable for the unconfigured/deleted
+        // unlimited sentinel; reject it here so configured limits cannot be mistaken for that state.
         if (window == 0) revert InvalidWindowSeconds();
         RateLimitConfig[] memory configs = new RateLimitConfig[](1);
         configs[0] = RateLimitConfig({dstEid: dstEid, limit: limit, window: window});
@@ -112,7 +118,8 @@ abstract contract OutrunOFTUpgradeable is
         returns (OFTLimit memory oftLimit, OFTFeeDetail[] memory oftFeeDetails, OFTReceipt memory oftReceipt)
     {
         uint256 maxAmountLD = _removeDust(_maxQuoteAmountLD(_sendParam.dstEid));
-        oftLimit = OFTLimit({minAmountLD: 0, maxAmountLD: maxAmountLD});
+        // Dust below one shared-decimal unit is rejected by _debit, so quote it as unsendable.
+        oftLimit = OFTLimit({minAmountLD: decimalConversionRate, maxAmountLD: maxAmountLD});
         oftFeeDetails = new OFTFeeDetail[](0);
         (uint256 amountSentLD, uint256 amountReceivedLD) =
             _debitView(_sendParam.amountLD, _sendParam.minAmountLD, _sendParam.dstEid);
@@ -133,6 +140,8 @@ abstract contract OutrunOFTUpgradeable is
         returns (uint256 amountSentLD, uint256 amountReceivedLD)
     {
         (amountSentLD, amountReceivedLD) = _debitView(_amountLD, _minAmountLD, _dstEid);
+        // Reject zero/dust outbound sends before they can touch the rate limiter.
+        if (amountSentLD == 0) revert AmountTooSmall();
         _outflow(_dstEid, amountSentLD);
         // Outbound transfer: (1) compute amounts, (2) apply rate limit outflow,
         // (3) burn tokens from sender. Must respect pause state.
@@ -158,13 +167,24 @@ abstract contract OutrunOFTUpgradeable is
         // Inbound transfer: mints tokens to receiver.
         // Uses direct parent _update to bypass pause — cross-chain delivery
         // must not revert during pause, otherwise tokens would be permanently lost.
-        // Sends to dead address if receiver is zero.
+        // Sends to dead address if receiver is zero. Without the remap, _update(address(0), address(0), ...)
+        // would first add then subtract totalSupply, silently destroying the bridged amount, so follow
+        // the upstream OFT convention and remap to 0xdead.
         // Mints the wire amount unchanged: dust truncation happens once on the source chain
         // in _debitView, and _lzReceive passes _toLD(amountSD) = amountSD * decimalConversionRate
         // — already a DCR multiple — so no _removeDust here (re-applying it would be a no-op).
         if (_to == address(0)) _to = address(0xdead);
         OutrunERC20Upgradeable._update(address(0), _to, _amountLD);
         return _amountLD;
+    }
+
+    /// @notice Removes dust from a local-decimal amount using the same formula as OFTCoreUpgradeable,
+    ///         but without checked overflow because floor(a / r) * r <= a always holds.
+    function _removeDust(uint256 _amountLD) internal view virtual override returns (uint256 amountLD) {
+        unchecked {
+            // forge-lint: disable-next-line(divide-before-multiply)
+            return (_amountLD / decimalConversionRate) * decimalConversionRate;
+        }
     }
 
     /// @notice Returns the maximum quoted amount for a destination, capped by the rate limit.

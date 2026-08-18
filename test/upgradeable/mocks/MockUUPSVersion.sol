@@ -54,6 +54,16 @@ contract MockUAssetUUPSV2DifferentSharedDecimals is MockUAssetUUPSV2 {
     }
 }
 
+/// @notice V2 upgrade mock with different local decimals but the same conversion rate.
+/// Used to isolate the local-decimals upgrade guard from the endpoint and conversion-rate guards.
+contract MockUAssetUUPSV2DifferentLocalDecimals is MockUAssetUUPSV2 {
+    constructor(uint8 localDecimals, address lzEndpoint) MockUAssetUUPSV2(localDecimals, lzEndpoint) {}
+
+    function sharedDecimals() public pure override returns (uint8) {
+        return 7;
+    }
+}
+
 /// @notice V2 upgrade mock for OutrunStakingPositionUpgradeable.
 /// Standalone contract that replicates the production storage namespace so it
 /// does not inherit from the production contract (which will use `layout at`).

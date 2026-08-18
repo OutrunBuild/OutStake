@@ -44,11 +44,9 @@ contract OutrunUpgradeableOftHarness is OutrunOFTUpgradeable {
     constructor(uint8 localDecimals, address lzEndpoint) OutrunOFTUpgradeable(localDecimals, lzEndpoint) {}
 
     /// @dev Minimal initialize — only sets up OFT, not minting cap logic.
-    function initialize(string calldata name_, string calldata symbol_, uint8 decimals_, address owner_)
-        external
-        initializer
-    {
-        __OutrunOFT_init(name_, symbol_, decimals_, owner_);
+    ///      ERC20 `decimals()` derives from the constructor-frozen `localDecimals()`.
+    function initialize(string calldata name_, string calldata symbol_, address owner_) external initializer {
+        __OutrunOFT_init(name_, symbol_, owner_);
     }
 
     function exposedDebit(address from, uint256 amountLD, uint256 minAmountLD, uint32 dstEid)

@@ -29,32 +29,29 @@ contract OutrunUniversalAssetsUpgradeable
     OutrunUniversalAssetsStorage private outrunUniversalAssetsStorage;
 
     error InvalidOFTUpgradeConfig();
-    error DecimalsMismatch(uint8 expected, uint8 provided);
 
     constructor(uint8 localDecimals_, address lzEndpoint) OutrunOFTUpgradeable(localDecimals_, lzEndpoint) {}
 
-    /// @notice Initializes the uAsset token with name, symbol, decimals, and owner.
+    /// @notice Initializes the uAsset token with name, symbol, and owner.
+    /// @dev ERC20 `decimals()` derives from the constructor-frozen `localDecimals()` — decimals and OFT local
+    ///      decimals are a single source of truth, so the init path does not accept a separate decimals argument.
     /// @param name_ Token name
     /// @param symbol_ Token symbol
-    /// @param decimals_ Token decimals (must match the OFT local decimals)
     /// @param owner_ Initial owner address
-    function initialize(string calldata name_, string calldata symbol_, uint8 decimals_, address owner_)
-        external
-        initializer
-    {
-        // First of two defense layers binding the two decimal sources: OFT conversion math
-        // (decimalConversionRate, _removeDust granularity) derives only from the constructor-frozen
-        // _localDecimals, while decimals_ becomes the ERC20 `decimals()` metadata. Forcing the two
-        // equal keeps ERC20 metadata and cross-chain amount conversion consistent.
-        uint8 expectedDecimals = localDecimals();
-        if (decimals_ != expectedDecimals) {
-            revert DecimalsMismatch(expectedDecimals, decimals_);
-        }
-        __OutrunOFT_init(name_, symbol_, decimals_, owner_);
+    function initialize(string calldata name_, string calldata symbol_, address owner_) external initializer {
+        __OutrunOFT_init(name_, symbol_, owner_);
     }
 
     function _mintingStatus(address minter) private view returns (MintingStatus storage) {
         return outrunUniversalAssetsStorage.mintingStatusTable[minter];
+    }
+
+    function _remainingMintable(uint256 mintingCap, uint256 amountInMinted)
+        private
+        pure
+        returns (uint256 amountInMintable)
+    {
+        return mintingCap > amountInMinted ? mintingCap - amountInMinted : 0;
     }
 
     /// @notice Returns the full minting status for a minter, including cap and outstanding debt.
@@ -69,9 +66,7 @@ contract OutrunUniversalAssetsUpgradeable
     /// @return amountInMintable Remaining mintable amount (mintingCap - amountInMinted)
     function checkMintableAmount(address minter) external view override returns (uint256 amountInMintable) {
         MintingStatus storage status = _mintingStatus(minter);
-        uint256 mintingCap = status.mintingCap;
-        uint256 amountInMinted = status.amountInMinted;
-        amountInMintable = mintingCap > amountInMinted ? mintingCap - amountInMinted : 0;
+        return _remainingMintable(status.mintingCap, status.amountInMinted);
     }
 
     /// @notice Sets the minting cap for a minter. Owner-only.
@@ -105,6 +100,9 @@ contract OutrunUniversalAssetsUpgradeable
 
     /// @notice Moves outstanding debt between minter records without minting or burning tokens.
     /// @dev Owner-only accounting operation. Used when migrating or rebalancing stake manager allocations.
+    ///      Migrates only the uAsset minter-level debt; if the minter is also constrained by position, wrap,
+    ///      or other module ledgers, those ledgers must be migrated in the same coordinated flow because this
+    ///      operation does not update them.
     /// @param from Source minter address
     /// @param to Destination minter address
     /// @param amount Amount of debt to transfer
@@ -119,10 +117,12 @@ contract OutrunUniversalAssetsUpgradeable
         uint256 toAmountInMinted = toStatus.amountInMinted;
         uint256 toMintingCap = toStatus.mintingCap;
         // Keep the cap/debt invariant explicit so this reverts with ReachMintCap instead of a raw underflow panic.
-        require(toMintingCap >= toAmountInMinted && amount <= toMintingCap - toAmountInMinted, ReachMintCap());
+        require(amount <= _remainingMintable(toMintingCap, toAmountInMinted), ReachMintCap());
 
-        fromStatus.amountInMinted = fromAmountInMinted - amount;
-        toStatus.amountInMinted = toAmountInMinted + amount;
+        unchecked {
+            fromStatus.amountInMinted = fromAmountInMinted - amount;
+            toStatus.amountInMinted = toAmountInMinted + amount;
+        }
 
         emit TransferMinterDebt(from, to, amount);
     }
@@ -138,11 +138,13 @@ contract OutrunUniversalAssetsUpgradeable
         uint256 amountInMinted = status.amountInMinted;
         uint256 mintingCap = status.mintingCap;
         // Check the minter (msg.sender) hasn't exceeded its cap.
-        require(mintingCap >= amountInMinted && amount <= mintingCap - amountInMinted, ReachMintCap());
+        require(amount <= _remainingMintable(mintingCap, amountInMinted), ReachMintCap());
 
         // Update debt before _mint — keeps C-E-I ordering in case future
         // hook overrides introduce external calls.
-        status.amountInMinted = amountInMinted + amount;
+        unchecked {
+            status.amountInMinted = amountInMinted + amount;
+        }
         // Mint uAsset tokens to receiver.
         _mint(receiver, amount);
 
@@ -162,7 +164,9 @@ contract OutrunUniversalAssetsUpgradeable
 
         // Update debt before _burn — keeps C-E-I ordering in case future
         // hook overrides introduce external calls.
-        status.amountInMinted = amountInMinted - amount;
+        unchecked {
+            status.amountInMinted = amountInMinted - amount;
+        }
 
         // If repaying another account's balance, check allowance.
         if (account != msg.sender) _spendAllowance(account, msg.sender, amount);
@@ -173,14 +177,17 @@ contract OutrunUniversalAssetsUpgradeable
     }
 
     /// @notice Validates that a new implementation preserves the LayerZero OFT configuration.
-    /// @dev Second defense layer over the constructor-frozen immutables of a new implementation;
-    ///      initialize() is the first (see DecimalsMismatch). Each field must stay unchanged because:
+    /// @dev Defense layer over the constructor-frozen immutables of a new implementation.
+    ///      Each field must stay unchanged because:
     ///      - endpoint: routes all cross-chain messages; a different endpoint would send through a
     ///        wrong or unconfigured LayerZero messaging layer.
     ///      - decimalConversionRate: drives every LD<->SD amount conversion; a different rate would
     ///        silently corrupt cross-chain amounts.
     ///      - localDecimals: binds the ERC20 `decimals()` metadata to the OFT conversion math; a
     ///        different value would make metadata and cross-chain amounts disagree.
+    ///      These values are self-reported by `newImplementation`; the check only detects configuration
+    ///      mismatches in implementations that report honestly and does not authenticate candidate code.
+    ///      The owner must still review and trust the candidate implementation.
     /// @param newImplementation Address of the new implementation contract
     function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
         OutrunUniversalAssetsUpgradeable implementation = OutrunUniversalAssetsUpgradeable(newImplementation);

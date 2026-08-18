@@ -236,7 +236,7 @@ contract OutstakeScript is BaseScript {
             ),
             abi.encodeCall(
                 OutrunUniversalAssetsUpgradeable.initialize,
-                (string.concat("Omnichain Universal Assets ", assetWord), symbol, 18, owner)
+                (string.concat("Omnichain Universal Assets ", assetWord), symbol, owner)
             ),
             salt
         );

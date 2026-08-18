@@ -6,6 +6,7 @@ import {MessagingFee, OFTLimit, SendParam} from "@layerzerolabs/oft-evm/contract
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
+import {OutrunOFTUpgradeable} from "../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
 import {OutrunRateLimiterHarness} from "./mocks/OutrunRateLimiterHarness.sol";
 import {MockLzEndpoint, OutrunUpgradeableOftHarness} from "./mocks/OFTMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
@@ -26,12 +27,23 @@ contract OutrunOFTUpgradeableTest is Test {
         oft = OutrunUpgradeableOftHarness(
             ProxyTestHelper.deploy(
                 address(implementation),
-                abi.encodeCall(OutrunUpgradeableOftHarness.initialize, ("Outrun OFT", "OFT", 18, owner))
+                abi.encodeCall(OutrunUpgradeableOftHarness.initialize, ("Outrun OFT", "OFT", owner))
             )
         );
 
         // Mint tokens on the harness for debit/credit/outflow tests.
         oft.exposedCredit(user, 100e18, 0);
+    }
+
+    function test_RevertWhenLocalDecimalsCannotRepresentFullSharedDecimalRange() external {
+        vm.expectRevert(abi.encodeWithSignature("InvalidDecimalConversionRate()"));
+        new OutrunUpgradeableOftHarness(64, address(endpoint));
+    }
+
+    function test_AllowsLargestRepresentableLocalDecimalValue() external {
+        OutrunUpgradeableOftHarness maximumPrecisionOft = new OutrunUpgradeableOftHarness(63, address(endpoint));
+
+        assertEq(maximumPrecisionOft.decimalConversionRate(), 1e57);
     }
 
     function testTokenAndApprovalRequiredUseLocalToken() external {
@@ -63,16 +75,6 @@ contract OutrunOFTUpgradeableTest is Test {
 
         (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(100e18));
         assertEq(oftLimit.maxAmountLD, 15e18);
-    }
-
-    function testDebitDispatchesVirtualOutflow() external {
-        vm.prank(owner);
-        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
-
-        vm.prank(user);
-        oft.exposedDebit(user, 25e18, 0, DST_EID);
-
-        assertEq(oft.outflowCalls(), 1);
     }
 
     function testPausedTokenBlocksNewOutboundDebit() external {
@@ -195,15 +197,72 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(rateLimit.window, 4 days);
     }
 
-    function testRemoveLimitRestoresSharedDecimalEnvelope() external {
-        vm.startPrank(owner);
+    /// @dev Locks the owner-lowered-limit over-cap branch: when a destination already has in-flight
+    ///      tokens and the owner sets a new limit below the in-flight amount, canBeSent clamps to
+    ///      zero, any non-zero outflow reverts RateLimitExceeded, and a reconfig amount == 0
+    ///      checkpoint does not record a new outflow beyond the stored in-flight.
+    function testOwnerLoweredLimitBlocksOutflowAndPreservesOverCapInvariant() external {
+        vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 25e18, 0, DST_EID);
+
+        // Lower the limit below the in-flight amount (25e18): over-cap state. The reconfig's
+        // amount == 0 checkpoint settles the in-flight under the old parameters first.
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 10e18, 1 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 25e18);
+        assertEq(canBeSent, 0);
+
+        // Any non-zero outflow (above the dust quantum) must be rejected while over cap.
+        vm.prank(user);
+        vm.expectRevert(OutrunRateLimiterUpgradeable.RateLimitExceeded.selector);
+        oft.exposedDebit(user, 1e12, 0, DST_EID);
+
+        // A further reconfig's amount == 0 checkpoint must not mint a new outflow record:
+        // the stored in-flight is preserved (and decays back under the limit over time).
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 5e18, 1 days);
+
+        (inFlight,) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 25e18);
+    }
+
+    function testRemoveLimitRestoresSharedDecimalEnvelope() external {
+        vm.warp(block.timestamp + 1);
+
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 25e18, 0, DST_EID);
+
+        OutrunRateLimiterUpgradeable.RateLimit memory beforeRemoval = oft.rateLimits(DST_EID);
+        assertEq(beforeRemoval.amountInFlight, 25e18);
+        assertEq(beforeRemoval.lastUpdated, block.timestamp);
+
+        vm.prank(owner);
         oft.removeOutboundRateLimit(DST_EID);
-        vm.stopPrank();
+
+        OutrunRateLimiterUpgradeable.RateLimit memory removedRateLimit = oft.rateLimits(DST_EID);
+        assertEq(removedRateLimit.amountInFlight, 0);
+        assertEq(removedRateLimit.lastUpdated, 0);
+        assertEq(removedRateLimit.limit, 0);
+        assertEq(removedRateLimit.window, 0);
 
         (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(inFlight, 0);
         assertEq(canBeSent, uint256(type(uint64).max) * oft.decimalConversionRate());
+
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        (inFlight, canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 0);
+        assertEq(canBeSent, 40e18);
     }
 
     function _sendParam(uint256 amountLD) internal pure returns (SendParam memory) {
@@ -216,6 +275,47 @@ contract OutrunOFTUpgradeableTest is Test {
             composeMsg: bytes(""),
             oftCmd: bytes("")
         });
+    }
+
+    /// @dev F-001 regression: zero-amount outbound sends are rejected by _debit before _outflow.
+    function testDebitRejectsZeroAmount() external {
+        vm.expectRevert(OutrunOFTUpgradeable.AmountTooSmall.selector);
+        oft.exposedDebit(user, 0, 0, DST_EID);
+        assertEq(oft.outflowCalls(), 0);
+    }
+
+    /// @dev F-001 regression: sub-DCR dust that round-trips to zero is also rejected.
+    function testDebitRejectsDustAmount() external {
+        uint256 dust = oft.decimalConversionRate() - 1;
+        vm.expectRevert(OutrunOFTUpgradeable.AmountTooSmall.selector);
+        oft.exposedDebit(user, dust, 0, DST_EID);
+        assertEq(oft.outflowCalls(), 0);
+    }
+
+    /// @dev F-001 regression: quoteOFT signals dust as unsendable via minAmountLD.
+    function testQuoteOFTMinAmountSignalsDustRejection() external {
+        (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
+        assertEq(oftLimit.minAmountLD, oft.decimalConversionRate());
+    }
+
+    /// @dev F-001 regression: a rejected dust send must not refresh rl.lastUpdated or rate-limiter state.
+    function testDustDebitDoesNotRefreshRateLimitState() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 25e18, 0, DST_EID);
+
+        OutrunRateLimiterUpgradeable.RateLimit memory before = oft.rateLimits(DST_EID);
+
+        vm.prank(user);
+        vm.expectRevert(OutrunOFTUpgradeable.AmountTooSmall.selector);
+        oft.exposedDebit(user, 0, 0, DST_EID);
+
+        OutrunRateLimiterUpgradeable.RateLimit memory afterState = oft.rateLimits(DST_EID);
+        assertEq(afterState.amountInFlight, before.amountInFlight);
+        assertEq(afterState.lastUpdated, before.lastUpdated);
+        assertEq(oft.outflowCalls(), 1);
     }
 }
 
@@ -231,7 +331,7 @@ contract OutrunRateLimiterBaseTest is Test {
         rateLimiter = new OutrunRateLimiterHarness();
     }
 
-    /// @dev F-031 regression: window == 0 must read as "infinite limit" in the base view,
+    /// @dev window == 0 must read as "infinite limit" in the base view,
     ///      not as zero capacity.
     function testUnconfiguredDestinationReturnsInfiniteCapacity() external {
         (uint256 inFlight, uint256 canBeSent) = rateLimiter.getAmountCanBeSent(DST_EID);

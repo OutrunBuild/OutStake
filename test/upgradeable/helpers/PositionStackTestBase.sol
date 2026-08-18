@@ -53,7 +53,7 @@ contract PositionStackTestBase is Test {
         uAsset = OutrunUniversalAssetsUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunUniversalAssetsUpgradeable(18, address(endpoint))),
-                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("UAsset", "UAST", 18, owner))
+                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("UAsset", "UAST", owner))
             )
         );
 
