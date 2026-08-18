@@ -68,15 +68,6 @@
       "key": "unused-return|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.initialize(address,uint256,address,address,address,address) ignores return value by (None,None,canonicalAssetDecimals) = IStandardizedYield(sy_).assetInfo()"
     },
     {
-      "id": "829984bcde74d425690f68b7585275ab407408c09c91320188def98d9564a653",
-      "check": "shadowing-local",
-      "impact": "Low",
-      "confidence": "High",
-      "location": "src/position/interfaces/IOutrunStakeManager.sol#L254",
-      "summary": "IOutrunStakeManager.setKeeper(address).keeper shadows:",
-      "key": "shadowing-local|src/position/interfaces/IOutrunStakeManager.sol|IOutrunStakeManager.setKeeper(address).keeper shadows:"
-    },
-    {
       "id": "be15c7c99c7cc81348ba7d4d8ae78aeb9dceb266562cdfcf95efa20d73ba16f4",
       "check": "timestamp",
       "impact": "Low",
