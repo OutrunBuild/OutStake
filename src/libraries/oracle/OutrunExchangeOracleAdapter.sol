@@ -59,8 +59,9 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
         // Chainlink-style feeds expose update time only through latestRoundData().
         (, int256 answer,, uint256 updatedAt,) = AggregatorInterface(oracle).latestRoundData();
         if (answer <= 0) revert InvalidOracleAnswer();
-        if (updatedAt == 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > maxStaleness) {
-            revert StaleOracleAnswer();
+        if (updatedAt == 0 || updatedAt > block.timestamp) revert StaleOracleAnswer();
+        unchecked {
+            if (block.timestamp - updatedAt > maxStaleness) revert StaleOracleAnswer();
         }
         // Normalize: (rawAnswer * SYUtils.ONE) / _rawScale.
         // Example: raw=1.05e8 (8 decimals), fixed 1e18 scale -> 1.05e8 * 1e18 / 1e8 -> 1.05e18.
@@ -85,6 +86,8 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
         // Both share one error for simplicity — split it if deployment troubleshooting must tell them apart.
         if (startedAt == 0 || startedAt > block.timestamp) revert SequencerGracePeriodNotOver();
         // Even after recovery is recorded, wait out the grace window so a price updated during the downtime is not used.
-        if (block.timestamp - startedAt <= sequencerGracePeriod) revert SequencerGracePeriodNotOver();
+        unchecked {
+            if (block.timestamp - startedAt <= sequencerGracePeriod) revert SequencerGracePeriodNotOver();
+        }
     }
 }

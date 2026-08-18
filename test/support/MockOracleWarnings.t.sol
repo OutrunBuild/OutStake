@@ -115,6 +115,20 @@ contract MockOracleWarningsTest is Test {
         adapter.getExchangeRate();
     }
 
+    function testExchangeOracleAdapterRevertsWhenSequencerStartedAtInFuture() external {
+        adapter = new OutrunExchangeOracleAdapter(address(aggregator), 2 days, address(sequencerUptimeFeed), 1 hours);
+        vm.warp(10 days);
+        aggregator.setLatestAnswer(1.1 ether);
+        // Feed clock ahead of chain time must surface as SequencerGracePeriodNotOver: the
+        // startedAt > block.timestamp guard reverts before the age subtraction, so the unchecked
+        // block.timestamp - startedAt can never underflow into a huge age that skips the grace
+        // window and returns an untrusted price.
+        sequencerUptimeFeed.setLatestRoundData(0, block.timestamp + 1 hours, block.timestamp);
+
+        vm.expectRevert(SEQUENCER_GRACE_PERIOD_NOT_OVER_SELECTOR);
+        adapter.getExchangeRate();
+    }
+
     function testExchangeOracleAdapterNormalizes8DecimalAnswerTo18Scale() external {
         MockAggregator aggregator8 = new MockAggregator(8);
         aggregator8.setLatestAnswer(1.05e8);
