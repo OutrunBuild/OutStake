@@ -10,7 +10,6 @@
 - **Canonical Asset**：adapter 对外声明的"真实底层资产"元数据（地址 + 精度）。跨链收益族 L2 adapter（`OutrunL2OracleBackedSYUpgradeable` 派生系及 `OutrunL2WrappableWstETHSYUpgradeable`）指向 Ethereum 上的 canonical underlying 而非 L2 token；L2 原生协议族（如 Sky PSM3 的 `OutrunL2StakedUsdsSYUpgradeable`）canonical 为 L2 本地资产。
 - **exchangeRate()**：SY 的汇率函数，返回 asset per SY。用于将 SY 份额数量与资产值双向换算。
 - **SYUtils.syToAsset**：按 exchangeRate 将 SY 份额换算为资产值（向下取整）。
-- **SYUtils.syToAssetUp**：按 exchangeRate 将 SY 份额换算为资产值（向上取整）。
 - **SYUtils.assetToSy**：按 exchangeRate 将资产值换算为 SY 份额（向下取整）。
 - **SYUtils.assetToSyUp**：按 exchangeRate 将资产值换算为 SY 份额（向上取整）。
 - **Position**：锁仓仓位记录，包含 owner（仓位控制权）、syStaked（质押 SY 数量）、UAssetMinted（已铸造 uAsset 债务）、deadline。
@@ -20,7 +19,7 @@
 - **syTotalStaking**：position 合约中所有 SY 质押总量（含锁仓仓位与 wrap 池）。
 - **syWrapStaking**：wrap 池中的 SY 本金量。
 - **wrapUAssetDebt**：wrap 池的 uAsset 总债务。
-- **drawUAsset**：提取仓位升值部分对应的 uAsset 债务。
+- **drawUAsset**：提取仓位升值部分对应的 uAsset 债务。仅在仓位锁定期内（`block.timestamp < deadline`）可用；到期后 revert `LockTimeExpired`。
 - **keepRedeem**：keeper 代偿已到期的锁仓仓位债务。
 - **keepWrapRedeem**：keeper-only 入口；keeper 烧自己的 uAsset 兑换 wrap 池 SY（仅直付 SY），池子抵押不足时 revert WrapPoolUndercollateralized（全有或全无兑付，不再 pro-rata）。
 - **harvestWrapYield**：提取 wrap 池中超出债务等值 SY 的超额收益至 revenuePool。

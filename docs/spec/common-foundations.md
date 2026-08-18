@@ -46,10 +46,10 @@
 - `OutrunUniversalAssetsUpgradeable.sol::mint` 与 `OutrunUniversalAssetsUpgradeable.sol::repay` 分别伴随 `MintUAsset`/`BurnUAsset` 以及 ERC20 `Transfer`（铸出为零地址到 receiver，偿还为 account 到零地址）；`setMintingCap`、`revokeMinter`、`transferMinterDebt` 只改 minter 账本并发出各自 accounting event，不改变账户 `balance` 或 `totalSupply`，也不发出 ERC20 `Transfer`/`Approval`
 - `OutrunOFTUpgradeable.sol::_debit` 与 `OutrunOFTUpgradeable.sol::_credit` 仅通过 ERC20 `_update` 产生 ERC20 `Transfer`：不读写 minter debt ledger，不改变 `amountInMinted`/`mintingCap`，也不发出 `MintUAsset`/`BurnUAsset`
 
-- `_safeApproveInf` 的 ERC20 approval 刷新：当 allowance 低于 `LOWER_BOUND_APPROVAL`（`type(uint96).max / 2`）时先归零再设 max——USDT 型 token 拒绝非零→非零变更；NATIVE 哨兵跳过；刷新是调用点触发的惰性重检，仅在再次调用 `_safeApproveInf` 时重查 allowance，不维护「恒 max」不变量
+- `_safeApproveInf` 的 ERC20 approval 刷新：当 allowance 低于 `LOWER_BOUND_APPROVAL`（`type(uint96).max / 2`）时刷新到 max；allowance 非零时先归零再设 max（USDT 型 token 拒绝非零→非零变更），allowance 已为 0 时跳过归零、直接设 max（零→max 被 USDT 型 token 接受）；NATIVE 哨兵跳过；刷新是调用点触发的惰性重检，仅在再次调用 `_safeApproveInf` 时重查 allowance，不维护「恒 max」不变量
 - TokenHelper 资金转移契约：native 转出走低层 call，失败必须 revert `NativeTransferFailed`（不静默吞失败）；`_transferOut`/`_transferFrom` 零金额跳过不发起转账；`_transferIn`：native 分支自身不发起转账（资金随 `msg.value` 到达）、仅校验 `msg.value == amount`，ERC20 分支要求 `msg.value == 0` 且金额非零才执行 `safeTransferFrom`，两分支的 `msg.value` 校验均不因零金额跳过
 - `TokenHelper.sol::_selfBalance`：token 为 NATIVE 哨兵时读 `address(this).balance`，否则读 `balanceOf(address(this))`；`OutrunSlisBNBSYUpgradeable` 用它在外部质押存款调用（Lista StakeManager `deposit()`，效果为 mint slisBNB）前后做余额差量计量
-- `TokenHelper.sol::_safeApprove`：向目标 token 透传 `forceApprove`（USDT 类非标 approve 兼容）；消费方有二：`_safeApproveInf` 的两步刷新（先归零再设 max）与 `OutrunRouter.sol::_approveExact` 的定额 approval（拒绝 `type(uint256).max`、NATIVE 跳过）——前者刷新到无限额，后者始终设置有限额的精确 allowance
+- `TokenHelper.sol::_safeApprove`：向目标 token 透传 `forceApprove`（USDT 类非标 approve 兼容）；消费方有二：`_safeApproveInf` 的条件刷新（allowance 非零时先归零再设 max，已为 0 时直接设 max）与 `OutrunRouter.sol::_approveExact` 的定额 approval（拒绝 `type(uint256).max`、NATIVE 跳过）——前者刷新到无限额，后者始终设置有限额的精确 allowance
 
 ## 单位模型
 
@@ -58,7 +58,7 @@
 - `exchangeRate` 的单位是 `canonical asset per 1 SY`，并按 `1e18` 缩放
 - `SYBaseUpgradeable.sol::__SYBase_init` 将 SY 的 decimals 绑定为对应 yield-bearing token 的 decimals；跨 adapter 的 SY 份额单位以该绑定为准
 - `SYBaseUpgradeable.sol::deposit` 将 `SYBaseUpgradeable.sol::_deposit` 返回的份额数量直接作为 `_mint` 数量，不对该返回值按 `exchangeRate` 二次换算；因此 1 SY unit 等于对应 yield-bearing-token domain 的 1 unit
-- SAMPLE（Aave）族的 yield-bearing-token domain 是 `scaledBalanceOf` 使用的 scaled-share domain，而非随流动性指数增长的 nominal balance domain；其存取与份额证据按 scaled-share unit 解释
+- Aave 族的 yield-bearing-token domain 是 `scaledBalanceOf` 使用的 scaled-share domain，而非随流动性指数增长的 nominal balance domain；其存取与份额证据按 scaled-share unit 解释
 - `canonicalAssetDecimals = SY.assetInfo().assetDecimals`
 - `uAssetDecimals = uAsset.decimals()`
 - `syAmount` 表示 `SY` 数量
@@ -75,7 +75,6 @@
 
 - `SY -> canonical asset`
   - down: `canonicalAssetValue = roundDownDiv(syAmount * exchangeRate, 1e18)`
-  - up: `canonicalAssetValue = roundUpDiv(syAmount * exchangeRate, 1e18)`
 - `canonical asset -> uAsset`
   - 若 `uAssetDecimals >= canonicalAssetDecimals`，`uAssetDebtUnits = canonicalAssetValue * 10 ** (uAssetDecimals - canonicalAssetDecimals)`
   - 若 `uAssetDecimals < canonicalAssetDecimals`，down: `uAssetDebtUnits = roundDownDiv(canonicalAssetValue, 10 ** (canonicalAssetDecimals - uAssetDecimals))`
@@ -137,17 +136,20 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 `OutrunOFTUpgradeable` 继承 `OutrunRateLimiterUpgradeable`，对每个远程链的 outbound send 施加风控限额（部署不配置本地链限额）：
 
 - outbound send 受 rate limit 约束：`_debit` burn 前先走 `_outflow` 记账，超过可用额度即 revert `RateLimitExceeded`
+- 零金额/纯 dust 拒绝：`_debit` 对去 dust 后 `amountSentLD == 0`（含 `amountLD == 0` 与 `amountLD < decimalConversionRate`）revert `AmountTooSmall`，不进入 `_outflow`，因此不会刷新 `lastUpdated`；`quoteOFT().maxAmountLD` 受 rate limit 封顶而 `minAmountLD` 为 `decimalConversionRate`（dust 不可发送）
 - 线性衰减回补模型：`decay = limit × timeSinceLastUpdate / window`；当前 in-flight = `max(0, 上次 in-flight − decay)`；可用额度 = `limit − 当前 in-flight`（距上次记账超过 `window` 后全量回补）
 - `quoteOFT()` 的 `maxAmountLD` 受 rate limit 封顶：取 `min(amountCanBeSent, uint64.max × decimalConversionRate)` 再去 dust；`window == 0` 时不封顶
 - `window == 0` 表示无限额，只存在于未配置/删除态：`setOutboundRateLimit` 拒绝 `window == 0`（revert `InvalidWindowSeconds`），`removeOutboundRateLimit` 删除配置后回到无限额；该状态下基座 `OutrunRateLimiterUpgradeable.sol::getAmountCanBeSent` 返回无限额哨兵 `(0, type(uint256).max)`，OFT 层 override（`OutrunOFTUpgradeable.sol::getAmountCanBeSent`）返回 SD 域包络 `(0, uint64.max × decimalConversionRate)`
 - checkpoint 语义：每次 `setOutboundRateLimit` 先以 0 记账结算当前 in-flight，再写入新限额；若限额被调低，已 in-flight 可瞬态超过新限额——此时可用额度为 0、outbound 暂时全部 revert，随衰减回补自愈
 - 部署约束：部署脚本对每个远程链强制设置限额与窗口，限额/窗口由 env 显式配置、无生产默认值，任一为 0 即部署 revert；部署测试断言值为 1_000_000 ether / 1h（测试断言值，非生产默认值）；该设置路径当前随 uAsset 部署调用（`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB`）在 `OutstakeScript.s.sol::run` 中被注释，启用时生效
+- 配置变更事件可观测性：`setOutboundRateLimit` 成功时同时发出两个事件——`OutrunRateLimiterUpgradeable.sol::_setRateLimits` 发出 `RateLimitsChanged(RateLimitConfig[] rateLimitConfigs)`，`OutrunOFTUpgradeable.sol::setOutboundRateLimit` 发出 `OutboundRateLimitSet(indexed eid, limit, window)`；`removeOutboundRateLimit` 成功时仅由 `OutrunOFTUpgradeable.sol::removeOutboundRateLimit` 发出 `OutboundRateLimitRemoved(indexed eid)`，不发 `RateLimitsChanged`。事件声明位于 `OutrunRateLimiterUpgradeable.sol` 与 `OutrunOFTUpgradeable.sol`
 
 ## OFT 换算参数与发送/部署校验语义
 
 `OutrunOFTUpgradeable` 继承 LayerZero `OFTCoreUpgradeable`，跨链金额在 LD（local decimals）与 SD（shared decimals）两域间换算：
 
 - decimalConversionRate（DCR）= `10 ** (localDecimals − sharedDecimals)`，immutable；`sharedDecimals` 默认 6（Outrun 代码未覆盖），18-dec 部署下 DCR = 1e12
+- `OutrunOFTUpgradeable.sol::constructor` 拒绝 `uint64.max × DCR` 无法容纳于 `uint256` 的 DCR，确保每个有效 SD 金额均可换算为 LD
 - 发送金额经 `_removeDust` 去 dust（按 DCR 粒度截断低位）后 burn：实际 burn 与跨链到账金额均为去 dust 后金额（≤ 用户输入 `amountLD`；源/目标 localDecimals 相同时到账数值相等），dust 保留在发送方源链余额中、不被 burn、不跨链
 - `_debitView` 在去 dust 后金额低于 `minAmountLD` 时 revert `SlippageExceeded`：`minAmountLD` 是发送方滑点保护下限
 - LD→SD 换算结果超过 `uint64.max` 时 revert `AmountSDOverflowed`：单笔发送受 SD 域上限约束（对应 LD 上限 = `uint64.max × DCR`）
@@ -155,7 +157,7 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 
 部署与升级一致性约束（`OutrunUniversalAssetsUpgradeable`）：
 
-- `OutrunUniversalAssetsUpgradeable.sol::initialize` 强制传入 `decimals_` 等于构造期固化的 `OutrunOFTUpgradeable.sol::localDecimals`，否则 revert `DecimalsMismatch(expected, provided)`：不可用与 localDecimals 不一致的 decimals 部署
+- ERC20 `decimals()` 元数据与 OFT 换算参数 `localDecimals` 是同一真源：`OutrunOFTUpgradeable.sol::__OutrunOFT_init` 不接收独立 decimals 参数，ERC20 `decimals()` 直接取自构造期固化的 `OutrunOFTUpgradeable.sol::localDecimals()`（single source of truth）；标准部署路径（`OutrunUniversalAssetsUpgradeable.initialize` → `__OutrunOFT_init`）下不再暴露独立 decimals 形参，ERC20 `decimals()` 元数据由 `localDecimals()` 唯一派生，不存在与 localDecimals 不一致的部署路径；`OutrunUniversalAssetsUpgradeable.sol::initialize` 的 `decimals_` 形参与 `DecimalsMismatch` 校验已随该修复移除
 - `OutrunOFTUpgradeable.sol::constructor` 拒绝 `lzEndpoint == address(0)`，revert `InvalidLayerZeroEndpoint`；标准部署脚本的 `OutstakeScript.s.sol::_validateUAssetDeploymentConfig` 可能在 implementation 创建前以 `InvalidEndpoint` 预检同一输入；该预检的调用方（uAsset 部署调用）当前在 `OutstakeScript.s.sol::run` 中被注释，启用时生效
 - `OutrunUniversalAssetsUpgradeable.sol::_authorizeUpgrade`（owner-only）比较新实现 getter 返回的 endpoint、decimalConversionRate、localDecimals 与当前值；对忠实报告其构造期配置的实现可拦截参数误配，但 getter 读数来自新实现自身，恶意实现仍可伪造相同 selector 返回值，故该校验只表达诚实实现的一致性约束，不替代 owner 对实现代码的信任与审查
 

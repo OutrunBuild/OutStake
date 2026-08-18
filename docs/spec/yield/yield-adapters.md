@@ -8,7 +8,7 @@
 
 - 所有 SY adapters 都通过 `SYBaseUpgradeable` 提供的 proxy-backed 抽象实现
 - 所有 adapter 都保留 `deposit`、`redeem`、`previewDeposit`、`previewRedeem`、`exchangeRate`、`getTokensIn`、`getTokensOut`
-- 跨 adapter 的 SY 单位契约以 `docs/spec/common-foundations.md` 的「单位模型」为准：`SYBaseUpgradeable.sol::__SYBase_init` 绑定 yield-bearing token decimals，`SYBaseUpgradeable.sol::deposit` 将 `SYBaseUpgradeable.sol::_deposit` 返回值直接作为 `_mint` 数量，因此 1 SY unit 等于对应 yield-bearing-token domain 的 1 unit；SAMPLE（Aave）族使用 `scaledBalanceOf` 的 scaled-share domain，而非随流动性指数增长的 nominal balance domain
+- 跨 adapter 的 SY 单位契约以 `docs/spec/common-foundations.md` 的「单位模型」为准：`SYBaseUpgradeable.sol::__SYBase_init` 绑定 yield-bearing token decimals，`SYBaseUpgradeable.sol::deposit` 将 `SYBaseUpgradeable.sol::_deposit` 返回值直接作为 `_mint` 数量，因此 1 SY unit 等于对应 yield-bearing-token domain 的 1 unit；Aave 族使用 `scaledBalanceOf` 的 scaled-share domain，而非随流动性指数增长的 nominal balance domain
 - oracle-backed variants 通过 `exchangeRateOracle` storage 获取汇率
 - Optimism-specific `OutrunL2WrappableWstETHSYUpgradeable` 不使用 `exchangeRateOracle` storage / getter / setter；`exchangeRate()` 直接返回 `IL2StETH.getTokensByShares(1 ether)`
 - adapter 本身不重复继承 UUPS
