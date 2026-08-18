@@ -120,6 +120,51 @@
       "location": "src/position/OutrunStakingPositionUpgradeable.sol#L259-L278",
       "summary": "OutrunStakingPositionUpgradeable.previewKeepRedeem(uint256,uint256) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.previewKeepRedeem(uint256,uint256) uses timestamp for comparisons"
+    },
+    {
+      "id": "9942e949d44cc1aabc04b7d214ba66e5f9032fa39da948ae9a3f9bfe16a17507",
+      "check": "divide-before-multiply",
+      "impact": "Medium",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L183-L188",
+      "summary": "OutrunOFTUpgradeable._removeDust(uint256) performs a multiplication on the result of a division:",
+      "key": "divide-before-multiply|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._removeDust(uint256) performs a multiplication on the result of a division:"
+    },
+    {
+      "id": "3f53ac49051d2d9552461d53d36e631b827d2e3879fd4c2431578846e32da6c9",
+      "check": "incorrect-equality",
+      "impact": "Medium",
+      "confidence": "High",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L136-L154",
+      "summary": "OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses a dangerous strict equality:",
+      "key": "incorrect-equality|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses a dangerous strict equality:"
+    },
+    {
+      "id": "fcb2ee7e8e33c3d4e2e7f042468a85f2f43a2ca71d7f566910ad53396a2f1c63",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L136-L154",
+      "summary": "OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses timestamp for comparisons",
+      "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses timestamp for comparisons"
+    },
+    {
+      "id": "d57f011b678a12bbb93be72cbba62b07b934a88261318b32217d2dda05d805aa",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L350-L381",
+      "summary": "OutrunStakingPositionUpgradeable.drawUAsset(uint256,address) uses timestamp for comparisons",
+      "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.drawUAsset(uint256,address) uses timestamp for comparisons"
+    },
+    {
+      "id": "105a05e0b971dae0d321c7fa2541207a48994a58498788d4d715efaea0b05c9b",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L202-L215",
+      "summary": "OutrunStakingPositionUpgradeable.previewDrawUAsset(uint256) uses timestamp for comparisons",
+      "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.previewDrawUAsset(uint256) uses timestamp for comparisons"
     }
   ]
 }
