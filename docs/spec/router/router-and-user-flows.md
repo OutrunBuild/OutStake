@@ -174,6 +174,7 @@
 ### 7.5 target registry 与撤销
 
 - Router owner 应先调用 `setTrustedSY(...)` 登记官方 SY，再调用 `setTrustedSP(...)` 登记每个官方 SP 的配对；部署脚本或集成层应记录 `TrustedSYUpdated` 与 `TrustedSPUpdated` 事件并核对 `SP.SY()`。
+- `redeemSyToToken` 入口还要完成 trusted-router wiring：每个官方 SY 由该实例 owner 调用 `SYBaseUpgradeable.sol::setTrustedRouter(OUTRUN_ROUTER)`（当前 router 地址），使 `SYBaseUpgradeable.sol::trustedRouter()` 等于 router，并核对 `SetTrustedRouter` 事件后再开放该入口；遗漏该步时入口在 `SYBaseUpgradeable.sol::redeem` 以 `SYUnauthorizedInternalRedeemer(address caller)` 回退（见 §3）。轮换 router 时先对每个 SY 设置新 router 并核对读取值与事件，再停用旧入口或撤销（`SYBaseUpgradeable.sol::setTrustedRouter(address(0))`）。
 - `setTrustedSY(SY, false)` 或 `setTrustedSP(SP, address(0))` 只影响后续 router 入口，不回滚已完成的资产流或 position 状态。
 
 ### 7.6 错误面与下游透传边界

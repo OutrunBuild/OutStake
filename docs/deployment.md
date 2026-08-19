@@ -10,7 +10,7 @@
 
 `YieldDeployScript.s.sol::run` 默认执行 `YieldDeployScript.s.sol::_supportAUSDC`，并通过 `ERC1967Proxy` 部署 `OutrunAaveV3SYUpgradeable` 与 `OutrunStakingPositionUpgradeable`。`YieldDeployScript.s.sol::_supportAUSDC` 仅在 `block.chainid` 匹配 `ARBITRUM_SEPOLIA_CHAINID` 或 `BASE_SEPOLIA_CHAINID`（Arbitrum Sepolia / Base Sepolia）时部署；在两个 `*_CHAINID` env 键均已配置的前提下，其余链跳过部署并打印 skip 日志后正常返回，脚本不回退；被求值到的键缺失时 `vm.envUint` 读取失败会使脚本直接 revert（chainid 已匹配前序条件时，后续键不再求值）。
 
-`OutstakeScript.run()` 默认只部署 `OutrunRouter` 与基础链配置。
+`OutstakeScript.s.sol::run` 默认只部署 `OutrunRouter`（附带 owner / deployer 断言与 router 配置），仅要求 `OWNER` / `OUTRUN_DEPLOYER` / `MEMEVERSE_LAUNCHER` 环境变量（外加可选 `OUTRUN_ROUTER`），不要求 14 条链的 endpoint / EID 环境变量。完整的链配置初始化 `OutstakeScript.s.sol::_chainsInit`（14 条链 endpoint / EID 环境变量）仅在启用 uAsset 跨链部署时经其共享入口 `OutstakeScript.s.sol::_deployUAsset`（`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB` 的共同入口）加载并校验；这些调用当前在 `OutstakeScript.s.sol::run` 中被注释，启用时按需解除注释。
 
 ## 关键约束
 
