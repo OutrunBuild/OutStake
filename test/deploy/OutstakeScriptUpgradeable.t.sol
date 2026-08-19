@@ -319,6 +319,14 @@ contract OutstakeScriptUpgradeableTest is Test {
         vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployer));
         vm.setEnv("MEMEVERSE_LAUNCHER", vm.toString(address(launcher)));
 
+        // Override any environment-preset OUTRUN_ROUTER with the deterministic CREATE3 address this
+        // run() is about to deploy: `_applyRouterConfig` switches on `vm.envExists("OUTRUN_ROUTER")`
+        // and `_deployOutrunRouter` reverts on mismatch, so the test must be independent of the
+        // runner's shell/.env and also positively covers the enforcement-pass path.
+        bytes32 salt = keccak256(abi.encodePacked("OutrunRouter", uint256(7)));
+        address expectedRouter = OutrunDeployer(canonicalDeployer).getDeployed(address(runScript), salt);
+        vm.setEnv("OUTRUN_ROUTER", vm.toString(expectedRouter));
+
         // A Router-only run() must never read the (now-poisoned) chain endpoint/EID envs: if `run()`
         // still loaded them, the first read reverts `vm.envAddress`/`vm.envUint` and fails this test —
         // the revert-if-read-on-regression behavior is the pin.
@@ -326,7 +334,6 @@ contract OutstakeScriptUpgradeableTest is Test {
 
         // The router deploys with nonce 7 (`_deployOutrunRouter(7)`); assert it was created and
         // owned by the run harness — proving run() reached the router deploy.
-        bytes32 salt = keccak256(abi.encodePacked("OutrunRouter", uint256(7)));
         OutrunRouter deployedRouter =
             OutrunRouter(OutrunDeployer(canonicalDeployer).getDeployed(address(runScript), salt));
         assertGt(address(deployedRouter).code.length, 0);
