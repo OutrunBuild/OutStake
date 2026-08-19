@@ -22,14 +22,21 @@ contract OutrunDeployer is IOutrunDeployer, Ownable {
         returns (address deployed)
     {
         // hash salt with the deployer address to give each deployer its own namespace
-        salt = keccak256(abi.encodePacked(msg.sender, salt));
+        salt = _namespacedSalt(msg.sender, salt);
         return CREATE3.deploy(salt, creationCode, msg.value);
     }
 
     /// @inheritdoc	IOutrunDeployer
     function getDeployed(address deployer, bytes32 salt) external view override returns (address deployed) {
         // hash salt with the deployer address to give each deployer its own namespace
-        salt = keccak256(abi.encodePacked(deployer, salt));
+        salt = _namespacedSalt(deployer, salt);
         return CREATE3.getDeployed(salt);
+    }
+
+    /// @dev Single salt-namespace recipe shared by `deploy` and `getDeployed` so the derived
+    /// addresses can never drift apart (mirrors the single-source recipe used for the
+    /// OutrunDeployer CREATE2 address in OutstakeScript.s.sol::_outrunDeployerRecipe).
+    function _namespacedSalt(address deployer, bytes32 salt) private pure returns (bytes32) {
+        return keccak256(abi.encodePacked(deployer, salt));
     }
 }

@@ -88,6 +88,27 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
     {
         return (rawLimit, rawWindow);
     }
+
+    // Neutralize the chain endpoint/EID env reads: uAsset deploy tests populate the endpoints /
+    // endpointIds maps via setEndpoint / setEndpointId and must not hit real env reads now that
+    // `_deployUAsset` loads them via `_chainsInit`.
+    function _chainsInit() internal override {}
+}
+
+/// @dev Run-path harness that deliberately does NOT override `_chainsInit`, so the Router-only
+/// `run()` regression test exercises the real chain endpoint/EID env reads. This keeps the
+/// `_chainsInit` no-op override above scoped to the uAsset deploy tests that populate the
+/// endpoints/endpointIds maps via test setters.
+contract OutstakeScriptRunHarness is OutstakeScript {
+    function configureRun(uint256 nonce) external returns (address) {
+        owner = address(this);
+        deployer = address(this);
+        return _deployOutrunDeployer(nonce);
+    }
+
+    function exposedCanonicalCreate2Factory() external pure returns (address) {
+        return CANONICAL_CREATE2_FACTORY;
+    }
 }
 
 contract OutstakeScriptUpgradeableTest is Test {
@@ -231,6 +252,85 @@ contract OutstakeScriptUpgradeableTest is Test {
         OutrunRouter deployedRouter = OutrunRouter(outrunDeployer.getDeployed(address(script), salt));
 
         assertEq(deployedRouter.owner(), owner);
+        assertEq(deployedRouter.memeverseLauncher(), address(launcher));
+    }
+
+    function testRunRouterOnlyDoesNotRequireChainEndpointEnv() external {
+        // Poison the 28 chain endpoint/EID envs that `_chainsInit` reads, overriding whatever the
+        // runner environment pre-sets (repo `.env`/CI/dev shells may already provide them). Each key
+        // is overwritten with a deliberately-invalid value: the 14 *_ENDPOINT keys get "0xdeadbeef"
+        // (not a valid 20-byte address → `vm.envAddress` reverts) and the 14 *_EID keys get
+        // "not-a-number" (not numeric → `vm.envUint` reverts). A fixed Router-only run() never reads
+        // them, so the test passes; a regression that re-reads any key reverts immediately. This is
+        // an explicit poison-pin rather than an "env must be absent" precondition, so the test is
+        // discriminating regardless of what the environment pre-sets.
+        string[14] memory endpointKeys = [
+            "BSC_TESTNET_ENDPOINT",
+            "BASE_SEPOLIA_ENDPOINT",
+            "ARBITRUM_SEPOLIA_ENDPOINT",
+            "AVALANCHE_FUJI_ENDPOINT",
+            "POLYGON_AMOY_ENDPOINT",
+            "SONIC_TESTNET_ENDPOINT",
+            "OPTIMISTIC_SEPOLIA_ENDPOINT",
+            "ZKSYNC_SEPOLIA_ENDPOINT",
+            "LINEA_SEPOLIA_ENDPOINT",
+            "BLAST_SEPOLIA_ENDPOINT",
+            "SCROLL_SEPOLIA_ENDPOINT",
+            "MONAD_TESTNET_ENDPOINT",
+            "BERA_SEPOLIA_ENDPOINT",
+            "ETHEREUM_SEPOLIA_ENDPOINT"
+        ];
+        for (uint256 i = 0; i < endpointKeys.length; i++) {
+            vm.setEnv(endpointKeys[i], "0xdeadbeef");
+        }
+
+        string[14] memory eidKeys = [
+            "BSC_TESTNET_EID",
+            "BASE_SEPOLIA_EID",
+            "ARBITRUM_SEPOLIA_EID",
+            "AVALANCHE_FUJI_EID",
+            "POLYGON_AMOY_EID",
+            "SONIC_TESTNET_EID",
+            "OPTIMISTIC_SEPOLIA_EID",
+            "ZKSYNC_SEPOLIA_EID",
+            "LINEA_SEPOLIA_EID",
+            "BLAST_SEPOLIA_EID",
+            "SCROLL_SEPOLIA_EID",
+            "MONAD_TESTNET_EID",
+            "BERA_SEPOLIA_EID",
+            "ETHEREUM_SEPOLIA_EID"
+        ];
+        for (uint256 i = 0; i < eidKeys.length; i++) {
+            vm.setEnv(eidKeys[i], "not-a-number");
+        }
+
+        // Router-only owner/deployer/launcher: this harness uses the real `_chainsInit`, so it would
+        // revert on any chain endpoint/EID env read still reachable from `run()`.
+        OutstakeScriptRunHarness runScript = new OutstakeScriptRunHarness();
+
+        // Etch the CREATE2 stand-in at the canonical address so the real OutrunDeployer deploys at
+        // the CREATE2-expected address (mirrors testDeployOutrunDeployerMatchesAssertOutrunDeployer).
+        vm.etch(runScript.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
+
+        address canonicalDeployer = runScript.configureRun(1);
+        EmptyMockLauncher launcher = new EmptyMockLauncher();
+
+        vm.setEnv("OWNER", vm.toString(address(runScript)));
+        vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployer));
+        vm.setEnv("MEMEVERSE_LAUNCHER", vm.toString(address(launcher)));
+
+        // A Router-only run() must never read the (now-poisoned) chain endpoint/EID envs: if `run()`
+        // still loaded them, the first read reverts `vm.envAddress`/`vm.envUint` and fails this test —
+        // the revert-if-read-on-regression behavior is the pin.
+        runScript.run();
+
+        // The router deploys with nonce 7 (`_deployOutrunRouter(7)`); assert it was created and
+        // owned by the run harness — proving run() reached the router deploy.
+        bytes32 salt = keccak256(abi.encodePacked("OutrunRouter", uint256(7)));
+        OutrunRouter deployedRouter =
+            OutrunRouter(OutrunDeployer(canonicalDeployer).getDeployed(address(runScript), salt));
+        assertGt(address(deployedRouter).code.length, 0);
+        assertEq(deployedRouter.owner(), address(runScript));
         assertEq(deployedRouter.memeverseLauncher(), address(launcher));
     }
 

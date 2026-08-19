@@ -91,7 +91,6 @@ contract OutstakeScript is BaseScript {
         // _deployOutrunDeployer(deployerNonce);
 
         _assertOutrunDeployer(deployerNonce);
-        _chainsInit();
         // _crossChainOFT();
         // _deployUETH(1);
         // _deployUUSD(1);
@@ -151,7 +150,7 @@ contract OutstakeScript is BaseScript {
         if (outrunDeployer != expected) revert InvalidDeployer();
     }
 
-    function _chainsInit() internal {
+    function _chainsInit() internal virtual {
         endpoints[97] = vm.envAddress("BSC_TESTNET_ENDPOINT");
         endpoints[84532] = vm.envAddress("BASE_SEPOLIA_ENDPOINT");
         endpoints[421614] = vm.envAddress("ARBITRUM_SEPOLIA_ENDPOINT");
@@ -222,6 +221,9 @@ contract OutstakeScript is BaseScript {
     }
 
     function _deployUAsset(uint256 nonce, string memory symbol, string memory assetWord) internal {
+        // Load the 14 cross-chain endpoint/EID envs only here, where the uAsset cross-chain deploy
+        // actually consumes them; Router-only runs must never read these envs.
+        _chainsInit();
         uint32[] memory omnichainIds = _sharedOmnichainIds();
 
         (uint192 outboundRateLimit, uint64 outboundRateWindow) = _outboundRateLimitConfig(
@@ -263,6 +265,11 @@ contract OutstakeScript is BaseScript {
         _deployUAsset(nonce, "UBNB", "BNB");
     }
 
+    /// @dev Reads the limit env value and passes it through as the outbound rate limit.
+    ///      The env value is interpreted in LOCAL decimals (LD) — the same unit as `amountSentLD`
+    ///      recorded by `OutrunOFTUpgradeable.sol::_debit` (18-dec tokens: 1e18 = 1 token). It is
+    ///      NOT shared decimals (SD): for an 18-dec OFT with DCR = 1e12, entering `1e12` means 1
+    ///      dust unit (1e-6 token), not 1M tokens. Use full-LD integers, e.g. 1000000e18.
     function _outboundRateLimitConfig(string memory limitEnv, string memory windowEnv)
         internal
         view
