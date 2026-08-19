@@ -24,6 +24,10 @@ abstract contract OutrunOFTUpgradeable is
     error InvalidWindowSeconds();
     error AmountTooSmall();
 
+    /// @notice Emitted when the outbound rate limit is set for a destination chain.
+    /// @param eid Destination endpoint ID
+    /// @param limit Maximum in-flight amount, in LD (local decimals), matching _debit's amountSentLD
+    /// @param window Time window (in seconds) over which the limit fully refills
     event OutboundRateLimitSet(uint32 indexed eid, uint192 limit, uint64 window);
     event OutboundRateLimitRemoved(uint32 indexed eid);
 
@@ -69,9 +73,13 @@ abstract contract OutrunOFTUpgradeable is
     }
 
     /// @notice Returns the rate-limited amount that can currently be sent to a destination.
+    /// @dev A configured rate limit can exceed the LayerZero uint64 shared-decimals wire envelope
+    ///      (uint64.max * decimalConversionRate); the value is capped to that envelope and
+    ///      dust-aligned so it is sendable in one message, mirroring quoteOFT via _maxQuoteAmountLD.
     /// @param dstEid Destination endpoint ID
     /// @return currentAmountInFlight Tokens currently in-flight to the destination
-    /// @return amountCanBeSent Remaining tokens that can be sent (rate limit remaining)
+    /// @return amountCanBeSent Rate-limited remaining capacity, bounded by the shared-decimals wire
+    ///         envelope (uint64.max * decimalConversionRate) and dust-aligned
     function getAmountCanBeSent(uint32 dstEid)
         public
         view
@@ -81,12 +89,22 @@ abstract contract OutrunOFTUpgradeable is
     {
         RateLimit memory rl = rateLimits(dstEid);
         if (rl.window == 0) return (0, _maxOFTAmountLD());
-        return _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
+        (currentAmountInFlight, amountCanBeSent) =
+            _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
+        // A configured rate limit can exceed the LayerZero uint64 shared-decimals wire envelope
+        // (uint64.max * decimalConversionRate); report the envelope-bounded, DCR-aligned capacity so
+        // the value is sendable in one message, consistent with quoteOFT via _maxQuoteAmountLD.
+        uint256 maxAmountLD = _maxOFTAmountLD();
+        if (amountCanBeSent > maxAmountLD) amountCanBeSent = maxAmountLD;
+        amountCanBeSent = _removeDust(amountCanBeSent);
+        return (currentAmountInFlight, amountCanBeSent);
     }
 
     /// @notice Sets a transfer rate limit for a destination chain. Owner-only.
     /// @param dstEid Destination endpoint ID
-    /// @param limit Maximum amount that can be in-flight at once
+    /// @param limit Maximum amount that can be in-flight at once, in LD (local decimals):
+    ///         for an 18-dec OFT (DCR = 1e12) 1 token = 1e18. Do NOT pass shared-decimals (SD,
+    ///         6-dec) magnitudes — an SD-style value such as 1e12 equals only 1 dust unit here.
     /// @param window Time window (in seconds) over which the limit fully refills
     function setOutboundRateLimit(uint32 dstEid, uint192 limit, uint64 window) external onlyOwner {
         // window == 0 is reserved by OutrunRateLimiterUpgradeable for the unconfigured/deleted

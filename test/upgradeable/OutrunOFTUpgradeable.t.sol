@@ -231,6 +231,44 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(inFlight, 25e18);
     }
 
+    /// @dev RV-017 regression: an owner-lowered limit below in-flight must survive a full window.
+    ///      The full-window early return is only valid when amountInFlight <= limit; in the over-cap
+    ///      state the residual max(amountInFlight - limit, 0) must persist and decay at the new rate
+    ///      (decay = limit * elapsed / window) instead of being zeroed. With limit 40e18/1d, a 25e18
+    ///      debit, then a reconfig to 10e18/1d: at a full window decay = 10e18 so inFlight = 25e18 -
+    ///      10e18 = 15e18 and canBeSent stays 0 (outflow reverts); only after 25e18/10e18 = 2.5
+    ///      windows does the residual clear and canBeSent return to 10e18.
+    function testOwnerLoweredLimitPreservesOverCapAcrossFullWindow() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 25e18, 0, DST_EID);
+
+        // Lower the limit below the 25e18 in-flight: over-cap state (checkpoint keeps in-flight).
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 10e18, 1 days);
+
+        // One full window: decay (10e18) is not enough to clear the residual; must not report (0, 10e18).
+        vm.warp(block.timestamp + 1 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 15e18);
+        assertEq(canBeSent, 0);
+
+        // A non-zero outflow must still be rejected while the over-cap residual is in flight.
+        vm.prank(user);
+        vm.expectRevert(OutrunRateLimiterUpgradeable.RateLimitExceeded.selector);
+        oft.exposedDebit(user, 10e18, 0, DST_EID);
+
+        // After the residual fully decays (25/10 = 2.5 windows) capacity is restored before a new send.
+        vm.warp(block.timestamp + 1.5 days);
+
+        (uint256 clearedInFlight, uint256 clearedCanBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(clearedInFlight, 0);
+        assertEq(clearedCanBeSent, 10e18);
+    }
+
     function testRemoveLimitRestoresSharedDecimalEnvelope() external {
         vm.warp(block.timestamp + 1);
 
@@ -263,6 +301,101 @@ contract OutrunOFTUpgradeableTest is Test {
         (inFlight, canBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(inFlight, 0);
         assertEq(canBeSent, 40e18);
+    }
+
+    /// @dev RV-002 regression: a configured per-destination limit above the LayerZero uint64
+    ///      shared-decimals wire envelope must report the envelope-capped capacity
+    ///      (uint64.max * decimalConversionRate) rather than the raw configured limit, which
+    ///      could not be SD-encoded in a single send (AmountSDOverflowed on _toSD).
+    function testConfiguredLimitAboveEnvelopeReportsEnvelopeCappedAmount() external {
+        uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
+
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, type(uint192).max, 1 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 0);
+        assertEq(canBeSent, envelope);
+    }
+
+    /// @dev Non-regression: a configured limit below the envelope reports the raw rate-limited
+    ///      remaining capacity unchanged (no envelope cap or dust perturbation at this range).
+    function testGetAmountCanBeSentBelowEnvelopePreservesRawCapacity() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 0);
+        assertEq(canBeSent, 40e18);
+    }
+
+    /// @dev RV-002 consistency: with a limit above the envelope, quoteOFT's maxAmountLD and
+    ///      getAmountCanBeSent's amountCanBeSent must both report the envelope-bounded capacity.
+    function testQuoteOFTMatchesGetterWhenLimitAboveEnvelope() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, type(uint192).max, 1 days);
+
+        (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+
+        assertEq(inFlight, 0);
+        uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
+        assertEq(oftLimit.maxAmountLD, envelope);
+        assertEq(canBeSent, oftLimit.maxAmountLD);
+    }
+
+    /// @dev Below the envelope but NOT DCR-aligned: a configured limit of 40e18 + 1 must be reported
+    ///      dusted down to the last DCR boundary (40e18) via _removeDust on both getAmountCanBeSent
+    ///      and quoteOFT, instead of exposing the raw 40e18 + 1 that could not be SD-encoded.
+    function testGetAmountCanBeSentDustsNonAlignedBelowEnvelopeLimit() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18 + 1, 1 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 0);
+        assertEq(canBeSent, 40e18);
+
+        (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
+        assertEq(oftLimit.maxAmountLD, canBeSent);
+        assertEq(oftLimit.maxAmountLD, 40e18);
+    }
+
+    /// @dev A configured limit exactly equal to the shared-decimals envelope (uint64.max * DCR) is
+    ///      both below the uint192 storage ceiling for the 18-dec harness (1.84e31 < uint192.max) and
+    ///      already DCR-aligned, so it reports the full envelope unchanged on getAmountCanBeSent and
+    ///      quoteOFT. Skips the envelope-capping branch (amount == maxAmountLD, not above it).
+    function testGetAmountCanBeSentExactlyAtEnvelopeReturnsEnvelope() external {
+        uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
+        // uint192 ceiling check: only meaningful under a harness DCR that pushes envelope past
+        // uint192.max; 18-dec DCR = 1e12 keeps envelope ≈ 1.84e31 well within uint192.max (≈ 6.3e57).
+        assertTrue(envelope <= type(uint192).max);
+
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, uint192(envelope), 1 days);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 0);
+        assertEq(canBeSent, envelope);
+
+        (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
+        assertEq(oftLimit.maxAmountLD, envelope);
+    }
+
+    /// @dev With a limit above the envelope and 1e18 in flight, the in-flight amount is reported
+    ///      as-is (never dusted) while the remaining capacity is still envelope-capped; dedusting
+    ///      the already-DCR-aligned envelope is a no-op.
+    function testGetAmountCanBeSentAboveEnvelopeWithInFlightStillCapped() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, type(uint192).max, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 1e18, 0, DST_EID);
+
+        uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 1e18);
+        assertEq(canBeSent, envelope);
     }
 
     function _sendParam(uint256 amountLD) internal pure returns (SendParam memory) {

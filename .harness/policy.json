@@ -106,6 +106,7 @@
     "assets": {
       "tests": [
         "test/upgradeable/OutrunOFTUpgradeable.t.sol",
+        "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
         "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol"
       ],
       "rules": [
@@ -116,10 +117,12 @@
           ],
           "change_tests": [
             "test/upgradeable/OutrunOFTUpgradeable.t.sol",
+            "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
             "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/OutrunOFTUpgradeable.t.sol",
+            "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
             "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol"
           ]
         }
