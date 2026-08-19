@@ -14,6 +14,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `OutrunStakingPositionUpgradeable` 直接继承 `UUPSUpgradeable`，upgrade authorization 由 `onlyOwner` 控制。
 - `SY` 初始化后保持固定；不新增 `setSY()` 状态转移。
 - 下列 stake / draw / redeem / wrap / keeper / harvest 状态机的产品语义不因 proxy deployment 改变。
+- 全部业务状态变更入口（`OutrunStakingPositionUpgradeable.sol::stake` / `::drawUAsset` / `::wrapStake` / `::redeem` / `::keepWrapRedeem` / `::keepRedeem` / `::harvestWrapYield`）均挂 `nonReentrant`（transient guard，经 `TokenHelper.sol` 继承 `ReentrancyGuardTransient`）；该重入防护层是本文档各状态机描述的前置安全保障，移除该锁或重排入口内外部调用与状态写入顺序前必须重新论证重入安全。
 
 ## 2. 直接 stake 生命周期
 
@@ -50,8 +51,8 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 
 生命周期如下：
 
-1. 前置状态：position 不存在或 caller 不是 owner 时 `PositionAccessDenied()`；`block.timestamp < deadline` 时 `LockTimeNotExpired(deadline)`；合约未 paused。
-2. 输入校验：`receiver == address(0)` 时 `ZeroInput()`；`syRedeemed == 0` 时 `ZeroInput()`；`syRedeemed > position.syStaked` 时 `ExceedsPositionBalance(syRedeemed, position.syStaked)`。
+1. 前置状态：position 不存在或 caller 不是 owner 时 `PositionAccessDenied()`；`receiver == address(0)` 时 `ZeroInput()`（该检查先于到期守卫执行，归类与 `OutrunStakingPositionUpgradeable.sol::drawUAsset` / `::keepRedeem` 的 receiver 检查一致）；`block.timestamp < deadline` 时 `LockTimeNotExpired(deadline)`；合约未 paused。
+2. 输入校验：`syRedeemed == 0` 时 `ZeroInput()`；`syRedeemed > position.syStaked` 时 `ExceedsPositionBalance(syRedeemed, position.syStaked)`。
 3. debt 计算：
    - 若 `syRedeemed == position.syStaked`，则 `UAssetBurned = position.UAssetMinted`
    - 若 `syRedeemed < position.syStaked`，则 `UAssetBurned = ceil(position.UAssetMinted * syRedeemed / position.syStaked)`
@@ -125,7 +126,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - keeper 侧 dust 守卫：`keeperPrincipalSY == 0` → revert `DustRoundedToZero()`——keeper 不得为零 SY 支付燃烧非零 uAsset 债（尘额输入在汇率上行后本金腿 floor 为 0 时，分账会把全部 `syRedeemed` 静默划归 owner）；与 `keepWrapRedeem` 的 `amountInSY == 0` 守卫对称
    - 若 `keeperPrincipalSY > syRedeemed`，则同样 revert `InsufficientSyCollateral()`（替代对 `keeperPrincipalSY` 的上限收敛写法）；该防御不重复全仓位判断、正常路径不触发，仅作防御性不变量检查保留
    - 否则分账不变：`ownerExcessSY = syRedeemed - keeperPrincipalSY`
-6. debt 清偿：上述全部本地分支通过后，keeper 才烧掉自己提供的 `uAsset`。
+6. debt 清偿：上述全部本地分支通过后，keeper 才烧掉自己提供的 `uAsset`。`OutrunStakingPositionUpgradeable.sol::keepRedeem` 的 `uAsset.repay` 先于下一步骤的 `_applyPositionRedeem` 状态减记，属文档化逆 CEI——安全性依赖入口上的 `nonReentrant`（论证同 `SYBaseUpgradeable.sol::redeem` 的 token-out-before-burn，见 `docs/spec/yield/yield-adapters.md`）；调整执行序或移除该锁前必须保留此不变量。
 7. position 更新：与普通 redeem 一样减少 `syTotalStaking`、position principal 和 position debt。
    - 守恒引用：`syTotalStaking` 的减少镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧，见 [accounting.md §10.1](./accounting.md)。
 8. 分账输出：

@@ -21,7 +21,7 @@
 - `OutrunRouter.sol::mintSYFromToken` 与 `OutrunRouter.sol::redeemSyToToken` 先检查 `OutrunRouter.sol::trustedSY`；所有 SP preview、stake、wrap stake 与 genesis 入口先检查 `OutrunRouter.sol::trustedSYForSP` 并重检 `SP.SY()`。这些检查都发生在用户资产 `transferFrom`、token pull 或下游 `approve` 之前；未注册 target 回退 `IOutrunRouter.sol::UntrustedRouterTarget`，pair 漂移回退 `IOutrunRouter.sol::RouterTargetMismatch`。
 - `OutrunRouter.sol::setTrustedSY(SY, false)` 不会自动清除已有的 `trustedSYForSP` mapping，撤销流程应另行调用 `OutrunRouter.sol::setTrustedSP(SP, address(0))` 并核对 `trustedSY` / `trustedSYForSP` getter；撤销只阻断后续 router 调用，不改变既有 position、uAsset debt 或 SY share state。
 - 主网前完成最终 SY 清单和 SP -> SY pair 清单，核对事件/getter 后冻结并移除这些临时 owner setter；主网运行不依赖运行期新增、替换或撤销 target。
-- router 的 `setMemeverseLauncher(address)` 是 pre-mainnet 临时 owner 入口（`OutrunRouter.sol::setMemeverseLauncher`、`IOutrunRouter.sol::setMemeverseLauncher`）；成功轮换应发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`），该事件待代码落地后验收；主网部署时随 owner 权限面一并移除
+- router 的 `setMemeverseLauncher(address)` 是 pre-mainnet 临时 owner 入口（`OutrunRouter.sol::setMemeverseLauncher`、`IOutrunRouter.sol::setMemeverseLauncher`）；成功轮换发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件已落地（`IOutrunRouter.sol` 声明、`OutrunRouter.sol::_setMemeverseLauncher` emit；constructor 部署期同样经该路径首发 `SetMemeverseLauncher(address(0), launcher)`，`oldLauncher` 为零初值）；主网部署时随 owner 权限面一并移除
 - oracle adapter 不拥有 proxy upgrade 权限
 - uAsset（`OutrunUniversalAssetsUpgradeable` 含完整继承链）owner 入口分为四组，均为 owner-only：
   - 铸造面：`setMintingCap`、`revokeMinter`、`transferMinterDebt`

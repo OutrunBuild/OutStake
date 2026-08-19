@@ -79,7 +79,6 @@
 - `canonical asset -> uAsset`
   - 若 `uAssetDecimals >= canonicalAssetDecimals`，`uAssetDebtUnits = canonicalAssetValue * 10 ** (uAssetDecimals - canonicalAssetDecimals)`
   - 若 `uAssetDecimals < canonicalAssetDecimals`，down: `uAssetDebtUnits = roundDownDiv(canonicalAssetValue, 10 ** (canonicalAssetDecimals - uAssetDecimals))`
-  - 若 `uAssetDecimals < canonicalAssetDecimals`，up: `uAssetDebtUnits = roundUpDiv(canonicalAssetValue, 10 ** (canonicalAssetDecimals - uAssetDecimals))`
 - `uAsset -> canonical asset`
   - 若 `canonicalAssetDecimals >= uAssetDecimals`，`canonicalAssetValue = uAssetDebtUnits * 10 ** (canonicalAssetDecimals - uAssetDecimals)`
   - 若 `canonicalAssetDecimals < uAssetDecimals`，down: `canonicalAssetValue = roundDownDiv(uAssetDebtUnits, 10 ** (uAssetDecimals - canonicalAssetDecimals))`

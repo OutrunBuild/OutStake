@@ -166,7 +166,7 @@
 ### 7.4 launcher 配置校验
 
 - `OutrunRouter` 的 constructor 与 `setMemeverseLauncher(...)` 会在配置期 fail fast，拒绝 `address(0)` 和 `code.length == 0` 的 launcher 地址。
-- `OutrunRouter.sol::setMemeverseLauncher` 成功轮换时应发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件待代码落地后由部署验收确认，并核对 `OutrunRouter.sol::memeverseLauncher` 读取值。
+- `OutrunRouter.sol::setMemeverseLauncher` 成功轮换时发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件已落地（`IOutrunRouter.sol` 声明、`OutrunRouter.sol::_setMemeverseLauncher` emit）。部署验收时注意 constructor 部署期同样经 `_setMemeverseLauncher` 首发 `SetMemeverseLauncher(address(0), launcher)`（`oldLauncher` 为零初值），并核对 `OutrunRouter.sol::memeverseLauncher` 读取值。
 - genesis 流程可把 `memeverseLauncher` 已通过配置期 code-size 校验视为前置条件。
 - router 对 launcher 的运行期信任边界目前只到“地址存在代码、当前实现按参数执行 `genesis(...)`”；router 不额外校验 launcher 是否把本次 allowance 精确消费完。
 - 这属于运行/测试可观测性加固，不改变 launcher 内部仍是外部信任边界这一语义。

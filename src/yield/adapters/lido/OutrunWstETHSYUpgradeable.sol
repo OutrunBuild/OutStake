@@ -93,8 +93,11 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
         address _stETH = stETH();
         if (tokenIn == NATIVE || tokenIn == _stETH) {
             // ETH and stETH deposits both end as wstETH shares, so use Lido's pooled-ETH-to-share quote.
-            // The quote equals the executed wrap via the Lido identity wrap(x) == getSharesByPooledEth(x)
-            // (1 wstETH unit == 1 stETH internal share, see IWstETH.wrap @dev).
+            // For direct stETH deposits the quote equals the executed wrap via the Lido identity
+            // wrap(x) == getSharesByPooledEth(x) (1 wstETH unit == 1 stETH internal share, see IWstETH.wrap @dev).
+            // Native deposits instead execute submit -> getPooledEthByShares -> wrap upstream (two floor
+            // roundings), so actual shares out can be up to 1 wei below this quote; callers must leave
+            // slippage headroom rather than pass the quote verbatim as minSharesOut.
             amountSharesOut = IStETH(_stETH).getSharesByPooledEth(amountTokenToDeposit);
         } else {
             // Existing wstETH is already the yield-bearing share token.
