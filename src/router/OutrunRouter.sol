@@ -91,6 +91,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Redeems standardized yield into an output token.
      * @dev Always pulls SY from the caller and burns it from SY internal balance during redemption.
+     * @dev Deployment precondition: each configured SY must have `SY.trustedRouter() == address(this)`
+     *      (the SY's owner calls `SY.setTrustedRouter(address(this))` once per router). Without it every call
+     *      reverts with `SYUnauthorizedInternalRedeemer(address(router))` inside `SY.redeem(..., true)`; on router
+     *      rotation the new router must be set on every SY before its redemption entry is opened, then the old one
+     *      revoked via `SY.setTrustedRouter(address(0))`.
      * @param SY Standardized yield contract being redeemed.
      * @param receiver Recipient of the redeemed token output.
      * @param tokenOut Token requested on redemption.

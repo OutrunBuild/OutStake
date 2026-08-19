@@ -475,6 +475,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Reverts WrapPoolUndercollateralized on an undercollateralized pool — the keeper is trusted and must not bear a
     /// loss-making redemption. Consistent with keepRedeem, which also reverts (InsufficientSyCollateral) on an
     /// undercollateralized position.
+    /// The keeper must first approve this position to spend its uAsset: repay burns the keeper's balance with
+    /// msg.sender = address(this) (the minter whose mint debt decreases), so allowance[keeper][this] must cover
+    /// amountInUAsset.
     /// @param amountInUAsset uAsset amount the keeper burns. Must be > 0 and <= wrapUAssetDebt.
     /// @param receiver Address receiving the SY.
     /// @return amountInSY SY amount sent to the receiver.
@@ -503,7 +506,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             $.wrapUAssetDebt -= amountInUAsset;
         }
 
-        // Burn keeper-provided uAsset; repay decrements the stake manager's minter debt.
+        // Burn keeper-provided uAsset; repay decrements the stake manager's minter debt. msg.sender here is
+        // address(this) (the minter/repay caller) and the burned account is the keeper — so the keeper must first
+        // approve this position to spend its uAsset before calling keepWrapRedeem.
         IUniversalAssets(_uAsset).repay(msg.sender, amountInUAsset);
 
         _transferOut(_SY, receiver, amountInSY);
@@ -515,6 +520,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Debt-equivalent SY goes to receiver; any excess SY above debt goes back to position owner.
     /// @dev Reverts with InsufficientSyCollateral if the position's staked SY value is below its debt face
     /// value (full-position guard) or if the keeper's debt-equivalent share exceeds the proportional SY share.
+    /// The keeper must first approve this position to spend its uAsset: repay burns the keeper's balance with
+    /// msg.sender = address(this) (the minter whose mint debt decreases), so allowance[keeper][this] must cover
+    /// amountInUAsset.
     /// @param positionId Identifier of the position being redeemed.
     /// @param amountInUAsset Amount of uAsset the keeper burns.
     /// @param receiver Address receiving the keeper principal in SY.
@@ -550,7 +558,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         (syRedeemed, keeperPrincipalSY, ownerExcessSY) =
             _computeKeepRedeemShares(_SY, syStaked, positionUAssetMinted, amountInUAsset);
 
-        // Step 2: burn uAsset from the caller (keeper provides uAsset).
+        // Step 2: burn uAsset from the caller (keeper provides uAsset). repay's msg.sender is address(this)
+        // (the minter/repay caller) while the burned account is the keeper — so the keeper must first approve
+        // this position to spend its uAsset before calling keepRedeem.
         UAssetBurned = amountInUAsset;
         IUniversalAssets(_uAsset).repay(msg.sender, UAssetBurned);
 

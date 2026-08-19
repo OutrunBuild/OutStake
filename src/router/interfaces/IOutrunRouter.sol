@@ -82,6 +82,10 @@ interface IOutrunRouter {
      * @notice Redeems standardized yield into an output token.
      * @dev Caller-funded path. Requires an owner-registered SY, pulls SY from `msg.sender` into the SY contract and calls redeem with
      * `burnFromInternalBalance = true`.
+     * @dev Deployment precondition: each registered SY must be configured so `SY.trustedRouter() == address(this)`
+     * (the SY's owner calls `SY.setTrustedRouter(address(this))` on the SY); otherwise the call reverts with
+     * `SYUnauthorizedInternalRedeemer(address(router))` inside `SY.redeem(..., true)`. On router rotation the new
+     * router must be set on every SY before its redemption entry is opened and the old one revoked.
      * @param SY Standardized yield contract being redeemed.
      * @param receiver Recipient of the redeemed token output.
      * @param tokenOut Token requested on redemption.
