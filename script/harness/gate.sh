@@ -643,7 +643,11 @@ run_slither_with_baseline() {
     register_cleanup "$new_findings_file"
 
     set +e
-    slither src \
+    # PYTHONUNBUFFERED/PYTHONFAULTHANDLER keep diagnostics alive when the python process dies
+    # abnormally (hard exit loses block-buffered stdout/stderr redirected to a file; faulthandler
+    # forces tracebacks on faults). Without these, a CI-side slither crash surfaces as an
+    # empty raw-output file with a bare nonzero exit code and no way to root-cause it.
+    PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 slither src \
         --filter-paths "$slither_filter_paths" \
         --exclude-dependencies \
         --exclude "$slither_exclude_detectors" \
@@ -655,6 +659,7 @@ run_slither_with_baseline() {
     set -e
 
     if [ "$exit_code" -ne 0 ]; then
+        echo "[gate] slither exited with code $exit_code; raw output follows" >&2
         filter_command_output "$raw_output_file" "$exit_code"
         verification_failed=1
         record_command_result "$id" "failed" "$exit_code" "slither command failed" "verifier"

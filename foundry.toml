@@ -11,7 +11,13 @@ via_ir = true
 build_info = true
 evm_version = "prague"
 extra_output = ["storageLayout"]
-ignored_error_codes = [6335, 2424]
+# 4591 is solc's >256-warnings truncation notice; the overflow is dependency noise from lib/
+# (see ignored_warnings_from below), so the notice carries no actionable signal.
+ignored_error_codes = [6335, 2424, 4591]
+# Dependencies are vendored in lib/ and their solc warnings (NatSpec/style) are not actionable here.
+# Note solc's 256-warning emission cap applies before this display filter — src/ warnings are only
+# guaranteed visible while total project warnings stay under the cap.
+ignored_warnings_from = ["lib/**"]
 
 [profile.smoke.fuzz]
 runs = 128

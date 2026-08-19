@@ -98,7 +98,23 @@ jobs:
         run: npm ci
 
       - name: Install Slither
-        run: python3 -m pip install slither-analyzer==0.11.5 jsonschema pyyaml
+        run: |
+          python3 -m pip install slither-analyzer==0.11.5 jsonschema pyyaml
+          # Smoke probe: the gate's slither step has failed on runners with exit 1
+          # and zero bytes of output (even with PYTHONUNBUFFERED/FAULTHANDLER), so
+          # identify the resolved binary and interpreter and verify a bare
+          # `slither --version` works before the 25-minute gate run depends on it.
+          echo "slither-path: $(command -v slither)"
+          head -1 "$(command -v slither)"
+          slither --version || echo "slither --version exited with $?"
+          env | grep -E "^(LD_LIBRARY_PATH|PYTHON|PATH)=" || true
+
+      - name: Patch slither for Solidity 0.8.35 ERC-7201 support
+        # slither 0.11.5/0.11.6 cannot parse solc 0.8.35's erc7201() baseSlotExpression
+        # and crashes while formatting its own VariableNotFound error. Restored from
+        # daf4aaa: commit 049f64f dropped this step during a harness sync and CI has
+        # been red on the slither step ever since.
+        run: python3 script/harness/patch-slither.py
 
       - name: Show Forge version
         run: forge --version
@@ -108,6 +124,29 @@ jobs:
           HARNESS_EVENT_NAME: ${{ github.event_name }}
           RUN_RECORD_PATH: ${{ runner.temp }}/outstakev2-gate-ci.json
         run: bash script/harness/ci-gate-entrypoint.sh
+
+      - name: Slither post-mortem
+        # The gate's slither step exits 1 with zero output on runners only; every
+        # local reproduction passes. Re-run slither here on the still-warm build
+        # artifacts in three invocation shapes to isolate the failing mode:
+        # A) report to a file, console untouched; B) module entry via python -u;
+        # C) identical to the gate's invocation (report on stdout, redirected).
+        if: failure()
+        run: |
+          set +e
+          flags='--filter-paths lib|test|script|node_modules --exclude-dependencies --exclude naming-convention,too-many-digits,unindexed-event-address,immutable-states,unimplemented-functions --json-types detectors --fail-none --disable-color'
+          echo '== A: --json file'
+          slither src $flags --json /tmp/pm-a.json
+          echo "A-exit=$?"
+          echo '== B: python -u module entry, --json stdout redirected'
+          PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 python3 -c 'import sys; from slither_analyzer.__main__ import main; sys.exit(main())' src $flags --json - > /tmp/pm-b.json 2>&1
+          echo "B-exit=$?"
+          wc -c /tmp/pm-b.json
+          echo '== C: gate-identical (console script, stdout redirected)'
+          PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 slither src $flags --json - > /tmp/pm-c.json 2>&1
+          echo "C-exit=$?"
+          wc -c /tmp/pm-c.json
+          exit 0
 
       - name: Run orchestration regression tests
         run: bash script/harness/test-orchestration.sh

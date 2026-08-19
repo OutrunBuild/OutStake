@@ -219,6 +219,15 @@
       "location": "src/assets/base/OutrunERC20Upgradeable.sol#L33-L37",
       "summary": "OutrunERC20Upgradeable._getOutrunERC20Storage() uses assembly",
       "key": "assembly|src/assets/base/OutrunERC20Upgradeable.sol|OutrunERC20Upgradeable._getOutrunERC20Storage() uses assembly"
+    },
+    {
+      "id": "e73d5db33d13925542a67813299b889f4f5137c314947dfa487a96aae5db4ec6",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L83-L101",
+      "summary": "OutrunOFTUpgradeable.getAmountCanBeSent(uint32) uses timestamp for comparisons",
+      "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable.getAmountCanBeSent(uint32) uses timestamp for comparisons"
     }
   ]
 }

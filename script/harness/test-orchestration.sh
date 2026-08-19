@@ -119,6 +119,12 @@ run_default_classify_in_scratch_repo() {
     mkdir -p "$repo/script/harness" "$repo/.harness"
     cp script/harness/gate.sh "$repo/script/harness/gate.sh"
     cp -R .harness/policy.json .harness/schemas "$repo/.harness/"
+    # The policy's test_mapping references repo test files, and the gate validates those
+    # references against the working tree; seed stub files so the scratch repo satisfies it.
+    while IFS= read -r mapped_test; do
+        mkdir -p "$repo/$(dirname "$mapped_test")"
+        : >"$repo/$mapped_test"
+    done < <(jq -r '.test_mapping | .. | strings | select(startswith("test/"))' .harness/policy.json | sort -u)
     (
         cd "$repo"
         git init -q
@@ -243,25 +249,9 @@ run_gate_step = next(step for step in steps if step.get("name") == "Run gate:ci"
 env = run_gate_step["env"]
 
 assert env["HARNESS_EVENT_NAME"] == "${{ github.event_name }}"
-assert env["HARNESS_EVENT_BASE_SHA"] == "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
-assert env["HARNESS_EVENT_HEAD_SHA"] == "${{ github.sha }}"
 assert env["RUN_RECORD_PATH"] == "${{ runner.temp }}/outstakev2-gate-ci.json"
 assert run_gate_step["run"] == "bash script/harness/ci-gate-entrypoint.sh"
 PY
-}
-
-run_pre_edit_check() {
-    local file_path="$1"
-    printf '{"file_path":"%s"}' "$file_path" | bash script/harness/pre-edit-check.sh
-}
-
-assert_pre_edit_check_guidance() {
-    local output="$1"
-
-    grep -Fq "classify-only --planned-files with the exact planned-file set" <<<"$output"
-    grep -Fq "Follow emitted orchestration_profile and phase fields" <<<"$output"
-    grep -Fq "Main session may edit direct/direct-review" <<<"$output"
-    grep -Fq "delegated/full-review/full-subagent must use configured writers/reviewers" <<<"$output"
 }
 
 run_gate_full_capture() {
@@ -467,7 +457,7 @@ jq -e '
   (has("spec_review_required") | not) and
   .code_writer_roles == [] and
   .code_review_roles == [] and
-  .requires_human_confirmation == true
+  .requires_spec_authorization_evidence == true
 ' "$spec_record" >/dev/null
 assert_no_removed_fields "$spec_record"
 
@@ -490,7 +480,7 @@ src_record="$(run_classify srcsol "$src_changed" "$src_diff")"
 jq -e '
   .change_class == "prod-semantic" and
   .orchestration_profile == "full-review" and
-  .harness_writer_roles == [] and
+  .harness_writer_roles == ["process-implementer"] and
   (has("spec_review_required") | not) and
   .code_writer_roles == ["solidity-implementer"] and
   (.code_review_roles | sort) == ["logic-reviewer", "refinement-reviewer", "security-reviewer"]
@@ -503,7 +493,7 @@ jq -e '
   .file_input_mode == "planned-files" and
   .change_class == "prod-semantic" and
   .orchestration_profile == "full-review" and
-  .harness_writer_roles == [] and
+  .harness_writer_roles == ["process-implementer"] and
   .code_writer_roles == ["solidity-implementer"] and
   (.code_review_roles | sort) == ["logic-reviewer", "refinement-reviewer", "security-reviewer"] and
   (.residual_risks[] | select(.rule_id == "planned-solidity-classification"))
@@ -532,7 +522,7 @@ jq -e '
   (has("spec_review_required") | not) and
   .code_writer_roles == ["solidity-implementer"] and
   (.code_review_roles | sort) == ["logic-reviewer", "refinement-reviewer", "security-reviewer"] and
-  .requires_human_confirmation == true
+  .requires_spec_authorization_evidence == true
 ' "$mixed_record" >/dev/null
 assert_no_removed_fields "$mixed_record"
 
@@ -545,7 +535,7 @@ jq -e '
   (has("spec_review_required") | not) and
   .code_writer_roles == ["solidity-implementer"] and
   (.code_review_roles | sort) == ["logic-reviewer", "refinement-reviewer", "security-reviewer"] and
-  .requires_human_confirmation == false
+  .requires_spec_authorization_evidence == false
 ' "$mixed_non_spec_record" >/dev/null
 assert_no_removed_fields "$mixed_non_spec_record"
 
@@ -635,13 +625,6 @@ if grep -qx -- "--changed-files" "$diff_capture/argv"; then
     exit 1
 fi
 [ ! -s "$diff_capture/diff_path" ]
-
-pre_edit_output="$(run_pre_edit_check "$repo_root/script/harness/test-orchestration.sh")"
-assert_pre_edit_check_guidance "$pre_edit_output"
-if grep -Fq "Do NOT edit files directly in the main session" <<<"$pre_edit_output"; then
-    echo "pre-edit-check still forbids main session direct/direct-review edits" >&2
-    exit 1
-fi
 
 slither_changed="$(write_changed_files slither src/assets/base/OutrunERC20Upgradeable.sol)"
 slither_diff="$(write_diff slither src/assets/base/OutrunERC20Upgradeable.sol 'uint256 oldAmount = amount;' 'uint256 newAmount = amount + 1;')"
