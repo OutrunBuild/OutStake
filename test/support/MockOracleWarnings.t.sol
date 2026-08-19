@@ -15,6 +15,7 @@ contract MockOracleWarningsTest is Test {
     bytes4 internal constant SEQUENCER_GRACE_PERIOD_NOT_OVER_SELECTOR =
         bytes4(keccak256("SequencerGracePeriodNotOver()"));
     bytes4 internal constant ZERO_NORMALIZED_RATE_SELECTOR = bytes4(keccak256("ZeroNormalizedRate()"));
+    bytes4 internal constant INVALID_STALENESS_SELECTOR = bytes4(keccak256("InvalidStaleness()"));
 
     address internal owner = address(0xA11CE);
 
@@ -193,5 +194,10 @@ contract MockOracleWarningsTest is Test {
         MockAggregator aggregator255 = new MockAggregator(255);
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
         new OutrunExchangeOracleAdapter(address(aggregator255), 2 days, address(0), 0);
+    }
+
+    function testExchangeOracleAdapterRevertsWhenMaxStalenessIsZero() external {
+        vm.expectRevert(INVALID_STALENESS_SELECTOR);
+        new OutrunExchangeOracleAdapter(address(aggregator), 0, address(0), 0);
     }
 }
