@@ -24,6 +24,8 @@ OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收�
 
 当前仓位层由 `OutrunStakingPositionUpgradeable` 实现，维护锁仓仓位与公共 wrap 池。
 
+position minter 对账式（`mintingStatusTable(address(position)).amountInMinted == Σ 活动仓位 Position.UAssetMinted + wrapUAssetDebt()`）、position minter 部署 wiring 与升级 / 迁移验收步骤以 `docs/spec/position/accounting.md`「Position minter 对账式（升级 / 迁移 / 运营对账验收标准）」为准。
+
 ### yield
 
 当前收益层以 `SYBaseUpgradeable` 为统一抽象。所有 SY adapters 都以 upgradeable variants 作为当前产品真源。
@@ -38,7 +40,7 @@ OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收�
 
 ### deployment
 
-当前部署层以 proxy-backed deployment flow 为准：先部署 implementation，再用 `ERC1967Proxy` 初始化并写入下游 wiring。
+当前部署层以 proxy-backed deployment flow 为准：先部署 implementation，再用 `ERC1967Proxy` 初始化并写入下游 wiring。implementation 构造期已禁用 initializer（经 `OutrunOFTUpgradeable.sol::constructor` 调 `_disableInitializers()`），implementation 本尊不可被直接 `initialize`，只能经 `ERC1967Proxy` delegatecall 初始化；详细约束与验收测试见 `docs/spec/common-foundations.md`「部署与升级一致性约束」。
 
 ## 当前实现提醒
 

@@ -244,6 +244,36 @@ rounding matrix：
 
 凡是外部协议如何生成该 `exchangeRate()` 的问题，都只属于本地依赖边界；当前本仓库能直接证明的是“上层账务如何消费这个汇率”，而不是外部汇率来源本身的真实性。
 
+### 10.1 核心守恒不变量（`syTotalStaking` 守恒式）
+
+除上述边界外，position 合约维护一条全局守恒式，作为所有 SY 入口账务的单一对账锚点：
+
+> `syTotalStaking = Σ(active positions.syStaked) + syWrapStaking`
+
+其中 active position 指 `positions(id).owner != address(0)` 且 `positions(id).syStaked > 0` 的仓位；`owner` 归零表示该 id 从未创建或已被 full redeem 删除。
+
+各入口对等式两侧的影响（与 `OutrunStakingPositionUpgradeable.sol` 实现一致）：
+
+- `OutrunStakingPositionUpgradeable.sol::stake`：`syTotalStaking += amountInSY`，新仓位写入 `syStaked = amountInSY` —— 等式右侧新增同一仓位的 principal，两侧同增。
+- `OutrunStakingPositionUpgradeable.sol::wrapStake`：`syTotalStaking += amountInSY` 且 `syWrapStaking += amountInSY` —— wrap 池一侧同增，等式保持。
+- `OutrunStakingPositionUpgradeable.sol::redeem` / `OutrunStakingPositionUpgradeable.sol::keepRedeem`（均经 `OutrunStakingPositionUpgradeable.sol::_applyPositionRedeem`）：`syTotalStaking -= syRedeemed`，对应仓位 `syStaked` 同步减少；partial redeem 保留剩余 principal，full redeem（剩余 `syStaked == 0`）删除该 position，该仓位从 active sum 移除。
+- `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem`：`syTotalStaking -= amountInSY` 且 `syWrapStaking -= amountInSY` —— wrap 池两侧同减，等式保持。
+- `OutrunStakingPositionUpgradeable.sol::harvestWrapYield`：`syTotalStaking -= amountInSY` 且 `syWrapStaking -= amountInSY`（wrap debt 不变）—— wrap 池两侧同减，等式保持。
+
+该等式由 invariant 测试 `OutrunStakingPositionInvariantUpgradeable.t.sol::invariant_syTotalStakingMatchesSum` 锁为最核心约束。新增或升级任何 SY 资金路径时，必须使上式在每次状态变更后仍成立：`syTotalStaking` 的每次增减都镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧，避免局部漏增/多减导致 wrap redeem / harvest 依据错误池余额运行。
+
+### 10.2 Position minter 对账式（升级 / 迁移 / 运营对账验收标准）
+
+本小节把 `uAsset` 的 per-minter 台账与 position / wrap 台账绑定为一条可计数的对账式，作为运行对账、升级与迁移的验收标准：
+
+- `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable` 里 `address(position)` 条目的 `amountInMinted`，必须等于活动仓位的 `Position.UAssetMinted` 之和加上公共 wrap 池的 `wrapUAssetDebt()`：`amountInMinted(address(position)) == Σ 活动仓位 Position.UAssetMinted + wrapUAssetDebt()`
+- 该恒等式由 `OutrunStakingPositionUpgradeable` 的六条账务入口按构造成立：`OutrunStakingPositionUpgradeable.sol::stake` / `::drawUAsset` / `::wrapStake` 在增加对应 `UAssetMinted` / `wrapUAssetDebt` 的同时经 `uAsset.mint` 等额增加 position minter 的 `amountInMinted`；`OutrunStakingPositionUpgradeable.sol::redeem` / `::keepRedeem` / `::keepWrapRedeem` 在减少对应台账的同时经 `uAsset.repay` 等额冲减 `amountInMinted`
+- 锚定测试：`test/upgradeable/OutrunStakingPositionInvariantUpgradeable.t.sol::invariant_uAssetSupplyConsistency` 逐活动仓位累加 `Position.UAssetMinted` 并加 `wrapUAssetDebt()`，断言其等于 `mintingStatusTable(address(position)).amountInMinted`
+- 口径边界：对账必须读 per-minter 的 `amountInMinted`（`mintingStatusTable`），不读 `totalSupply()`——`totalSupply` 会被其它 minter 的铸造以及 OFT 跨链铸烧影响，且该 invariant 的 fuzz handler 在赎回时会向 actor/keeper 直接 mint uAsset 补足余额而污染总供应；per-minter 的 `amountInMinted` 只记录 position 自己的净铸造额；OFT 跨链 `OutrunOFTUpgradeable.sol::_debit` / `::_credit` 只移动流通供应、不触碰 minter 债务台账（见 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」），故跨链 supply movement 不参与该式
+- position minter wiring：position 合约经部署脚本 `script/deploy/OutstakeScript.s.sol` 的 `setMintingCap(spAddress, SP_DEFAULT_MINTING_CAP)` 注册为 uAsset minter 并配置 mintingCap；升级 / 迁移不得在不改该注册的情况下单独变更 position 侧台账
+- `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 以该 minter（position）为 from/to 时，`uAsset` 只迁移 minter 级债务、不自动同步 position/wrap 台账（见 §2 与 `docs/spec/common-foundations.md`「基础规则」）：操作方必须先按本小节恒等式同步迁移 position/wrap 台账，再跑对账，迁移后恒等式必须重新成立
+- 升级 / 迁移验收步骤：迁移前对账本式成立 → 执行迁移 → 迁移后逐项核对 `positions(id)` 的 `UAssetMinted`、`wrapUAssetDebt()` 与 position minter 的 `amountInMinted`，本式重新成立即通过；任一账本单边漂移使本式不成立即验收失败，必须先修复 wiring 再放行
+
 ## 11. Position manager 错误与事件真源
 
 本节是 `IOutrunStakeManager.sol` 声明的 17 个自定义错误和 10 个事件的 canonical surface。错误表只覆盖 position manager 自己声明并在本地分支触发的错误；OpenZeppelin、`TokenHelper`、`SY` adapter 和 `uAsset` 的错误属于依赖边界。每个本地错误都会使整笔交易 revert，已经发生的 manager storage 写入、ERC20 transfer 或下游调用一并回滚。

@@ -62,6 +62,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - `position.syStaked` 减少 `syRedeemed`
    - `position.UAssetMinted` 减少 `UAssetBurned`
    - 若剩余 `SY` 为 0，则删除 position
+   - 守恒引用：`syTotalStaking` 的减少镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧；剩余 `SY == 0` 即 full redeem，删除 position 并从 active sum 移除，见 [accounting.md §10.1](./accounting.md)。
 6. debt 清偿：上述判定与减记完成后，再对调用者执行 `uAsset.repay(msg.sender, UAssetBurned)`；语义上不依赖下游 `uAsset.repay(0)` 之类的零额 repay。
 7. 资产输出：
    - `tokenOut == SY` 时直接转出 `SY`
@@ -86,6 +87,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - `syTotalStaking += amountInSY`
    - `syWrapStaking += amountInSY`
    - `wrapUAssetDebt += uAssetDebt`
+   - 守恒引用：`syTotalStaking` 与 `syWrapStaking` 同增，等式保持，见 [accounting.md §10.1](./accounting.md)。
 6. 铸造：向 `uAssetReceiver` 铸造 `uAssetDebt` 对应的 `uAsset`；mint cap 或其他 uAsset 依赖错误会回滚 pool 账务。
 7. 事件：成功后发出 `WrapStake`；它没有 position id，字段语义见 [accounting.md §11.2](./accounting.md)。
 
@@ -101,6 +103,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - `syTotalStaking -= amountInSY`
    - `syWrapStaking -= amountInSY`
    - `wrapUAssetDebt -= uAssetDebtUnits`
+   - 守恒引用：`syTotalStaking` 与 `syWrapStaking` 同减，等式保持，见 [accounting.md §10.1](./accounting.md)。
 6. debt 清偿：对 keeper 执行 `uAsset.repay(msg.sender, uAssetDebtUnits)`，烧掉 keeper 自己提供的 `uAsset`；依赖错误会回滚聚合账务。
 7. 资产输出：直接将 `amountInSY` 的 SY 转给 `receiver`（keepWrapRedeem 只直付 SY，不经过 `SY.redeem`，无 tokenOut/minTokenOut 参数）。
 8. 事件：成功后发出 `KeepWrapRedeem`；共享池增量和 keeper/receiver 索引见 [accounting.md §11.2](./accounting.md)。`previewWrapRedeem` 镜像债务、solvency 和 dust 分支，也镜像汇率读取点 rate==0 → `ZeroExchangeRate()`，但不检查 keeper 权限。
@@ -124,6 +127,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - 否则分账不变：`ownerExcessSY = syRedeemed - keeperPrincipalSY`
 6. debt 清偿：上述全部本地分支通过后，keeper 才烧掉自己提供的 `uAsset`。
 7. position 更新：与普通 redeem 一样减少 `syTotalStaking`、position principal 和 position debt。
+   - 守恒引用：`syTotalStaking` 的减少镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧，见 [accounting.md §10.1](./accounting.md)。
 8. 分账输出：
    - `receiver` 接 keeper principal
    - position owner 接剩余 excess `SY`
@@ -169,6 +173,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - `syTotalStaking -= harvestAmount`
    - `syWrapStaking -= harvestAmount`
    - `wrapUAssetDebt` 不变（用户债务不受影响）
+   - 守恒引用：`syTotalStaking` 与 `syWrapStaking` 同减，等式保持，见 [accounting.md §10.1](./accounting.md)。
 
 4. 收益输出：
    - 若 `tokenOut == SY`，在 pool 暂扣后检查 `harvestAmount < minTokenOut`；此时 `InsufficientTokenOut(harvestAmount, minTokenOut)`，revert 会回滚两项 pool 扣减；通过后直接将 `harvestAmount` 的 SY 转给 `revenuePool`
