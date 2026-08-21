@@ -95,21 +95,25 @@ abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, I
     function _update(address from, address to, uint256 value) internal virtual {
         OutrunERC20Storage storage $ = _getOutrunERC20Storage();
         if (from == address(0)) {
+            // Checked addition keeps totalSupply within uint256 for the unchecked arithmetic below.
             $.totalSupply += value;
         } else {
             uint256 fromBalance = $.balances[from];
             require(fromBalance >= value, ERC20InsufficientBalance(from, fromBalance, value));
             unchecked {
+                // Underflow is impossible because value <= fromBalance <= totalSupply.
                 $.balances[from] = fromBalance - value;
             }
         }
 
         if (to == address(0)) {
             unchecked {
+                // Underflow is impossible because value <= totalSupply after the prior mint or balance check.
                 $.totalSupply -= value;
             }
         } else {
             unchecked {
+                // Overflow is impossible because the resulting balance is at most totalSupply.
                 $.balances[to] += value;
             }
         }
