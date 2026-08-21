@@ -22,6 +22,7 @@ abstract contract OutrunOFTUpgradeable is
     error InvalidLayerZeroEndpoint();
     error InvalidDecimalConversionRate();
     error InvalidWindowSeconds();
+    error InvalidRateLimit();
     error AmountTooSmall();
 
     /// @notice Emitted when the outbound rate limit is set for a destination chain.
@@ -103,13 +104,14 @@ abstract contract OutrunOFTUpgradeable is
     /// @notice Sets a transfer rate limit for a destination chain. Owner-only.
     /// @param dstEid Destination endpoint ID
     /// @param limit Maximum amount that can be in-flight at once, in LD (local decimals):
-    ///         for an 18-dec OFT (DCR = 1e12) 1 token = 1e18. Do NOT pass shared-decimals (SD,
+    ///         for an 18-dec OFT (DCR = 1e12) 1 token = 1e18. `limit == 0` would silently halt all outbound sends to `dstEid` and must not be used; call `removeOutboundRateLimit` to lift the limit. Do NOT pass shared-decimals (SD,
     ///         6-dec) magnitudes — an SD-style value such as 1e12 equals only 1 dust unit here.
     /// @param window Time window (in seconds) over which the limit fully refills
     function setOutboundRateLimit(uint32 dstEid, uint192 limit, uint64 window) external onlyOwner {
         // window == 0 is reserved by OutrunRateLimiterUpgradeable for the unconfigured/deleted
         // unlimited sentinel; reject it here so configured limits cannot be mistaken for that state.
         if (window == 0) revert InvalidWindowSeconds();
+        if (limit == 0) revert InvalidRateLimit();
         RateLimitConfig[] memory configs = new RateLimitConfig[](1);
         configs[0] = RateLimitConfig({dstEid: dstEid, limit: limit, window: window});
         _setRateLimits(configs);
