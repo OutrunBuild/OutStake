@@ -12,6 +12,12 @@ import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol
 import {OutrunWstETHSYUpgradeable} from "../../src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
 import {OutrunStakedUSDeSYUpgradeable} from "../../src/yield/adapters/ethena/OutrunStakedUSDeSYUpgradeable.sol";
+import {L2AssetValidation} from "../lib/L2AssetValidation.sol";
+import {OutrunL2WstETHSYUpgradeable} from "../../src/yield/adapters/lido/OutrunL2WstETHSYUpgradeable.sol";
+import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
+import {
+    OutrunL2WrappableWstETHSYUpgradeable
+} from "../../src/yield/adapters/lido/OutrunL2WrappableWstETHSYUpgradeable.sol";
 
 contract YieldDeployScript is BaseScript {
     // UETH/UUSD are resolved lazily by support functions (state override for tests, env fallback).
@@ -142,5 +148,92 @@ contract YieldDeployScript is BaseScript {
 
         console.log("SY_aUSDC deployed on %s", aUSDCSYAddress);
         console.log("SP_aUSDC deployed on %s", aUSDCSPAddress);
+    }
+
+    // -----------------------------------------------------------------------
+    // L2 oracle-backed SY deployment helpers (G-4 hardening)
+    // -----------------------------------------------------------------------
+
+    /// @notice Deploys an L2 oracle-backed wstETH SY with deployment-time validation (G-1 + G-4).
+    /// @dev Validates `underlyingAssetOnEthDecimals_` against the known L1 stETH family (18) and
+    /// enforces oracle adapter `maxStaleness = 2 days` + sequencer uptime feed + grace period (G-1).
+    /// before broadcasting. Generic range 1..18 is enforced for unknown assets. See
+    /// script/lib/L2AssetValidation.sol and docs/deployment.md L2 checklist.
+    function _deployL2WstETHSY(
+        address owner_,
+        address wstETH_,
+        address exchangeRateOracle_,
+        address underlyingAssetOnEthAddr_,
+        uint8 underlyingAssetOnEthDecimals_
+    ) internal returns (address) {
+        L2AssetValidation.validateL2OracleBackedParams(
+            underlyingAssetOnEthAddr_, underlyingAssetOnEthDecimals_, exchangeRateOracle_
+        );
+        L2AssetValidation.validateL2OracleAdapter(exchangeRateOracle_, underlyingAssetOnEthAddr_);
+        address impl = address(new OutrunL2WstETHSYUpgradeable());
+        return address(
+            new ERC1967Proxy(
+                impl,
+                abi.encodeCall(
+                    OutrunL2WstETHSYUpgradeable.initialize,
+                    (owner_, wstETH_, exchangeRateOracle_, underlyingAssetOnEthAddr_, underlyingAssetOnEthDecimals_)
+                )
+            )
+        );
+    }
+
+    /// @notice Deploys a generic L2 staked-token SY with deployment-time validation (G-1 + G-4).
+    function _deployL2StakedTokenSY(
+        string memory name_,
+        string memory symbol_,
+        address owner_,
+        address token_,
+        address exchangeRateOracle_,
+        address underlyingAssetOnEthAddr_,
+        uint8 underlyingAssetOnEthDecimals_
+    ) internal returns (address) {
+        L2AssetValidation.validateL2OracleBackedParams(
+            underlyingAssetOnEthAddr_, underlyingAssetOnEthDecimals_, exchangeRateOracle_
+        );
+        L2AssetValidation.validateL2OracleAdapter(exchangeRateOracle_, underlyingAssetOnEthAddr_);
+        address impl = address(new OutrunL2StakedTokenSYUpgradeable());
+        return address(
+            new ERC1967Proxy(
+                impl,
+                abi.encodeCall(
+                    OutrunL2StakedTokenSYUpgradeable.initialize,
+                    (
+                        name_,
+                        symbol_,
+                        owner_,
+                        token_,
+                        exchangeRateOracle_,
+                        underlyingAssetOnEthAddr_,
+                        underlyingAssetOnEthDecimals_
+                    )
+                )
+            )
+        );
+    }
+
+    /// @notice Deploys the Optimism wrappable wstETH SY with deployment-time validation.
+    function _deployL2WrappableWstETHSY(
+        address owner_,
+        address stETH_,
+        address wstETH_,
+        address underlyingAssetOnEthAddr_,
+        uint8 underlyingAssetOnEthDecimals_
+    ) internal returns (address) {
+        L2AssetValidation.validateL2WrappableParams(underlyingAssetOnEthAddr_, underlyingAssetOnEthDecimals_, stETH_);
+        address impl = address(new OutrunL2WrappableWstETHSYUpgradeable());
+        return address(
+            new ERC1967Proxy(
+                impl,
+                abi.encodeCall(
+                    OutrunL2WrappableWstETHSYUpgradeable.initialize,
+                    (owner_, stETH_, wstETH_, underlyingAssetOnEthAddr_, underlyingAssetOnEthDecimals_)
+                )
+            )
+        );
     }
 }
