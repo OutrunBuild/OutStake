@@ -22,6 +22,7 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
 
     error AsBnbMintQueued();
     error AsBnbMintZeroShares();
+    error AsBnbMintIncompleteConsumption(uint256 expectedConsumed, uint256 actualRemaining);
     error InvalidAsBnbMinterAsBnb(address expected, address actual);
     error InvalidAsBnbMinterToken(address expected, address actual);
     error InvalidYieldProxy();
@@ -97,9 +98,22 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         // Branch 2 (SLIS_BNB): Mint asBNB from slisBNB via the Aster Minter.
         if (tokenIn == slisBnb()) {
             address _slisBnb = slisBnb();
+            // Capture slisBNB balance before external call to enforce full consumption.
+            // _transferIn already moved amountDeposited into this contract, so before
+            // includes the user's deposit plus any prior stranded balance.
+            uint256 slisBalanceBefore = _selfBalance(_slisBnb);
             _safeApproveInf(_slisBnb, _minter);
             amountSharesOut = IAsBnbMinter(_minter).mintAsBnb(amountDeposited);
             if (amountSharesOut == 0) _revertOnZeroShares();
+            // Enforce that the minter fully consumed the input: any partial fill would
+            // leave user funds as stranded ERC20 that SYBaseUpgradeable.sol::sweep could
+            // extract (F6 residual). Use balance diff rather than return value, because
+            // the external contract could return a non-zero share amount while still
+            // retaining part of the input.
+            uint256 slisBalanceAfter = _selfBalance(_slisBnb);
+            if (slisBalanceAfter != slisBalanceBefore - amountDeposited) {
+                revert AsBnbMintIncompleteConsumption(amountDeposited, slisBalanceBefore - slisBalanceAfter);
+            }
             return amountSharesOut;
         }
         // Branch 3 (asBNB itself): 1:1.
