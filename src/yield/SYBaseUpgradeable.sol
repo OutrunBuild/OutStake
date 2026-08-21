@@ -32,14 +32,43 @@ abstract contract SYBaseUpgradeable is
         0x47ee1d05b1829703ec3dd61a22c784c3e0b2d5dbffb0a55782381dabc9c3eb00;
 
     event SetTrustedRouter(address indexed oldRouter, address indexed newRouter);
+    event Sweep(address indexed token, address indexed to, uint256 amount);
 
     error SYUnauthorizedInternalRedeemer(address caller);
+    error SYSweepInvalidToken(address token);
+    error SYSweepZeroAddress();
+    error SYSweepZeroAmount();
 
     constructor() {
         _disableInitializers();
     }
 
     receive() external payable {}
+
+    /// @notice Rescues stranded assets accidentally sent to this SY contract.
+    /// @dev Only the owner can sweep. The yield-bearing token is blocked — any
+    ///      balance of that token backs SY shares and must not be extracted.
+    ///      The SY share token itself (address(this)) is also blocked for the
+    ///      same reason: sweeping it would take shares that are pending burn
+    ///      via the trusted-router path. Native assets use the NATIVE sentinel
+    ///      (address(0)) as `token`, matching TokenHelper. Reentrancy is
+    ///      blocked via nonReentrant because native transfers use a low-level call.
+    /// @param token Token to rescue (NATIVE sentinel for native ETH/BNB).
+    /// @param to Recipient of the rescued assets.
+    /// @param amount Amount to rescue.
+    function sweep(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert SYSweepZeroAddress();
+        if (amount == 0) revert SYSweepZeroAmount();
+        // The yield-bearing token backs every SY share; sweeping it would steal
+        // user backing and break the 1:1 share invariant enforced in deposit.
+        if (token == yieldBearingToken()) revert SYSweepInvalidToken(token);
+        // SY shares held by this contract are pending burn for the router path
+        // (redeem with burnFromInternalBalance). Sweeping them would front-run
+        // the router, so block the SY address itself as well.
+        if (token == address(this)) revert SYSweepInvalidToken(token);
+        _transferOut(token, to, amount);
+        emit Sweep(token, to, amount);
+    }
 
     /// @notice Sets the router allowed to redeem shares held by this SY contract.
     /// @dev Setting the zero address revokes the current router and closes the internal-balance path.
