@@ -73,11 +73,14 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Deposits an input token into a standardized yield contract.
      * @dev Always pulls `tokenIn` from the caller before forwarding the deposit into SY.
+     * Zero floor means no protection: `minSyOut == 0` accepts any positive SY output; non-zero but
+     * depressed output passes silently. SY only reverts on zero output (`SYZeroSharesOut`). Callers
+     * must pass a quoted non-zero floor.
      * @param SY Standardized yield contract that receives the deposit.
      * @param tokenIn Token to supply when minting SY.
      * @param receiver Recipient of the minted SY.
      * @param amountInput Amount of input token to deposit.
-     * @param minSyOut Minimum acceptable SY output.
+     * @param minSyOut Minimum acceptable SY output; `0` means no slippage protection.
      * @return amountInSYOut Amount of SY minted for `receiver`.
      */
     function mintSYFromToken(address SY, address tokenIn, address receiver, uint256 amountInput, uint256 minSyOut)
@@ -91,6 +94,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Redeems standardized yield into an output token.
      * @dev Always pulls SY from the caller and burns it from SY internal balance during redemption.
+     * Zero floor means no protection: `minTokenOut == 0` accepts any positive token output; SY only
+     * enforces `amountTokenOut >= minTokenOut`.
      * @dev Deployment precondition: each configured SY must have `SY.trustedRouter() == address(this)`
      *      (the SY's owner calls `SY.setTrustedRouter(address(this))` once per router). Without it every call
      *      reverts with `SYUnauthorizedInternalRedeemer(address(router))` inside `SY.redeem(..., true)`; on router
@@ -100,7 +105,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param receiver Recipient of the redeemed token output.
      * @param tokenOut Token requested on redemption.
      * @param amountInSY Amount of SY to redeem.
-     * @param minTokenOut Minimum acceptable token output.
+     * @param minTokenOut Minimum acceptable token output; `0` means no slippage protection.
      * @return amountInTokenOut Amount of `tokenOut` sent to `receiver`.
      */
     function redeemSyToToken(address SY, address receiver, address tokenOut, uint256 amountInSY, uint256 minTokenOut)
@@ -250,9 +255,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the wrapped stake.
      * @param tokenIn Token to deposit into SY.
      * @param tokenAmount Amount of `tokenIn` to convert and wrap-stake.
-     * @param minSyOut Minimum acceptable SY output from the deposit step.
+     * @param minSyOut Minimum acceptable SY output from the deposit step; `0` means no slippage protection.
      * @param uAssetReceiver Recipient of the wrapped uAsset position.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      * @return mintedUAsset Amount of uAsset minted to `uAssetReceiver`.
      */
     function wrapStakeFromToken(
@@ -275,7 +280,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the wrapped stake.
      * @param amountInSY Amount of SY to wrap-stake.
      * @param uAssetReceiver Recipient of the minted uAsset.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      * @return mintedUAsset Amount of uAsset minted to `uAssetReceiver`.
      */
     function wrapStakeFromSY(address SP, uint256 amountInSY, address uAssetReceiver, uint256 minUAssetMinted)
@@ -320,7 +325,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the wrapped stake.
      * @param amountInSY Amount of SY to wrap-stake.
      * @param uAssetReceiver Recipient of the minted uAsset.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      * @return mintedUAsset Amount of uAsset minted to `uAssetReceiver`.
      */
     function _wrapStakeFromSYBalance(
@@ -357,7 +362,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param lockupDays Lockup duration forwarded to the stake manager.
      * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      */
     function _genesisFromSYBalance(
         address SY,
@@ -381,6 +386,16 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         // mintedUAsset is bounded by type(uint128).max immediately before this cast.
         // forge-lint: disable-next-line(unsafe-typecast)
         IMemeverseLauncher(launcher).genesis(verseId, uint128(mintedUAsset), genesisUser);
+        // (5) Post-condition: launcher must have consumed the full approved uAsset. Without the check
+        // a partial transferFrom leaves stranded balance + residual allowance with no rescue path.
+        // Reverting upgrades the "launcher fully consumes" trust assumption to an enforceable assertion.
+        {
+            uint256 residualBalance = IERC20(uAsset).balanceOf(address(this));
+            uint256 residualAllowance = IERC20(uAsset).allowance(address(this), launcher);
+            if (residualBalance != 0 || residualAllowance != 0) {
+                revert GenesisUAssetNotConsumed(residualBalance, residualAllowance);
+            }
+        }
     }
 
     /**
@@ -426,11 +441,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the genesis stake.
      * @param tokenIn Token to deposit into SY before staking.
      * @param tokenAmount Amount of `tokenIn` to convert and stake.
-     * @param minSyOut Minimum acceptable SY output from the deposit step.
+     * @param minSyOut Minimum acceptable SY output from the deposit step; `0` means no slippage protection.
      * @param lockupDays Lockup duration forwarded to the stake manager.
      * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      */
     function genesisByToken(
         address SP,
@@ -458,7 +473,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param lockupDays Lockup duration forwarded to the stake manager.
      * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
-     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts.
+     * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      */
     function genesisBySY(
         address SP,
@@ -482,5 +497,21 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      */
     function setMemeverseLauncher(address _memeverseLauncher) external onlyOwner {
         _setMemeverseLauncher(_memeverseLauncher);
+    }
+
+    /**
+     * @notice Rescues stranded tokens accidentally held by the router.
+     * @dev Owner-only, nonReentrant. Uses _transferOut which handles both ERC20 and native (NATIVE sentinel).
+     *      Reverts on zero recipient or zero amount to avoid silent no-ops. No yield-token blocking needed;
+     *      router holds no backing token. Emits Sweep for off-chain tracking.
+     * @param token Token to rescue (NATIVE = address(0) for native).
+     * @param to Recipient of the rescued assets.
+     * @param amount Amount to rescue.
+     */
+    function sweep(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert SweepZeroAddress();
+        if (amount == 0) revert SweepZeroAmount();
+        _transferOut(token, to, amount);
+        emit Sweep(token, to, amount);
     }
 }
