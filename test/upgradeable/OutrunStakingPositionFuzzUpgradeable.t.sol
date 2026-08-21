@@ -827,4 +827,94 @@ contract OutrunStakingPositionFuzzTest is Test {
 
         assertEq(keeperPrincipalSY + ownerExcessSY, syRedeemed, "total should equal syRedeemed");
     }
+
+    // ============================================
+    // 15. PA-2 wrap pool undercollateralized → recover state machine (真正值得做)
+    // ============================================
+
+    function testFuzz_WrapPoolUndercollateralizedThenRecovers(
+        uint256 amountInSY,
+        uint256 dipRate,
+        uint256 recoverRate,
+        uint256 redeemUAsset
+    ) public {
+        amountInSY = _boundAmount(amountInSY);
+        dipRate = bound(dipRate, RATE_MIN, 9e17); // <1e18 → undercollateralized
+        recoverRate = bound(recoverRate, 1e18, RATE_MAX);
+
+        // WrapStake at 1e18 (healthy)
+        vm.prank(owner);
+        uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
+        assertEq(uAssetMinted, amountInSY);
+
+        // Dip: pool becomes undercollateralized → keepWrapRedeem must revert all-or-nothing
+        sy.setExchangeRate(dipRate);
+        redeemUAsset = bound(redeemUAsset, 1, uAssetMinted);
+        vm.prank(owner);
+        uAsset.transfer(keeper, redeemUAsset);
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
+        position.keepWrapRedeem(redeemUAsset, keeper);
+
+        // No state changed during revert
+        assertEq(position.wrapUAssetDebt(), amountInSY);
+        assertEq(position.syWrapStaking(), amountInSY);
+
+        // Recover: rate back to >=1e18 → same redeem should succeed at face value
+        sy.setExchangeRate(recoverRate);
+        uint256 expectedSYOut = _assetToSy(redeemUAsset, recoverRate);
+        vm.assume(expectedSYOut > 0);
+        vm.prank(keeper);
+        uint256 syOut = position.keepWrapRedeem(redeemUAsset, keeper);
+        assertEq(syOut, expectedSYOut);
+        assertEq(position.wrapUAssetDebt(), amountInSY - redeemUAsset);
+    }
+
+    // ============================================
+    // 16. PA-3 bandwidth guard (真正值得做, 需配合 setExchangeRateBounds)
+    // ============================================
+
+    function testFuzz_BandwidthGuardRejectsOutOfBoundsRate(uint256 amountInSY, uint256 outOfBoundsRate) public {
+        amountInSY = _boundAmount(amountInSY);
+        // Configure a tight band around 1e18: [0.9e18, 1.1e18]
+        vm.prank(owner);
+        position.setExchangeRateBounds(9e17, 11e17);
+
+        outOfBoundsRate = bound(outOfBoundsRate, 11e17 + 1, RATE_MAX);
+        sy.setExchangeRate(outOfBoundsRate);
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, outOfBoundsRate, 9e17, 11e17)
+        );
+        position.stake(amountInSY, 30, owner, owner);
+
+        // Also test low side
+        sy.setExchangeRate(8e17);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, 8e17, 9e17, 11e17)
+        );
+        position.stake(amountInSY, 30, owner, owner);
+
+        // Inside band should succeed
+        sy.setExchangeRate(1e18);
+        vm.prank(owner);
+        (uint256 pid,) = position.stake(amountInSY, 30, owner, owner);
+        assertEq(pid, 1);
+
+        // Disable guard (0/0) → previously out-of-bounds rate now passes zero-guard only
+        vm.prank(owner);
+        position.setExchangeRateBounds(0, 0);
+        sy.setExchangeRate(outOfBoundsRate);
+        vm.prank(owner);
+        (uint256 pid2,) = position.stake(amountInSY, 30, owner, owner);
+        assertEq(pid2, 2);
+    }
+
+    function test_BandwidthGuardInvalidBoundsReverts() public {
+        vm.prank(owner);
+        vm.expectRevert(IOutrunStakeManager.InvalidBounds.selector);
+        position.setExchangeRateBounds(2e18, 1e18);
+    }
 }

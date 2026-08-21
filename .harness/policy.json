@@ -304,6 +304,14 @@
         ],
         "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
         "enforcement": "residual-risk"
+      },
+      {
+        "id": "f6-sweep-residual-gap",
+        "paths": [
+          "test/verification/F6SweepResidual.t.sol"
+        ],
+        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
+        "enforcement": "residual-risk"
       }
     ]
   },

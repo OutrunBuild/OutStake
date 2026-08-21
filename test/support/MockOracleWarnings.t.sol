@@ -200,4 +200,10 @@ contract MockOracleWarningsTest is Test {
         vm.expectRevert(INVALID_STALENESS_SELECTOR);
         new OutrunExchangeOracleAdapter(address(aggregator), 0, address(0), 0);
     }
+
+    function testExchangeOracleAdapterRevertsWhenOracleIsZero() external {
+        bytes4 invalidOracleSelector = bytes4(keccak256("InvalidOracle()"));
+        vm.expectRevert(invalidOracleSelector);
+        new OutrunExchangeOracleAdapter(address(0), 2 days, address(0), 0);
+    }
 }

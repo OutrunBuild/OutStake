@@ -860,6 +860,275 @@ contract SYAdaptersUpgradeableTest is Test {
         assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
+    // ---------------------------------------------------------------------------
+    // Rounding-direction property tests (docs/audits/2026-08-19/04a-guidelines-yield-libraries.md §4)
+    //
+    // P1 roundtrip bounded loss: deposit then immediately redeem the same token and assert the
+    // output stays within the adapter's rounding quanta of the input. P2 preview bounds actual:
+    // on the chained-floor native paths, assert the executed deposit output stays within one
+    // quantum of the preview quote. Rates/indices are bounded to [1x, 2x) — the realistic
+    // appreciation band. Amount lower bounds sit at or above each path's dust threshold
+    // (conservatively rounded up; the dust-revert region itself is already pinned by the example
+    // tests above).
+    // ---------------------------------------------------------------------------
+
+    function testFuzz_AaveATokenRoundtripLosesAtMostOneQuantum(uint128 amountSeed, uint96 indexSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        // Index stays strictly below 2e27: in the mock's accounting, at >= 2x the half-up share
+        // credit can quote one more aToken than a fresh contract holds and the first roundtrip
+        // would revert on the ERC20 transfer (real Aave derives balanceOf from the same scaled
+        // accounting, so this cap is a mock-domain choice, not a production bound).
+        uint256 index = bound(indexSeed, 1e27, 2e27 - 1);
+        (address sy,, MockAToken aToken) = _deployAave(index);
+
+        aToken.mint(user, amount);
+        vm.startPrank(user);
+        aToken.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(aToken), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(aToken), 0, false);
+        vm.stopPrank();
+
+        // Deposit converts asset -> scaled shares half-up (calcSharesFromAssetHalfUp) and redeem
+        // converts back floor (calcSharesToAssetDown); the composed loss is at most one aToken
+        // quantum while the index stays below 2x.
+        assertGe(out, amount - 1, "aToken roundtrip loss exceeds one quantum");
+    }
+
+    function testFuzz_AaveUnderlyingRoundtripLosesAtMostOneQuantum(uint128 amountSeed, uint96 indexSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        uint256 index = bound(indexSeed, 1e27, 2e27 - 1);
+        (address sy, MockToken underlying,) = _deployAave(index);
+
+        underlying.mint(user, amount);
+        vm.startPrank(user);
+        underlying.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(underlying), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(underlying), 0, false);
+        vm.stopPrank();
+
+        // Same half-up -> floor composition as the aToken path, routed through pool
+        // supply/withdraw; the composed loss is at most one underlying quantum below 2x index.
+        assertGe(out, amount - 1, "underlying roundtrip loss exceeds one quantum");
+    }
+
+    function testFuzz_WstETHStEthRoundtripLosesAtMostTwoQuanta(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+        MockStETH stETH = new MockStETH();
+        MockWstETH wstETH = new MockWstETH(address(stETH));
+        stETH.setPooledEthPerShare(rate);
+        wstETH.setStEthPerToken(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWstETHSYUpgradeable()),
+            abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+        );
+
+        stETH.mint(user, amount);
+        vm.startPrank(user);
+        stETH.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(stETH), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(stETH), 0, false);
+        vm.stopPrank();
+
+        // wrap floors asset -> shares and unwrap floors shares -> asset; the double floor loses
+        // at most ceil(rate / 1e18) quanta, which is <= 2 while the rate stays within 2x.
+        assertGe(out, amount - 2, "wstETH stETH roundtrip loss exceeds two quanta");
+    }
+
+    function testFuzz_SkyUsdsRoundtripLosesAtMostTwoQuanta(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockVault sUSDS = new MockVault(address(usds));
+        sUSDS.setAssetsPerShare(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUsdsSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+        );
+
+        usds.mint(user, amount);
+        vm.startPrank(user);
+        usds.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(usds), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(usds), 0, false);
+        vm.stopPrank();
+
+        // convertToShares and convertToAssets are both floors, so the vault roundtrip loses at
+        // most ceil(rate / 1e18) quanta — <= 2 while the rate stays within 2x.
+        assertGe(out, amount - 2, "sUSDS roundtrip loss exceeds two quanta");
+    }
+
+    function testFuzz_WeETHEEthRoundtripLosesAtMostTwoQuanta(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        weETH.setShareRate(rate);
+        // The eETH roundtrip only touches wrap/unwrap; the native-path mocks are wiring-only.
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (
+                    owner,
+                    address(eETH),
+                    address(weETH),
+                    address(new MockDepositAdapter()),
+                    address(new MockLiquidityPool())
+                )
+            )
+        );
+
+        eETH.mint(user, amount);
+        vm.startPrank(user);
+        eETH.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(eETH), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(eETH), 0, false);
+        vm.stopPrank();
+
+        // weETH.wrap floors eETH -> shares and unwrap floors shares -> eETH; the double floor
+        // loses at most ceil(rate / 1e18) quanta, which is <= 2 while the rate stays within 2x.
+        assertGe(out, amount - 2, "weETH eETH roundtrip loss exceeds two quanta");
+    }
+
+    function testFuzz_L2WrappableWstETHStEthRoundtripLosesAtMostTwoQuanta(uint128 amountSeed, uint96 rateSeed)
+        external
+    {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        uint256 tokensPerShare = bound(rateSeed, 1e18, 2e18);
+        MockToken wstETH = new MockToken("wstETH", "wstETH", 18);
+        MockL2StETH l2StETH = new MockL2StETH(address(wstETH), tokensPerShare);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunL2WrappableWstETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2WrappableWstETHSYUpgradeable.initialize,
+                (owner, address(l2StETH), address(wstETH), address(l2StETH), 18)
+            )
+        );
+
+        // MockL2StETH mint adds raw shares while balanceOf reports token units, so minting
+        // `amount` raw shares leaves a displayed balance >= amount (tokensPerShare >= 1e18).
+        l2StETH.mint(user, amount);
+        vm.startPrank(user);
+        l2StETH.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(l2StETH), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(l2StETH), 0, false);
+        vm.stopPrank();
+
+        // unwrap floors tokens -> shares and wrap floors shares -> tokens; the double floor loses
+        // at most ceil(tokensPerShare / 1e18) quanta — <= 2 while the ratio stays within 2x.
+        assertGe(out, amount - 2, "L2 wrappable wstETH stETH roundtrip loss exceeds two quanta");
+    }
+
+    function testFuzz_SkyL2PsmUsdsRoundtripLosesAtMostTwoQuanta(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+        MockToken usdc = new MockToken("USDC", "USDC", 6);
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockToken l2sUSDS = new MockToken("sUSDS", "sUSDS", 18);
+        MockPSM3 psm3 = new MockPSM3();
+        psm3.setRate(address(l2sUSDS), rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunL2StakedUsdsSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usdc), address(usds), address(l2sUSDS), address(psm3))
+            )
+        );
+
+        usds.mint(user, amount);
+        vm.startPrank(user);
+        usds.approve(sy, amount);
+        uint256 shares = _asSY(sy).deposit(user, address(usds), amount, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(usds), 0, false);
+        vm.stopPrank();
+
+        // Both PSM3 legs are floors (into the share divides by rate, out of the share multiplies
+        // by rate), so the swap roundtrip loses at most ceil(rate / 1e18) quanta — <= 2 at 2x.
+        assertGe(out, amount - 2, "PSM3 USDS roundtrip loss exceeds two quanta");
+    }
+
+    function testFuzz_WstETHNativePreviewBoundsActualWithinOneQuantum(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 4, 1_000_000 ether);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+        MockStETH stETH = new MockStETH();
+        MockWstETH wstETH = new MockWstETH(address(stETH));
+        stETH.setPooledEthPerShare(rate);
+        wstETH.setStEthPerToken(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWstETHSYUpgradeable()),
+            abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+        );
+
+        vm.deal(user, amount);
+        vm.startPrank(user);
+        uint256 preview = _asSY(sy).previewDeposit(NATIVE, amount);
+        uint256 actual = _asSY(sy).deposit{value: amount}(user, NATIVE, amount, 0);
+        vm.stopPrank();
+
+        // The native path chains three floors (submit -> getPooledEthByShares -> wrap) against
+        // the preview's single floor, so the executed output never exceeds the preview and stays
+        // within one quantum below it while the rate stays >= 1x. The one-quantum bound is
+        // proven on the mock's unified-rate model (pooledEthPerShare == stEthPerTokenRate); the
+        // real-chain composite deviation keeps the adapter NatSpec guidance — callers leave
+        // slippage headroom rather than passing the preview verbatim.
+        assertLe(actual, preview, "native wstETH actual exceeds preview");
+        assertGe(actual, preview - 1, "native wstETH preview overquotes actual by more than one quantum");
+    }
+
+    function testFuzz_WeETHNativePreviewBoundsActualWithinOneQuantum(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 4, 1_000_000 ether);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        MockLiquidityPool pool = new MockLiquidityPool();
+        MockDepositAdapter depositAdapter = new MockDepositAdapter();
+        weETH.setShareRate(rate);
+        pool.setShareRate(rate);
+        depositAdapter.setShareRate(rate);
+        depositAdapter.setWeETHToken(weETH);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(depositAdapter), address(pool))
+            )
+        );
+
+        vm.deal(user, amount);
+        vm.startPrank(user);
+        uint256 preview = _asSY(sy).previewDeposit(NATIVE, amount);
+        uint256 actual = _asSY(sy).deposit{value: amount}(user, NATIVE, amount, 0);
+        vm.stopPrank();
+
+        // The native preview chains two extra floors (sharesForAmount -> amountForShare ->
+        // sharesForAmount) against the deposit adapter's single floor, so the executed output
+        // never falls below the preview and stays within one quantum above it.
+        assertGe(actual, preview, "native weETH actual falls below preview");
+        assertLe(actual, preview + 1, "native weETH preview underquotes actual by more than one quantum");
+    }
+
+    function testFuzz_L2OracleFamilyRoundtripIsExact(uint128 amountSeed) external {
+        uint256 amount = bound(amountSeed, 1, 1_000_000 ether);
+        // Both oracle-backed variants deposit and redeem the yield-bearing token 1:1 — the
+        // quoted oracle rate never enters the exchange track, so the roundtrip is exact.
+        address[] memory instances = new address[](2);
+        instances[0] = _deployL2Staked();
+        instances[1] = _deployL2WstETH();
+        for (uint256 i; i < instances.length; ++i) {
+            address sy = instances[i];
+            token.mint(user, amount);
+            vm.startPrank(user);
+            token.approve(sy, amount);
+            uint256 shares = _asSY(sy).deposit(user, address(token), amount, 0);
+            uint256 out = _asSY(sy).redeem(user, shares, address(token), 0, false);
+            vm.stopPrank();
+
+            assertEq(shares, amount, "L2 oracle family shares must be 1:1");
+            assertEq(out, amount, "L2 oracle family roundtrip must be exact");
+        }
+    }
+
     function _assertYieldTokenRoundtrip(address sy, MockToken ybt, uint256 amount) internal {
         uint256 balanceBefore = ybt.balanceOf(user);
         ybt.mint(user, amount);

@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
@@ -966,3 +967,117 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         sameDecimalsSy.approve(address(sameDecimalsPosition), type(uint256).max);
     }
 }
+
+// PA-1 pause matrix regression (04a)
+contract PositionPauseMatrixTest is PositionStackTestBase {
+    bytes4 constant ENFORCED_PAUSE = PausableUpgradeable.EnforcedPause.selector;
+
+    function setUp() external {
+        _deployPositionStack();
+        vm.startPrank(user);
+        token.approve(address(sy), type(uint256).max);
+        sy.deposit(user, address(token), 50e18, 0);
+        sy.approve(address(position), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    function _stakeOne() internal returns (uint256 positionId) {
+        vm.prank(user);
+        (positionId,) = position.stake(10e18, 30, user, user);
+    }
+
+    function test_SPPause_BlocksStakeDrawRedeemWrapKeep() external {
+        uint256 positionId = _stakeOne();
+        vm.prank(owner);
+        position.pause();
+        assertTrue(position.paused());
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.stake(1e18, 30, user, user);
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.drawUAsset(positionId, user);
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.redeem(positionId, 1e18, user, address(sy), 0);
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.wrapStake(1e18, user);
+        vm.prank(keeper);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.keepRedeem(positionId, 1e18, keeper);
+        vm.prank(keeper);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.keepWrapRedeem(1e18, keeper);
+        vm.prank(owner);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.harvestWrapYield(address(sy), 0);
+        vm.prank(owner);
+        position.unpause();
+        // Recovery probe: a fresh stake succeeds after unpause. drawUAsset(positionId) cannot
+        // serve here — the 31-day warp that matured the position for the paused redeem checks
+        // has closed the draw window (LockTimeExpired: draw is lockup-window-only), and the
+        // fixture's fixed 1:1 oracle leaves NothingToDraw regardless.
+        vm.prank(user);
+        (uint256 recoveredId,) = position.stake(1e18, 30, user, user);
+        assertGt(recoveredId, positionId, "recovered stake must create a fresh position");
+    }
+
+    function test_SYPause_BlocksStakeViaSYTransfer() external {
+        vm.prank(owner);
+        sy.pause();
+        assertTrue(sy.paused());
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.stake(1e18, 30, user, user);
+        vm.prank(owner);
+        sy.unpause();
+        vm.prank(user);
+        (uint256 pid,) = position.stake(1e18, 30, user, user);
+        assertEq(pid, 1);
+    }
+
+    function test_UAssetPause_BlocksMintRepayTransfer() external {
+        uint256 positionId = _stakeOne();
+        vm.prank(owner);
+        uAsset.pause();
+        assertTrue(uAsset.paused());
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.stake(1e18, 30, user, user);
+        vm.warp(block.timestamp + 31 days);
+        deal(address(sy), address(position), 10e18);
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        position.redeem(positionId, 1e18, user, address(sy), 0);
+        vm.prank(user);
+        vm.expectRevert(ENFORCED_PAUSE);
+        uAsset.transfer(address(0x123), 1e18);
+        vm.prank(user);
+        uAsset.approve(address(position), 1e18);
+        assertEq(uAsset.allowance(user, address(position)), 1e18);
+    }
+
+    function test_UAssetPause_CreditStillMints_AndRepayAfterUnpause() external {
+        // The recovery half needs a real matured position carrying uAsset debt: stake BEFORE the
+        // pause (the mint inside stake would revert under the uAsset pause below), giving the
+        // user 10e18 uAsset and the position 10e18 staked SY at the fixture's 1:1 rate.
+        uint256 positionId = _stakeOne();
+        vm.prank(owner);
+        uAsset.pause();
+        uint256 beforeBal = uAsset.balanceOf(user);
+        deal(address(uAsset), user, beforeBal + 10e18);
+        assertEq(uAsset.balanceOf(user), beforeBal + 10e18);
+        vm.prank(owner);
+        uAsset.unpause();
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(user);
+        uAsset.approve(address(position), 10e18);
+        vm.prank(user);
+        (uint256 burned,) = position.redeem(positionId, 5e18, user, address(sy), 0);
+        assertEq(burned, 5e18);
+        assertFalse(uAsset.paused());
+    }
+}
+
