@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
@@ -115,5 +116,90 @@ contract OracleSetterUpgradeableTest is Test {
                     )
                 ))
         );
+    }
+}
+
+/// @dev Minimal read surface shared by every oracle source the swap sequence can select: the
+/// fixed-rate mocks and the reverting mock all expose exactly this.
+interface OracleLike {
+    function getExchangeRate() external view returns (uint256);
+}
+
+/// @title Invariant handler swapping the SY's exchange-rate oracle source
+/// @notice Deploys an L2 staked SY with four candidate oracles (three fixed-rate mocks plus a
+///     reverting one) and exposes a single swapOracle entry point, so the fuzzer drives arbitrary
+///     source-swap sequences while the invariant checks that the SY always mirrors the current
+///     oracle.
+contract OracleSourceSwapHandler is Test {
+    address internal owner = address(0xA11CE);
+
+    IOracleBackedSYUpgradeable public sy;
+    address[] public oracles;
+
+    constructor() {
+        OracleSetterMockToken token = new OracleSetterMockToken("Yield Token", "YBT");
+        OracleSetterMockOracle oracleA = new OracleSetterMockOracle(1.1e18);
+        OracleSetterMockOracle oracleB = new OracleSetterMockOracle(1.7e18);
+        OracleSetterMockOracle oracleC = new OracleSetterMockOracle(2.3e18);
+        RevertingOracle revertingOracle = new RevertingOracle();
+
+        oracles.push(address(oracleA));
+        oracles.push(address(oracleB));
+        oracles.push(address(oracleC));
+        oracles.push(address(revertingOracle));
+
+        // Same deployment shape as OracleSetterUpgradeableTest._deployL2Staked, with the first
+        // fixed-rate oracle as the initial source.
+        OutrunL2StakedTokenSYUpgradeable implementation = new OutrunL2StakedTokenSYUpgradeable();
+        sy = IOracleBackedSYUpgradeable(
+            payable(ProxyTestHelper.deploy(
+                    address(implementation),
+                    abi.encodeCall(
+                        OutrunL2StakedTokenSYUpgradeable.initialize,
+                        ("SY Generic", "SYG", owner, address(token), address(oracleA), address(token), 18)
+                    )
+                ))
+        );
+    }
+
+    /// @notice Swaps the SY's oracle source to the candidate selected by the seed. The setter is
+    ///     owner-only on the SY side, so the handler pranks the owner.
+    function swapOracle(uint256 indexSeed) external {
+        uint256 index = indexSeed % oracles.length;
+        vm.prank(owner);
+        sy.setExchangeRateOracle(oracles[index]);
+    }
+}
+
+/// @title Invariant test: the SY exchange rate always mirrors the current oracle source [OR-3b]
+/// @notice After any sequence of source swaps the SY must report exactly what its currently
+///     configured oracle reports — no caching, no blending, no stale value from a previous
+///     source. The reverting oracle participates in the sequence, so propagation (the SY
+///     reverting when its current source reverts) is part of the property, not an error.
+contract OracleSourceSwapSequenceTest is StdInvariant, Test {
+    OracleSourceSwapHandler internal handler;
+
+    function setUp() external {
+        handler = new OracleSourceSwapHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_rateAlwaysMirrorsCurrentOracle() public view {
+        IOracleBackedSYUpgradeable sy = handler.sy();
+        address current = sy.exchangeRateOracle();
+
+        // vm.expectRevert is unusable inside invariants (they run as plain calls), so classify
+        // outcomes with nested try/catch instead.
+        try IStandardizedYield(address(sy)).exchangeRate() returns (uint256 got) {
+            try OracleLike(current).getExchangeRate() returns (uint256 expected) {
+                assertEq(got, expected, "SY rate does not mirror the current oracle (cache/blending leak)");
+            } catch {
+                revert("SY returned a rate while its current oracle reverts");
+            }
+        } catch {
+            try OracleLike(current).getExchangeRate() returns (uint256) {
+                revert("SY reverted while its current oracle returned a value");
+            } catch {} // both revert: the SY propagates its current oracle's failure correctly
+        }
     }
 }

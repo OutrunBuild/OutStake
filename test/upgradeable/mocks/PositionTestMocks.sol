@@ -144,6 +144,10 @@ contract MockERC20 is ERC20 {
 contract MockUAsset is ERC20, IUniversalAssets {
     address public immutable owner;
 
+    // Configurable uAsset decimals so cross-decimals test runs can exercise non-default scaling.
+    // Default 18 keeps every existing test unchanged.
+    uint8 internal uAssetDecimals = 18;
+
     mapping(address minter => MintingStatus) public mintingStatusTable;
 
     IOutrunStakeManager internal positionProbe;
@@ -163,6 +167,16 @@ contract MockUAsset is ERC20, IUniversalAssets {
 
     constructor() ERC20("Mock UAsset", "mUAsset") {
         owner = msg.sender;
+    }
+
+    /// @notice Sets the uAsset decimals (cross-decimals invariant runs configure this BEFORE position
+    ///         initialization, which freezes the value; default 18 keeps existing tests unchanged).
+    function setUAssetDecimals(uint8 decimals_) external {
+        uAssetDecimals = decimals_;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return uAssetDecimals;
     }
 
     function checkMintableAmount(address minter) external view returns (uint256 amountInMintable) {

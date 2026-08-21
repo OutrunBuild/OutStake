@@ -6,6 +6,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
+import {SYUtils} from "../../src/libraries/SYUtils.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 
 /**
@@ -291,6 +292,16 @@ contract PositionHandler is Test {
         sy.setExchangeRate(newRate);
     }
 
+    /// @notice Monotone-only rate entrypoint for the coverage invariant runs [POS-1c].
+    /// Unlike changeExchangeRate (bidirectional by design — existing invariants depend on rate
+    /// drops), bumpExchangeRate only ever increases the rate, so wrap-pool coverage stays provable.
+    function bumpExchangeRate(uint256 deltaSeed) external {
+        uint256 delta = bound(deltaSeed, 0, 4e18);
+        uint256 next = sy.exchangeRate() + delta;
+        if (next > 5e18) next = 5e18;
+        sy.setExchangeRate(next);
+    }
+
     /**
      * @notice Harvest wrap yield (owner only)
      */
@@ -533,5 +544,212 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
             totalPositionUAsset,
             "Invariant violation: ghost uAsset tracking mismatch"
         );
+    }
+}
+
+/**
+ * @title Cross-decimals invariant tests for OutrunStakingPosition
+ * @notice Re-runs the core position invariants under non-default decimal configurations [POS-1a/1c]:
+ *         the position freezes canonicalAssetDecimals and uAssetDecimals at initialization, so these
+ *         runs verify that the uAsset<->canonical-asset rescaling never breaks the ledger identities.
+ * @dev The fuzzed entrypoint set deliberately excludes changeExchangeRate: it is bidirectional, and a
+ *      rate drop legitimately breaks wrap-pool coverage (the pool can become undercollateralized).
+ *      These runs only ever increase the rate via bumpExchangeRate, which keeps coverage provable.
+ */
+abstract contract OutrunStakingPositionCrossDecimalsInvariantTest is StdInvariant, Test {
+    PositionHandler public handler;
+    OutrunStakingPositionUpgradeable public position;
+    MockSY public sy;
+    MockUAsset public uAsset;
+    MockERC20 public underlying;
+
+    address public owner = address(0xA11CE);
+    address public keeper = address(0xB0B);
+    address public revenuePool = address(0xFEE);
+
+    function _setUpWith(uint8 canonicalDecimals, uint8 uAssetDecimals) internal {
+        underlying = new MockERC20("Mock Asset", "mAST");
+        sy = new MockSY(address(underlying));
+        uAsset = new MockUAsset();
+
+        // The SY's own ERC20 decimals stay 18 (the position never reads them); assetInfo() drives the
+        // canonical-asset decimals that the position freezes at initialization.
+        sy.setDecimals(18, canonicalDecimals);
+        // Must be configured before the position proxy initializes, which freezes the value.
+        uAsset.setUAssetDecimals(uAssetDecimals);
+
+        position = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                abi.encodeCall(
+                    OutrunStakingPositionUpgradeable.initialize,
+                    (owner, 1, revenuePool, address(sy), address(uAsset), keeper)
+                )
+            )
+        );
+
+        uAsset.setMintingCap(address(position), type(uint256).max);
+
+        handler = new PositionHandler(position, sy, uAsset, underlying, owner, keeper, revenuePool);
+        uAsset.setMintingCap(address(handler), type(uint256).max);
+
+        // Restrict the fuzzed entrypoints to the monotone-rate set (bumpExchangeRate in, bidirectional
+        // changeExchangeRate out) so wrap-pool coverage stays an invariant of every fuzzed sequence.
+        targetContract(address(handler));
+        bytes4[] memory selectors = new bytes4[](8);
+        selectors[0] = handler.stake.selector;
+        selectors[1] = handler.drawUAsset.selector;
+        selectors[2] = handler.wrapStake.selector;
+        selectors[3] = handler.keepWrapRedeem.selector;
+        selectors[4] = handler.redeem.selector;
+        selectors[5] = handler.keepRedeem.selector;
+        selectors[6] = handler.bumpExchangeRate.selector;
+        selectors[7] = handler.harvestWrapYield.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+    }
+
+    /**
+     * @notice Invariant: syTotalStaking equals sum of position SY + wrap pool SY
+     * @dev This is the MOST CRITICAL invariant - ensures accounting consistency
+     */
+    function invariant_syTotalStakingMatchesSum() public view {
+        uint256 totalPositionSY = 0;
+        uint256 activeCount = handler.getActivePositionCount();
+
+        for (uint256 i = 0; i < activeCount; i++) {
+            uint256 positionId = handler.getActivePositionId(i);
+            (, uint256 syStaked,,) = position.positions(positionId);
+            if (syStaked > 0) {
+                totalPositionSY += syStaked;
+            }
+        }
+
+        uint256 expectedTotal = totalPositionSY + position.syWrapStaking();
+        assertEq(
+            position.syTotalStaking(),
+            expectedTotal,
+            "Invariant violation: syTotalStaking != sum(positions.syStaked) + syWrapStaking"
+        );
+    }
+
+    /**
+     * @notice Invariant: uAsset supply accounting consistency [POS-1a]
+     * @dev Total uAsset minted equals sum of position debt + wrap debt. Both sides of the identity
+     *      live in the uAsset domain, so it must hold under any decimal configuration; this run
+     *      verifies that the cross-domain rescaling never corrupts it.
+     */
+    function invariant_uAssetSupplyConsistency() public view {
+        uint256 totalPositionDebt = 0;
+        uint256 activeCount = handler.getActivePositionCount();
+
+        for (uint256 i = 0; i < activeCount; i++) {
+            uint256 positionId = handler.getActivePositionId(i);
+            (,, uint256 uAssetMinted,) = position.positions(positionId);
+            if (uAssetMinted > 0) {
+                totalPositionDebt += uAssetMinted;
+            }
+        }
+
+        // The position contract's net minted amount (per-minter ledger). Read mintingStatusTable[address(position)]
+        // instead of totalSupply() — the handler mints uAsset directly to actor/keeper on redeem/keepRedeem
+        // to top up burned balances, which would pollute totalSupply; the per-minter ledger isolates the position's net amount.
+        (, uint256 positionNetMinted) = uAsset.mintingStatusTable(address(position));
+
+        // The position contract's net minted amount must equal the currently outstanding position debt + wrap debt.
+        assertEq(
+            positionNetMinted,
+            totalPositionDebt + position.wrapUAssetDebt(),
+            "Invariant violation: position net minted != sum(position debt) + wrap debt"
+        );
+    }
+
+    /**
+     * @notice Invariant: wrap pool stays covered under monotone rates [POS-1c]
+     * @dev Conservation argument (executable form of 04a §1.3): wrapStake adds ceil-scaled debt against
+     *      exact SY principal, harvestWrapYield only removes SY above the debt ceiling, and
+     *      keepWrapRedeem enforces the coverage guard while paying out floor-converted SY. Together
+     *      with monotone rates these three paths preserve:
+     *      assetToSyUp(rate, wrapUAssetDebt) <= syWrapStaking.
+     */
+    function invariant_wrapPoolCoverageUnderMonotoneRates() public view {
+        uint256 rate = sy.exchangeRate();
+        uint256 expected = SYUtils.assetToSyUp(rate, _scaleUAssetToCanonicalCeil(position.wrapUAssetDebt()));
+        assertLe(expected, position.syWrapStaking(), "Invariant violation: wrap pool SY below ceil-converted wrap debt");
+    }
+
+    /**
+     * @notice Invariant: No position has UAssetMinted == 0 with syStaked > 0
+     * @dev A valid position always has UAssetMinted > 0 when syStaked > 0
+     */
+    function invariant_validPositionsHaveUAssetDebt() public view {
+        uint256 activeCount = handler.getActivePositionCount();
+
+        for (uint256 i = 0; i < activeCount; i++) {
+            uint256 positionId = handler.getActivePositionId(i);
+            (address positionOwner, uint256 syStaked, uint256 uAssetMinted,) = position.positions(positionId);
+
+            // If position is active (has owner), check consistency
+            if (positionOwner != address(0) && syStaked > 0) {
+                assertGt(uAssetMinted, 0, "Invariant violation: position with syStaked > 0 has no uAsset debt");
+            }
+        }
+    }
+
+    /**
+     * @notice Invariant: Position owner consistency
+     * @dev Active positions should have valid owners
+     */
+    function invariant_activePositionsHaveValidOwners() public view {
+        uint256 activeCount = handler.getActivePositionCount();
+
+        for (uint256 i = 0; i < activeCount; i++) {
+            uint256 positionId = handler.getActivePositionId(i);
+            (address positionOwner, uint256 syStaked,,) = position.positions(positionId);
+
+            // If position is tracked as active, it should either have a valid owner
+            // or be deleted from tracking
+            if (syStaked > 0) {
+                assertTrue(positionOwner != address(0), "Invariant violation: active position has zero owner");
+            }
+        }
+    }
+
+    /// @dev Mirrors the position's _scaleUAssetToCanonicalAsset(Ceil): exact up-scale when canonical
+    ///      decimals >= uAsset decimals, otherwise ceil-division back up.
+    function _scaleUAssetToCanonicalCeil(uint256 debt) internal view returns (uint256) {
+        (,, uint8 canonicalDecimals) = sy.assetInfo();
+        uint8 uAssetDecimals_ = uAsset.decimals();
+        if (canonicalDecimals >= uAssetDecimals_) {
+            return debt * 10 ** (canonicalDecimals - uAssetDecimals_);
+        }
+        if (debt == 0) {
+            return 0;
+        }
+        uint256 factor = 10 ** (uAssetDecimals_ - canonicalDecimals);
+        return (debt - 1) / factor + 1;
+    }
+}
+
+/// @title Cross-decimals invariant run: canonical 18, uAsset 6
+/// @notice uAsset debt is downscaled from the canonical domain (divide by 1e12 on mint).
+contract OutrunStakingPositionCrossDecimalsInvariantTest_18_6 is OutrunStakingPositionCrossDecimalsInvariantTest {
+    function setUp() external {
+        _setUpWith(18, 6);
+    }
+}
+
+/// @title Cross-decimals invariant run: canonical 6, uAsset 18
+/// @notice uAsset debt is upscaled from the canonical domain (multiply by 1e12 on mint).
+contract OutrunStakingPositionCrossDecimalsInvariantTest_6_18 is OutrunStakingPositionCrossDecimalsInvariantTest {
+    function setUp() external {
+        _setUpWith(6, 18);
+    }
+}
+
+/// @title Cross-decimals invariant run: canonical 18, uAsset 18
+/// @notice Same-decimals control run: the rescaling is the identity, isolating rate-only effects.
+contract OutrunStakingPositionCrossDecimalsInvariantTest_18_18 is OutrunStakingPositionCrossDecimalsInvariantTest {
+    function setUp() external {
+        _setUpWith(18, 18);
     }
 }

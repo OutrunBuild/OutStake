@@ -19,4 +19,11 @@ contract OutrunRateLimiterHarness is OutrunRateLimiterUpgradeable {
     function removeRateLimit(uint32 dstEid) external {
         _deleteRateLimit(dstEid);
     }
+
+    /// @notice Records an outflow against the rate limit for a destination.
+    /// @param dstEid Destination endpoint ID
+    /// @param amount Outflow amount to record, in LD (local decimals)
+    function outflow(uint32 dstEid, uint256 amount) external {
+        _outflow(dstEid, amount);
+    }
 }

@@ -2,6 +2,9 @@
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
+import {StdInvariant} from "forge-std/StdInvariant.sol";
+
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
@@ -1379,5 +1382,476 @@ contract SYAdaptersUpgradeableTest is Test {
             address(impl),
             abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter)))
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SY adapter property suite (docs/audits/2026-08-19/05-invariants.md §2)
+//
+// Property tests promoted from the audit's SY-layer design: preview==actual on
+// token paths (SY-3), absolute roundtrip loss at large amounts (SY-1b), Aave
+// exchange-rate decimals independence (SY-4b), SY↔YBT decimals identity (SY-4c),
+// and exchange-rate monotonicity via a handler invariant (SY-2).
+// ---------------------------------------------------------------------------
+
+/// @title SY adapter property tests (SY-3 / SY-1b / SY-4b / SY-4c)
+/// @notice Stateless property tests for the SY adapter layer. Inherits the example suite above so
+///     the `_deploy*` wiring helpers are reused directly instead of being duplicated.
+contract SYAdapterPropertyTest is SYAdaptersUpgradeableTest {
+    /// @notice [SY-3] previewDeposit/previewRedeem equal the executed deposit/redeem output on the
+    ///     token paths: preview and execution quote through the same conversion source (k = 0).
+    /// @dev Rates and the derived Aave ray index stay in the realistic [1x, 2x) appreciation band;
+    ///      amounts sit at or above each path's dust threshold so the zero-share guard never fires.
+    function testFuzz_PreviewMatchesActualOnTokenPaths(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 2, 1e24);
+        uint256 rate = bound(rateSeed, 1e18, 2e18 - 1);
+        // Ray index for the Aave scenarios. rate * 1e9 stays inside [1e27, 2e27), matching the
+        // strictly-below-2x cap the aToken mock's ERC20/scaled accounting needs.
+        uint256 index = rate * 1e9;
+
+        // Aave underlying path: the preview runs calcSharesFromAssetHalfUp while execution measures
+        // the pool supply's scaled-balance delta — the same half-up ray division, hence the equality.
+        {
+            (address sy, MockToken underlying,) = _deployAave(index);
+            underlying.mint(user, amount);
+            vm.startPrank(user);
+            underlying.approve(sy, amount);
+            uint256 previewShares = IStandardizedYield(sy).previewDeposit(address(underlying), amount);
+            uint256 sharesOut = IStandardizedYield(sy).deposit(user, address(underlying), amount, 0);
+            uint256 previewOut = IStandardizedYield(sy).previewRedeem(address(underlying), sharesOut);
+            uint256 out = IStandardizedYield(sy).redeem(user, sharesOut, address(underlying), 0, false);
+            vm.stopPrank();
+
+            assertEq(sharesOut, previewShares, "Aave underlying previewDeposit != actual shares");
+            assertEq(out, previewOut, "Aave underlying previewRedeem != actual out");
+        }
+
+        // Aave aToken path: preview and execution both run the half-up conversion locally.
+        {
+            (address sy,, MockAToken aToken) = _deployAave(index);
+            aToken.mintScaled(user, amount);
+            vm.startPrank(user);
+            aToken.approve(sy, amount);
+            uint256 previewShares = IStandardizedYield(sy).previewDeposit(address(aToken), amount);
+            uint256 sharesOut = IStandardizedYield(sy).deposit(user, address(aToken), amount, 0);
+            uint256 previewOut = IStandardizedYield(sy).previewRedeem(address(aToken), sharesOut);
+            uint256 out = IStandardizedYield(sy).redeem(user, sharesOut, address(aToken), 0, false);
+            vm.stopPrank();
+
+            assertEq(sharesOut, previewShares, "Aave aToken previewDeposit != actual shares");
+            assertEq(out, previewOut, "Aave aToken previewRedeem != actual out");
+        }
+
+        // wstETH stETH path: preview (getSharesByPooledEth / getPooledEthByShares) and execution
+        // (wrap / unwrap) run the identical floor divisions on the mock's shared rate.
+        {
+            MockStETH stETH = new MockStETH();
+            MockWstETH wstETH = new MockWstETH(address(stETH));
+            stETH.setPooledEthPerShare(rate);
+            wstETH.setStEthPerToken(rate);
+            address sy = ProxyTestHelper.deploy(
+                address(new OutrunWstETHSYUpgradeable()),
+                abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+            );
+
+            stETH.mint(user, amount);
+            vm.startPrank(user);
+            stETH.approve(sy, amount);
+            uint256 previewShares = IStandardizedYield(sy).previewDeposit(address(stETH), amount);
+            uint256 sharesOut = IStandardizedYield(sy).deposit(user, address(stETH), amount, 0);
+            uint256 previewOut = IStandardizedYield(sy).previewRedeem(address(stETH), sharesOut);
+            uint256 out = IStandardizedYield(sy).redeem(user, sharesOut, address(stETH), 0, false);
+            vm.stopPrank();
+
+            assertEq(sharesOut, previewShares, "wstETH stETH previewDeposit != actual shares");
+            assertEq(out, previewOut, "wstETH stETH previewRedeem != actual out");
+        }
+
+        // 4626 vault path (Sky form): preview delegates to vault previewDeposit/previewRedeem while
+        // execution delegates to vault deposit/redeem — the same convertToShares/convertToAssets floors.
+        {
+            MockToken usds = new MockToken("USDS", "USDS", 18);
+            MockVault sUSDS = new MockVault(address(usds));
+            sUSDS.setAssetsPerShare(rate);
+            address sy = ProxyTestHelper.deploy(
+                address(new OutrunStakedUsdsSYUpgradeable()),
+                abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+            );
+
+            usds.mint(user, amount);
+            vm.startPrank(user);
+            usds.approve(sy, amount);
+            uint256 previewShares = IStandardizedYield(sy).previewDeposit(address(usds), amount);
+            uint256 sharesOut = IStandardizedYield(sy).deposit(user, address(usds), amount, 0);
+            uint256 previewOut = IStandardizedYield(sy).previewRedeem(address(usds), sharesOut);
+            uint256 out = IStandardizedYield(sy).redeem(user, sharesOut, address(usds), 0, false);
+            vm.stopPrank();
+
+            assertEq(sharesOut, previewShares, "sUSDS vault previewDeposit != actual shares");
+            assertEq(out, previewOut, "sUSDS vault previewRedeem != actual out");
+        }
+    }
+
+    /// @notice [SY-1b] The deposit-then-redeem roundtrip loss stays an absolute quantum count at
+    ///     large amounts — the bound must not scale with the amount (dust-scale property, not a fee).
+    /// @dev 04a §1.1 conclusion (docs/audits/2026-08-19/04a-guidelines-yield-libraries.md): no
+    ///      bidirectional rounding leak exists, so the double floor (convertToShares then
+    ///      convertToAssets, wrap then unwrap) loses at most ceil(rate / 1e18) quanta — an absolute
+    ///      bound of 2 quanta while the rate stays within 2x, independent of the amount.
+    function testFuzz_LargeAmountRoundtripLossStaysAbsolute(uint128 amountSeed, uint96 rateSeed) external {
+        uint256 amount = bound(amountSeed, 1e24, 1e30);
+        uint256 rate = bound(rateSeed, 1e18, 2e18);
+
+        // 4626 vault family (Sky form): usds -> deposit -> redeem usds.
+        {
+            MockToken usds = new MockToken("USDS", "USDS", 18);
+            MockVault sUSDS = new MockVault(address(usds));
+            sUSDS.setAssetsPerShare(rate);
+            address sy = ProxyTestHelper.deploy(
+                address(new OutrunStakedUsdsSYUpgradeable()),
+                abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+            );
+
+            usds.mint(user, amount);
+            vm.startPrank(user);
+            usds.approve(sy, amount);
+            uint256 shares = IStandardizedYield(sy).deposit(user, address(usds), amount, 0);
+            uint256 out = IStandardizedYield(sy).redeem(user, shares, address(usds), 0, false);
+            vm.stopPrank();
+
+            assertGe(out, amount - 2, "sUSDS roundtrip loss scales with amount");
+        }
+
+        // wstETH family: stETH -> deposit(stETH) -> redeem(stETH) through wrap + unwrap.
+        {
+            MockStETH stETH = new MockStETH();
+            MockWstETH wstETH = new MockWstETH(address(stETH));
+            stETH.setPooledEthPerShare(rate);
+            wstETH.setStEthPerToken(rate);
+            address sy = ProxyTestHelper.deploy(
+                address(new OutrunWstETHSYUpgradeable()),
+                abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+            );
+
+            stETH.mint(user, amount);
+            vm.startPrank(user);
+            stETH.approve(sy, amount);
+            uint256 shares = IStandardizedYield(sy).deposit(user, address(stETH), amount, 0);
+            uint256 out = IStandardizedYield(sy).redeem(user, shares, address(stETH), 0, false);
+            vm.stopPrank();
+
+            assertGe(out, amount - 2, "wstETH stETH roundtrip loss scales with amount");
+        }
+    }
+
+    /// @notice [SY-4b] Aave's exchangeRate() is the ray liquidity index divided by 1e9 — independent
+    ///     of the underlying's decimals — and assetInfo() reports each deployment's own underlying.
+    /// @dev Mock fidelity note: MockAToken hardcodes 18 decimals while real Aave aTokens share the
+    ///      underlying's decimals; the adapter's scaled accounting never touches token decimals,
+    ///      which is exactly the independence this property pins (the F-INFO-8 executable form).
+    function testFuzz_AaveExchangeRateIsUnderlyingDecimalsIndependent(uint96 indexSeed) external {
+        uint256 index = bound(indexSeed, 1e27, 2e27 - 1);
+
+        (address sy18, MockToken underlying18,) = _deployAave(index);
+
+        MockToken usdc = new MockToken("USDC", "USDC", 6);
+        // MockToken discards its decimals constructor argument (OZ ERC20 hardcodes decimals() to 18),
+        // so the 6-decimals shape is completed with a decimals() stub — the sanctioned way to obtain
+        // a real 6-decimals underlying without editing the shared mocks file.
+        vm.mockCall(address(usdc), abi.encodeWithSelector(IERC20Metadata.decimals.selector), abi.encode(uint8(6)));
+        MockAToken aToken6 = new MockAToken(address(usdc));
+        MockAavePool pool6 = new MockAavePool();
+        pool6.setReserve(address(usdc), aToken6, index);
+        address sy6 = ProxyTestHelper.deploy(
+            address(new OutrunAaveV3SYUpgradeable()),
+            abi.encodeCall(
+                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken6), address(pool6), owner)
+            )
+        );
+
+        uint256 rate18 = IStandardizedYield(sy18).exchangeRate();
+        uint256 rate6 = IStandardizedYield(sy6).exchangeRate();
+        assertEq(rate18, index / 1e9, "18-decimals Aave exchangeRate != index / 1e9");
+        assertEq(rate6, index / 1e9, "6-decimals Aave exchangeRate != index / 1e9");
+        assertEq(rate18, rate6, "Aave exchangeRate depends on underlying decimals");
+
+        (, address asset18, uint8 decimals18) = IStandardizedYield(sy18).assetInfo();
+        (, address asset6, uint8 decimals6) = IStandardizedYield(sy6).assetInfo();
+        assertEq(asset18, address(underlying18), "18-decimals assetInfo reports wrong underlying");
+        assertEq(decimals18, 18, "18-decimals assetInfo reports wrong decimals");
+        assertEq(asset6, address(usdc), "6-decimals assetInfo reports wrong underlying");
+        assertEq(decimals6, 6, "6-decimals assetInfo reports wrong decimals");
+
+        // 6-decimals underlying roundtrip: supply/withdraw operate on raw amounts, so the composed
+        // half-up -> floor conversion loses at most one quantum regardless of the token's decimals.
+        uint256 amount = 1_000_000e6;
+        usdc.mint(user, amount);
+        vm.startPrank(user);
+        usdc.approve(sy6, amount);
+        uint256 shares = IStandardizedYield(sy6).deposit(user, address(usdc), amount, 0);
+        uint256 out = IStandardizedYield(sy6).redeem(user, shares, address(usdc), 0, false);
+        vm.stopPrank();
+
+        assertGe(out, amount - 1, "6-decimals Aave roundtrip loses more than one quantum");
+    }
+
+    /// @notice [SY-4c] SY decimals equal the yield-bearing token's decimals for every adapter — the
+    ///     1:1 mint identity premise wired in SYBaseUpgradeable.__SYBase_init (deposit mints the
+    ///     yield-bearing-token-domain amount verbatim as SY units).
+    function test_SYDecimalsMatchYieldBearingTokenAcrossAdapters() external {
+        (address aave,,) = _deployAave(1e27);
+        address[] memory instances = new address[](11);
+        instances[0] = _deployL2Staked();
+        instances[1] = aave;
+        instances[2] = _deployWeETH();
+        instances[3] = _deployWstETH();
+        instances[4] = _deployL2WstETH();
+        instances[5] = _deployL2WrappableWstETH();
+        instances[6] = _deployEthena();
+        instances[7] = _deploySky();
+        instances[8] = _deploySkyL2();
+        instances[9] = _deployLista();
+        instances[10] = _deployAster();
+
+        for (uint256 i; i < instances.length; ++i) {
+            assertEq(
+                IERC20Metadata(instances[i]).decimals(),
+                IERC20Metadata(IStandardizedYield(instances[i]).yieldBearingToken()).decimals(),
+                "SY decimals must match yield-bearing token decimals"
+            );
+        }
+    }
+}
+
+/// @title Invariant handler for SY exchange-rate monotonicity (SY-2)
+/// @notice Deploys the seven deterministic-yield SY families and exposes two fuzzer entry points:
+///     bumpRate (advance every family's rate knobs, never lower them) and warp (advance time). The
+///     ghost arrays record the highest exchangeRate ever observed per adapter so the invariant test
+///     can pin interval monotonicity (docs/audits/2026-08-19/05-invariants.md §2 SY-2).
+/// @dev This is a model-level property: underlying-protocol rate monotonicity is assumption A-3 in
+///      docs/audits/2026-08-19/04b-token-integration.md; what this property pins is the SY-layer
+///      composition having no direction bug (e.g. one of Aster's two conversion hops wired backwards).
+///      Negative space (do NOT "fix" by adding these families — they promise no monotonicity):
+///      - The oracle families (OutrunL2StakedTokenSYUpgradeable / OutrunL2WstETHSYUpgradeable)
+///        forward arbitrary oracle quotes verbatim (gaps G-1/G-2) — excluded.
+///      - Sky L2 PSM3 embeds pool imbalance in its quoted rate (gap G-3) — excluded.
+///      - MockL2StETH's TOKENS_PER_SHARE is an immutable constructor argument, so the L2 wrappable
+///        wstETH family has a constant rate — excluded (no knob to fuzz).
+contract SYRateMonotonicityHandler is Test {
+    address internal owner = address(0xA11CE);
+
+    // Family 1 — Aave: the knob is the pool's ray liquidity index; rate = index / 1e9.
+    MockToken internal aaveUnderlying;
+    MockAToken internal aaveAToken;
+    MockAavePool internal aavePool;
+    address internal aaveSy;
+
+    // Family 2 — wstETH L1: two knobs move together (stETH.pooledEthPerShare must equal
+    // wstETH.stEthPerToken for the mock's preview/wrap consistency); the rate reads the wstETH knob.
+    MockStETH internal stETH;
+    MockWstETH internal wstETH;
+    address internal wstEthSy;
+
+    // Family 3 — weETH: three knobs move together (the pool rate drives exchangeRate; weETH and
+    // the deposit adapter must quote the same rate so the wrap/native paths stay consistent).
+    MockWeETH internal weETH;
+    MockLiquidityPool internal weEthPool;
+    MockDepositAdapter internal weEthDepositAdapter;
+    address internal weEthSy;
+
+    // Family 4 — Ethena sUSDe (ERC-4626 vault): the vault's assetsPerShare is the only knob.
+    MockVault internal sUSDe;
+    address internal ethenaSy;
+
+    // Family 5 — Sky sUSDS L1 (ERC-4626 vault): the vault's assetsPerShare is the only knob.
+    MockVault internal sUSDS;
+    address internal skySy;
+
+    // Family 6 — Lista slisBNB: the stake-manager rate is BNB per slisBNB and must stay >= 1e18
+    // (the adapter's init parity floor).
+    MockListaStakeManager internal listaStakeManager;
+    address internal listaSy;
+
+    // Family 7 — Aster asBNB: the rate composes two hops (minter.convertToTokens then
+    // stakeManager.convertSnBnbToBnb); each hop's knob is bumped on its own, monotonically.
+    MockAsBnbMinter internal asBnbMinter;
+    MockListaStakeManager internal asterStakeManager;
+    address internal asterSy;
+
+    // Ghosts: the deployed adapters and the highest exchangeRate ever observed for each.
+    address[] public adapters;
+    uint256[] public ghostLastRates;
+
+    constructor() {
+        // Aave.
+        aaveUnderlying = new MockToken("Underlying", "UND", 18);
+        aaveAToken = new MockAToken(address(aaveUnderlying));
+        aavePool = new MockAavePool();
+        aavePool.setReserve(address(aaveUnderlying), aaveAToken, 1e27);
+        aaveSy = ProxyTestHelper.deploy(
+            address(new OutrunAaveV3SYUpgradeable()),
+            abi.encodeCall(
+                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aaveAToken), address(aavePool), owner)
+            )
+        );
+        adapters.push(aaveSy);
+
+        // wstETH L1.
+        stETH = new MockStETH();
+        wstETH = new MockWstETH(address(stETH));
+        wstEthSy = ProxyTestHelper.deploy(
+            address(new OutrunWstETHSYUpgradeable()),
+            abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+        );
+        adapters.push(wstEthSy);
+
+        // weETH.
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        weETH = new MockWeETH(address(eETH));
+        weEthPool = new MockLiquidityPool();
+        weEthDepositAdapter = new MockDepositAdapter();
+        weEthSy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(weEthDepositAdapter), address(weEthPool))
+            )
+        );
+        adapters.push(weEthSy);
+
+        // Ethena sUSDe.
+        MockToken usde = new MockToken("USDe", "USDe", 18);
+        sUSDe = new MockVault(address(usde));
+        ethenaSy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUSDeSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUSDeSYUpgradeable.initialize, (owner, address(usde), address(sUSDe)))
+        );
+        adapters.push(ethenaSy);
+
+        // Sky sUSDS.
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        sUSDS = new MockVault(address(usds));
+        skySy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUsdsSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+        );
+        adapters.push(skySy);
+
+        // Lista slisBNB (stake manager starts at the 1e18 parity floor).
+        MockToken slisBnb = new MockToken("slisBNB", "slisBNB", 18);
+        listaStakeManager = new MockListaStakeManager();
+        listaSy = ProxyTestHelper.deploy(
+            address(new OutrunSlisBNBSYUpgradeable()),
+            abi.encodeCall(OutrunSlisBNBSYUpgradeable.initialize, (owner, address(slisBnb), address(listaStakeManager)))
+        );
+        adapters.push(listaSy);
+
+        // Aster asBNB.
+        MockToken asBnb = new MockToken("asBNB", "asBNB", 18);
+        MockToken asterSlis = new MockToken("slisBNB", "slisBNB", 18);
+        asterStakeManager = new MockListaStakeManager();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(asterStakeManager));
+        asBnbMinter = new MockAsBnbMinter(address(asBnb), address(asterSlis), address(yieldProxy));
+        asterSy = ProxyTestHelper.deploy(
+            address(new OutrunAsBNBSYUpgradeable()),
+            abi.encodeCall(
+                OutrunAsBNBSYUpgradeable.initialize, (owner, address(asBnb), address(asterSlis), address(asBnbMinter))
+            )
+        );
+        adapters.push(asterSy);
+
+        // Ghost baseline: the first observation of every family's exchangeRate.
+        for (uint256 i; i < adapters.length; ++i) {
+            ghostLastRates.push(IStandardizedYield(adapters[i]).exchangeRate());
+        }
+    }
+
+    /// @notice Advances every family's rate knobs upward by a fuzzed delta (bounded to [0, 1e18]),
+    ///     capped at each family's domain ceiling, then records the observed exchangeRates.
+    /// @dev Aave's knob is the ray index (domain [1e27, 5e27], rate = index / 1e9); every other
+    ///      family turns a direct 1e18-scaled rate (domain [1e18, 5e18]). Knobs only ever rise.
+    function bumpRate(uint256 deltaSeed) external {
+        uint256 delta = bound(deltaSeed, 0, 1e18);
+
+        // Aave: three-argument setReserve resets index and aToken transfer index together while
+        // keeping the stored reserve references.
+        aavePool.setReserve(address(aaveUnderlying), aaveAToken, _cappedNext(aavePool.index(), delta, 5e27));
+
+        // wstETH L1: both knobs move to the same next rate.
+        uint256 wstEthNext = _cappedNext(stETH.pooledEthPerShare(), delta, 5e18);
+        stETH.setPooledEthPerShare(wstEthNext);
+        wstETH.setStEthPerToken(wstEthNext);
+
+        // weETH: all three knobs move to the same next rate.
+        uint256 weEthNext = _cappedNext(weEthPool.shareRate(), delta, 5e18);
+        weEthPool.setShareRate(weEthNext);
+        weETH.setShareRate(weEthNext);
+        weEthDepositAdapter.setShareRate(weEthNext);
+
+        // ERC-4626 vaults.
+        sUSDe.setAssetsPerShare(_cappedNext(sUSDe.assetsPerShare(), delta, 5e18));
+        sUSDS.setAssetsPerShare(_cappedNext(sUSDS.assetsPerShare(), delta, 5e18));
+
+        // Lista: BNB per slisBNB, kept >= 1e18 by construction (starts at parity, only rises).
+        listaStakeManager.setRate(_cappedNext(listaStakeManager.rate(), delta, 5e18));
+
+        // Aster: the two hops advance independently (each monotone) so the composition is exercised
+        // asymmetrically — a lockstep pair could mask an inverted hop behind a constant rate. The
+        // seed's high half drives the stake-manager hop while the full seed drives the minter hop.
+        asBnbMinter.setRate(_cappedNext(asBnbMinter.rate(), delta, 5e18));
+        asterStakeManager.setRate(_cappedNext(asterStakeManager.rate(), bound(deltaSeed >> 128, 0, 1e18), 5e18));
+
+        // Record the post-bump observation into the ghosts. The ghost keeps the HIGHEST rate ever
+        // observed (not merely the latest): "never decreases" must hold against every past
+        // observation, and overwriting with a lower value would launder a direction bug inside
+        // the very call that caused it.
+        for (uint256 i; i < adapters.length; ++i) {
+            uint256 observed = IStandardizedYield(adapters[i]).exchangeRate();
+            if (observed > ghostLastRates[i]) ghostLastRates[i] = observed;
+        }
+    }
+
+    /// @notice Advances block time; time alone must never move a deterministic-yield rate down.
+    function warp(uint256 dt) external {
+        vm.warp(block.timestamp + bound(dt, 0, 365 days));
+    }
+
+    /// @notice Returns the deployed adapters under test.
+    function getAdapters() external view returns (address[] memory) {
+        return adapters;
+    }
+
+    /// @notice Returns the highest exchangeRate ever observed per adapter.
+    function getGhostLastRates() external view returns (uint256[] memory) {
+        return ghostLastRates;
+    }
+
+    function _cappedNext(uint256 current, uint256 delta, uint256 cap) private pure returns (uint256) {
+        uint256 next = current + delta;
+        return next > cap ? cap : next;
+    }
+}
+
+/// @title SY exchange-rate monotonicity invariant test (SY-2)
+/// @notice exchangeRate never decreases across arbitrary sequences of rate bumps and time warps
+///     for the deterministic-yield families (docs/audits/2026-08-19/05-invariants.md §2 SY-2).
+contract SYRateMonotonicityInvariantTest is StdInvariant, Test {
+    SYRateMonotonicityHandler internal handler;
+
+    function setUp() external {
+        handler = new SYRateMonotonicityHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_exchangeRateNeverDecreases() public view {
+        address[] memory instances = handler.getAdapters();
+        uint256[] memory lastRates = handler.getGhostLastRates();
+        for (uint256 i; i < instances.length; ++i) {
+            assertGe(
+                IStandardizedYield(instances[i]).exchangeRate(),
+                lastRates[i],
+                "SY exchangeRate fell below a previously observed rate"
+            );
+        }
     }
 }

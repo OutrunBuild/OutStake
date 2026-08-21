@@ -6,6 +6,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
+import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
 import {SYUtils} from "../../src/libraries/SYUtils.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
@@ -892,9 +893,7 @@ contract OutrunStakingPositionFuzzTest is Test {
         // Also test low side
         sy.setExchangeRate(8e17);
         vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, 8e17, 9e17, 11e17)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, 8e17, 9e17, 11e17));
         position.stake(amountInSY, 30, owner, owner);
 
         // Inside band should succeed
@@ -916,5 +915,471 @@ contract OutrunStakingPositionFuzzTest is Test {
         vm.prank(owner);
         vm.expectRevert(IOutrunStakeManager.InvalidBounds.selector);
         position.setExchangeRateBounds(2e18, 1e18);
+    }
+}
+
+/**
+ * @title Stateless property tests for OutrunStakingPosition
+ * @notice Boundary-exact and access-control properties from the position design review
+ *         (docs/audits/2026-08-19/05-invariants.md §5): position and wrap-pool solvency boundaries
+ *         [POS-2], the uAsset mint-cap ledger [POS-1b], keeper allowance accounting [POS-3],
+ *         deadline and position-id edges [POS-4], and the exchange-rate bandwidth guard [OR-2b].
+ * @dev Each test derives its expectations from formulas that are independent of the contract's own
+ *      preview paths, so a shared bug cannot mask itself.
+ */
+contract OutrunStakingPositionPropertyTest is Test {
+    MockERC20 internal underlying;
+    MockSY internal sy;
+    MockUAsset internal uAsset;
+    OutrunStakingPositionUpgradeable internal position;
+
+    address internal owner = address(0xA11CE);
+    address internal keeper = address(0xB0B);
+    address internal revenuePool = address(0xFEE);
+    address internal user1 = address(0x1111);
+    address internal user2 = address(0x2222);
+
+    uint256 internal constant MIN_STAKE = 1;
+    uint256 internal constant MAX_STAKE = 10_000e18;
+
+    function setUp() external {
+        underlying = new MockERC20("Mock Asset", "mAST");
+        sy = new MockSY(address(underlying));
+        uAsset = new MockUAsset();
+
+        position = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                abi.encodeCall(
+                    OutrunStakingPositionUpgradeable.initialize,
+                    (owner, MIN_STAKE, revenuePool, address(sy), address(uAsset), keeper)
+                )
+            )
+        );
+
+        uAsset.setMintingCap(address(position), type(uint256).max);
+        // Register the test contract itself as a minter so it can fund the keeper with uAsset
+        // directly (MockUAsset's owner is this contract, the deployer of the mock).
+        uAsset.setMintingCap(address(this), type(uint256).max);
+
+        // Mint SY to users
+        sy.mintShares(owner, 100_000e18);
+        sy.mintShares(keeper, 100_000e18);
+        sy.mintShares(user1, 100_000e18);
+        sy.mintShares(user2, 100_000e18);
+
+        // Approve position to spend SY
+        vm.prank(owner);
+        sy.approve(address(position), type(uint256).max);
+        vm.prank(keeper);
+        sy.approve(address(position), type(uint256).max);
+        vm.prank(user1);
+        sy.approve(address(position), type(uint256).max);
+        vm.prank(user2);
+        sy.approve(address(position), type(uint256).max);
+
+        // Approve position to spend uAsset
+        vm.prank(owner);
+        uAsset.approve(address(position), type(uint256).max);
+        vm.prank(keeper);
+        uAsset.approve(address(position), type(uint256).max);
+        vm.prank(user1);
+        uAsset.approve(address(position), type(uint256).max);
+        vm.prank(user2);
+        uAsset.approve(address(position), type(uint256).max);
+    }
+
+    // ============================================
+    // 1. Position solvency boundary [POS-2a/2b]
+    // ============================================
+
+    function testFuzz_KeeperSolvencyBoundaryExact(uint256 amountSeed, uint256 rateSeed) public {
+        // rate >= 2e18 keeps rPass >= 2, so rPass - 1 never triggers ZeroExchangeRate.
+        uint256 rate = bound(rateSeed, 2e18, 5e18);
+        uint256 amount = bound(amountSeed, 1e15, 1e24);
+        // The setUp funds owner with 1e23 SY; amounts up to 1e24 need a top-up for the two stakes below.
+        sy.mintShares(owner, 2 * amount);
+
+        sy.setExchangeRate(rate);
+        vm.prank(owner);
+        (uint256 positionId, uint256 debt) = position.stake(amount, 30, owner, owner);
+        uint256 syStaked = amount;
+
+        // Exact solvency boundary: assetToSyUp(debt, r) <= syStaked holds iff r >= ceilDiv(debt*1e18, syStaked).
+        uint256 rPass = Math.ceilDiv(debt * 1e18, syStaked);
+
+        // PART A [POS-2a]: at rPass a full-debt keepRedeem passes; the keeper/owner split conserves
+        // the whole staked SY (a full burn redeems syRedeemed == syStaked) [POS-2b].
+        sy.setExchangeRate(rPass);
+        (,,, uint128 deadline) = position.positions(positionId);
+        vm.warp(deadline + 1);
+        uAsset.mint(keeper, debt);
+        uint256 keeperSYBefore = sy.balanceOf(keeper);
+
+        vm.prank(keeper);
+        (uint256 burned, uint256 keeperPrincipalSY, uint256 ownerExcessSY) =
+            position.keepRedeem(positionId, debt, keeper);
+
+        assertEq(burned, debt, "full-debt burn amount mismatch");
+        assertEq(keeperPrincipalSY + ownerExcessSY, syStaked, "split must conserve all staked SY");
+        assertLe(keeperPrincipalSY, syStaked, "keeper share cannot exceed staked SY");
+        assertEq(sy.balanceOf(keeper) - keeperSYBefore, keeperPrincipalSY, "keeper SY balance delta mismatch");
+
+        // PART B [POS-2a]: at rPass - 1 the same-shaped position is rejected by the solvency guard.
+        sy.setExchangeRate(rate); // restore the original rate so the second stake reproduces the debt
+        vm.prank(owner);
+        (uint256 positionId2, uint256 debt2) = position.stake(amount, 30, owner, owner);
+        assertEq(debt2, debt, "same parameters must reproduce the same debt");
+        sy.setExchangeRate(rPass - 1);
+        (,,, uint128 deadline2) = position.positions(positionId2);
+        vm.warp(deadline2 + 1);
+
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.InsufficientSyCollateral.selector);
+        position.keepRedeem(positionId2, debt2, keeper);
+    }
+
+    // ============================================
+    // 2. Wrap pool solvency boundary [POS-2a wrap / POS-2c]
+    // ============================================
+
+    function testFuzz_WrapPoolSolvencyBoundaryExact(uint256 amountSeed, uint256 rateSeed) public {
+        uint256 rate = bound(rateSeed, 2e18, 5e18);
+        uint256 amount = bound(amountSeed, 1e15, 1e24);
+        sy.mintShares(owner, 2 * amount);
+
+        sy.setExchangeRate(rate);
+        vm.prank(owner);
+        uint256 debt = position.wrapStake(amount, owner);
+        uint256 rPass = Math.ceilDiv(debt * 1e18, amount);
+
+        // PART A [POS-2a wrap]: at rPass a half-debt redemption succeeds and leaves the pool covered
+        // for its remaining debt [POS-2c].
+        sy.setExchangeRate(rPass);
+        uAsset.mint(keeper, debt);
+        uint256 half = debt / 2; // >= 1 because debt >= 2
+
+        vm.prank(keeper);
+        position.keepWrapRedeem(half, keeper);
+
+        assertLe(SYUtils.assetToSyUp(rPass, debt - half), position.syWrapStaking(), "post-redemption coverage");
+
+        // PART B [POS-2a wrap / POS-2c]: exact boundary of the CURRENT pool state. rPass2 is derived
+        // from the combined (debt, SY) pair after both wrap stakes: the PART A floor payout leaves
+        // residual coverage in the pool, so the marginal (debt2, amount) pair alone does not
+        // determine the pool-wide boundary. At rPass2 - 1 the redemption must revert atomically.
+        vm.prank(owner);
+        uint256 debt2 = position.wrapStake(amount, owner);
+        uint256 totalDebt = position.wrapUAssetDebt();
+        uint256 totalWrapSY = position.syWrapStaking();
+        uint256 rPass2 = Math.ceilDiv(totalDebt * 1e18, totalWrapSY);
+
+        uint256 syWrapBefore = position.syWrapStaking();
+        uint256 wrapDebtBefore = position.wrapUAssetDebt();
+
+        sy.setExchangeRate(rPass2 - 1);
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
+        position.keepWrapRedeem(debt2, keeper);
+
+        // Revert atomicity: no accounting moved.
+        assertEq(position.syWrapStaking(), syWrapBefore, "revert must not change syWrapStaking");
+        assertEq(position.wrapUAssetDebt(), wrapDebtBefore, "revert must not change wrapUAssetDebt");
+
+        // At the boundary itself the guard passes, making the boundary two-sided.
+        sy.setExchangeRate(rPass2);
+        uAsset.mint(keeper, debt2);
+        vm.prank(keeper);
+        position.keepWrapRedeem(debt2, keeper);
+    }
+
+    // ============================================
+    // 3. Mint cap boundary [POS-1b]
+    // ============================================
+
+    function testFuzz_MintCapBoundaryReachedExactly(uint256 amountSeed, uint256 extraSeed) public {
+        sy.setExchangeRate(1e18); // identity rate: debt == amount, exact arithmetic
+        uint256 amount1 = bound(amountSeed, 1, 10_000e18);
+        uint256 remaining = bound(extraSeed, 0, 10_000e18);
+        uint256 cap = amount1 + remaining;
+
+        // MockUAsset's owner is this test contract (the deployer), so the cap can be set directly.
+        uAsset.setMintingCap(address(position), cap);
+
+        vm.prank(owner);
+        (, uint256 minted1) = position.stake(amount1, 30, owner, owner);
+        assertEq(minted1, amount1, "identity rate must mint debt == amount");
+        (, uint256 amountInMinted) = uAsset.mintingStatusTable(address(position));
+        assertEq(amountInMinted, amount1, "minted debt must be recorded exactly");
+
+        // One wei above the remaining headroom must hit the cap.
+        vm.prank(owner);
+        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
+        position.stake(remaining + 1, 30, owner, owner);
+
+        // The exact remaining headroom still fits and lands the ledger precisely on the cap.
+        if (remaining > 0) {
+            vm.prank(owner);
+            position.stake(remaining, 30, owner, owner);
+            (, uint256 amountInMintedAfter) = uAsset.mintingStatusTable(address(position));
+            assertEq(amountInMintedAfter, cap, "ledger must reach the cap exactly");
+        }
+    }
+
+    // ============================================
+    // 4. Keeper allowance accounting [POS-3a/3b]
+    // ============================================
+
+    function testFuzz_KeeperAllowanceTracksBurnsExactly(uint256 allowanceSeed, uint256 burn1Seed) public {
+        sy.setExchangeRate(1e18);
+        uint256 amount = 1e18; // identity rate: debt == amount, split into two non-zero burns
+        vm.prank(owner);
+        (uint256 positionId, uint256 debt) = position.stake(amount, 30, owner, owner);
+        (,,, uint128 deadline) = position.positions(positionId);
+        vm.warp(deadline + 1);
+        uAsset.mint(keeper, debt);
+
+        // Upper bound 2*debt - 1 guarantees the leftover allowance after the full burn is strictly
+        // below the next position's debt, exercising the insufficient-allowance revert below.
+        uint256 allowance = bound(allowanceSeed, debt, 2 * debt - 1);
+        uint256 burn1 = bound(burn1Seed, 1, debt - 1);
+        uint256 burn2 = debt - burn1;
+
+        vm.prank(keeper);
+        uAsset.approve(address(position), allowance);
+
+        // [POS-3a] each burn decrements the allowance by exactly the burned amount (OZ semantics).
+        vm.prank(keeper);
+        (uint256 burned1,,) = position.keepRedeem(positionId, burn1, keeper);
+        assertEq(burned1, burn1, "first burn amount mismatch");
+        assertEq(uAsset.allowance(keeper, address(position)), allowance - burn1, "allowance after first burn");
+
+        // burn1 + burn2 == debt: the position is fully redeemed and deleted.
+        vm.prank(keeper);
+        (uint256 burned2,,) = position.keepRedeem(positionId, burn2, keeper);
+        assertEq(burned2, burn2, "second burn amount mismatch");
+        assertEq(uAsset.allowance(keeper, address(position)), allowance - debt, "allowance after full burn");
+
+        // [POS-3b] atomicity: a revert inside repay must leave the new position, the keeper balance,
+        // and the allowance untouched.
+        vm.prank(owner);
+        (uint256 positionId2, uint256 debt2) = position.stake(amount, 30, owner, owner);
+        (,,, uint128 deadline2) = position.positions(positionId2);
+        vm.warp(deadline2 + 1);
+        uAsset.mint(keeper, debt2);
+
+        (address ownerBefore, uint256 syStakedBefore, uint256 debtBefore, uint128 deadlineBefore) =
+            position.positions(positionId2);
+        uint256 keeperBalanceBefore = uAsset.balanceOf(keeper);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("ERC20InsufficientAllowance(address,uint256,uint256)")),
+                address(position),
+                allowance - debt,
+                debt2
+            )
+        );
+        position.keepRedeem(positionId2, debt2, keeper);
+
+        (address ownerAfter, uint256 syStakedAfter, uint256 debtAfter, uint128 deadlineAfter) =
+            position.positions(positionId2);
+        assertEq(ownerAfter, ownerBefore, "revert must not change the position owner");
+        assertEq(syStakedAfter, syStakedBefore, "revert must not change staked SY");
+        assertEq(debtAfter, debtBefore, "revert must not change position debt");
+        assertEq(uint256(deadlineAfter), uint256(deadlineBefore), "revert must not change the deadline");
+        assertEq(uAsset.balanceOf(keeper), keeperBalanceBefore, "revert must not change keeper balance");
+        assertEq(uAsset.allowance(keeper, address(position)), allowance - debt, "revert must not change allowance");
+
+        // [POS-3b max exemption] an infinite approval is never decremented by burns.
+        vm.prank(owner);
+        (uint256 positionId3, uint256 debt3) = position.stake(amount, 30, owner, owner);
+        (,,, uint128 deadline3) = position.positions(positionId3);
+        vm.warp(deadline3 + 1);
+        uAsset.mint(keeper, debt3);
+
+        vm.prank(keeper);
+        uAsset.approve(address(position), type(uint256).max);
+        vm.prank(keeper);
+        position.keepRedeem(positionId3, debt3, keeper);
+        assertEq(uAsset.allowance(keeper, address(position)), type(uint256).max, "max approval must never decrement");
+    }
+
+    // ============================================
+    // 5. Deadline uint128 boundary [POS-4b]
+    // ============================================
+
+    function testFuzz_DeadlineUint128Boundary(uint256 tsSeed) public {
+        vm.warp(bound(tsSeed, 1, type(uint128).max - 200 days));
+        uint256 maxDays = (type(uint128).max - block.timestamp) / 1 days;
+        uint256 amount = 1e18;
+
+        // The largest lockup whose deadline still fits in uint128 succeeds.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 maxLockup = uint128(maxDays);
+        vm.prank(owner);
+        (uint256 positionId,) = position.stake(amount, maxLockup, owner, owner);
+        (,,, uint128 deadline) = position.positions(positionId);
+        assertEq(uint256(deadline), block.timestamp + maxDays * 1 days, "boundary deadline mismatch");
+
+        // One more day overflows the uint128 deadline and must be rejected.
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockupDaysOutOfRange.selector, maxLockup + 1));
+        position.stake(amount, maxLockup + 1, owner, owner);
+    }
+
+    // ============================================
+    // 6. Deleted position id is not reusable [POS-4c]
+    // ============================================
+
+    function testFuzz_ReusedPositionIdIsRejected(uint256 amountSeed) public {
+        uint256 amount = bound(amountSeed, 1, MAX_STAKE);
+        vm.prank(owner);
+        (uint256 positionId,) = position.stake(amount, 30, owner, owner);
+        (,,, uint128 deadline) = position.positions(positionId);
+        vm.warp(deadline + 1);
+
+        // Full redeem (syRedeemed == syStaked, tokenOut == SY) deletes the position.
+        vm.prank(owner);
+        (, uint256 syOut) = position.redeem(positionId, amount, owner, address(sy), 0);
+        assertEq(syOut, amount, "full redeem must return the staked SY");
+        (address positionOwner,,,) = position.positions(positionId);
+        assertEq(positionOwner, address(0), "deleted position must have a zero owner");
+
+        // Every id-resolving entry must reject the reused id.
+        vm.prank(owner);
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        position.drawUAsset(positionId, owner);
+
+        vm.prank(owner);
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        position.redeem(positionId, 1, owner, address(sy), 0);
+
+        vm.prank(keeper);
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        position.keepRedeem(positionId, 1, keeper);
+    }
+
+    // ============================================
+    // 7. previewRedeem mirrors the SY adapter [POS-4a]
+    // ============================================
+
+    function testFuzz_PreviewRedeemMirrorsSYForNonSyTokenOut(uint256 amountSeed, uint256 rateSeed) public {
+        uint256 rate = bound(rateSeed, 2e18, 5e18);
+        uint256 amount = bound(amountSeed, 2, MAX_STAKE); // >= 2 so half the stake is non-zero
+        sy.setExchangeRate(rate);
+
+        vm.prank(owner);
+        (uint256 positionId,) = position.stake(amount, 30, owner, owner);
+        (,,, uint128 deadline) = position.positions(positionId);
+        vm.warp(deadline + 1);
+
+        uint256 syRedeemed = amount / 2;
+
+        // The quote must mirror the SY adapter's own preview (MockSY is 1:1, so the quote also
+        // equals the redeemed amount).
+        (, uint256 outPreview) = position.previewRedeem(positionId, syRedeemed, address(underlying));
+        assertEq(outPreview, sy.previewRedeem(address(underlying), syRedeemed), "preview must mirror SY previewRedeem");
+        assertEq(outPreview, syRedeemed, "MockSY 1:1 quote mismatch");
+
+        vm.prank(owner);
+        (, uint256 outActual) = position.redeem(positionId, syRedeemed, owner, address(underlying), 0);
+        assertEq(outActual, outPreview, "actual redeem output must match the preview");
+    }
+
+    // ============================================
+    // 8. Exchange-rate bandwidth guard [OR-2b]
+    // ============================================
+
+    function testFuzz_ExchangeRateBoundsInclusiveAndAllRateReadersReject(uint256 inBandSeed, uint256 amountSeed)
+        public
+    {
+        uint256 min = bound(inBandSeed, 5e17, 2e18);
+        uint256 max = min + bound(amountSeed, 1e17, 8e18);
+        vm.prank(owner);
+        position.setExchangeRateBounds(min, max);
+
+        uint256 amount = 1e18;
+
+        // Inclusive boundaries: both endpoints are accepted.
+        sy.setExchangeRate(min);
+        vm.prank(owner);
+        (uint256 positionIdMin,) = position.stake(amount, 30, owner, owner);
+
+        sy.setExchangeRate(max);
+        vm.prank(owner);
+        position.stake(amount, 30, owner, owner);
+
+        // Wrap debt must exist before the out-of-band phase (wrapStake itself is rejected below).
+        vm.prank(owner);
+        position.wrapStake(amount, owner);
+
+        // Out of band on the low side (min >= 5e17 keeps the rate non-zero): all eleven rate-reading
+        // paths reject — six consuming paths (stake, wrapStake, drawUAsset, keepRedeem,
+        // keepWrapRedeem, harvestWrapYield) and five preview paths (previewStake, previewWrapStake,
+        // previewDrawUAsset, previewWrapRedeem, previewKeepRedeem). redeem and previewRedeem never
+        // read the exchange rate, so they are intentionally not tested here. Bandwidth guard source:
+        // PA-3. The revert data is matched in full because this foundry version does not prefix-match
+        // parameterized errors by selector alone.
+        sy.setExchangeRate(min - 1);
+        bytes memory outOfBoundsRevert =
+            abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, min - 1, min, max);
+
+        vm.prank(owner);
+        vm.expectRevert(outOfBoundsRevert);
+        position.stake(amount, 30, owner, owner);
+
+        vm.prank(owner);
+        vm.expectRevert(outOfBoundsRevert);
+        position.wrapStake(amount, owner);
+
+        vm.expectRevert(outOfBoundsRevert);
+        position.previewDrawUAsset(positionIdMin);
+
+        vm.prank(owner);
+        vm.expectRevert(outOfBoundsRevert);
+        position.drawUAsset(positionIdMin, owner);
+
+        // keepRedeem on a matured position: the debt-bound check runs before the rate read.
+        (,,, uint128 deadlineMin) = position.positions(positionIdMin);
+        vm.warp(deadlineMin + 1);
+        (,, uint256 debtMin,) = position.positions(positionIdMin);
+        uAsset.mint(keeper, debtMin);
+        vm.prank(keeper);
+        vm.expectRevert(outOfBoundsRevert);
+        position.keepRedeem(positionIdMin, debtMin, keeper);
+
+        // keepWrapRedeem with an in-debt amount and a funded keeper.
+        uint256 wrapDebt = position.wrapUAssetDebt();
+        uAsset.mint(keeper, wrapDebt);
+        vm.prank(keeper);
+        vm.expectRevert(outOfBoundsRevert);
+        position.keepWrapRedeem(wrapDebt, keeper);
+
+        // harvestWrapYield (owner-only) reads the rate too.
+        vm.prank(owner);
+        vm.expectRevert(outOfBoundsRevert);
+        position.harvestWrapYield(address(sy), 0);
+
+        // The remaining four preview paths go through the same single rate-reading home
+        // (_currentExchangeRate) as the consuming paths above. Their preceding checks must pass so
+        // the revert can only come from the bandwidth guard: previewStake needs amount >= minStake,
+        // previewWrapStake needs a non-zero amount, previewWrapRedeem needs a non-zero amount within
+        // the wrap debt (ExceedsWrapDebt is checked before the rate read), and previewKeepRedeem
+        // needs the matured position and a non-zero amount within its UAssetMinted
+        // (PositionAccessDenied/LockTimeNotExpired/ExceedsPositionDebt are checked before the rate
+        // read). None of them are permissioned, so no prank is needed.
+        vm.expectRevert(outOfBoundsRevert);
+        position.previewStake(amount);
+
+        vm.expectRevert(outOfBoundsRevert);
+        position.previewWrapStake(amount);
+
+        vm.expectRevert(outOfBoundsRevert);
+        position.previewWrapRedeem(wrapDebt);
+
+        vm.expectRevert(outOfBoundsRevert);
+        position.previewKeepRedeem(positionIdMin, debtMin);
     }
 }
