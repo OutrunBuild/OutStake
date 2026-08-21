@@ -53,6 +53,8 @@ interface IOutrunStakeManager {
     error NothingToDraw();
     error PartialRedeemMustLeaveDebt();
     error InsufficientTokenOut(uint256 actual, uint256 minExpected);
+    error ExchangeRateOutOfBounds(uint256 rate, uint256 min, uint256 max);
+    error InvalidBounds();
 
     /**
      * @notice Returns the SY token handled by the staking manager.
@@ -398,4 +400,5 @@ interface IOutrunStakeManager {
     event SetMinStake(uint256 minStake);
     event SetRevenuePool(address indexed revenuePool);
     event SetKeeper(address indexed keeper);
+    event ExchangeRateBoundsUpdated(uint256 oldMin, uint256 oldMax, uint256 newMin, uint256 newMax);
 }
