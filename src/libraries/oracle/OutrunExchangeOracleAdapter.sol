@@ -30,8 +30,11 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
     /// @notice Reverts when a zero staleness window is configured at construction.
     error InvalidStaleness();
 
+    /// @notice Reverts when a zero oracle address is configured at construction.
+    error InvalidOracle();
+
     /// @notice Sets the underlying Chainlink-style oracle and captures its native decimal precision once at construction.
-    /// @param _oracle The address of the Chainlink-style price feed (AggregatorInterface).
+    /// @param _oracle The address of the Chainlink-style price feed (AggregatorInterface); must be != address(0).
     /// @param _maxStaleness Maximum allowed age (in seconds) for `latestRoundData().updatedAt`; must be > 0.
     /// @param _sequencerUptimeFeed Optional Chainlink L2 Sequencer Uptime Feed; zero address disables this check.
     /// @param _sequencerGracePeriod Grace period after sequencer recovery before oracle answers are trusted.
@@ -39,6 +42,7 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
     /// (which Chainlink does not), this adapter won't track the change — that's by design for simplicity.
     constructor(address _oracle, uint256 _maxStaleness, address _sequencerUptimeFeed, uint256 _sequencerGracePeriod) {
         if (_maxStaleness == 0) revert InvalidStaleness();
+        if (_oracle == address(0)) revert InvalidOracle();
         oracle = _oracle;
         maxStaleness = _maxStaleness;
         sequencerUptimeFeed = _sequencerUptimeFeed;
