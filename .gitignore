@@ -16,7 +16,9 @@ broadcast
 
 # Docs
 docs/superpowers
+docs/audits
 docs/review
+docs/prompts
 
 # Dotenv files (keep the committed template)
 .env

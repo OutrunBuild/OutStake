@@ -103,6 +103,12 @@ contract OutrunUniversalAssetsUpgradeable
     ///      Migrates only the uAsset minter-level debt; if the minter is also constrained by position, wrap,
     ///      or other module ledgers, those ledgers must be migrated in the same coordinated flow because this
     ///      operation does not update them.
+    ///      @dev PA-6: this is the ONLY operation that can silently break the cross-ledger invariant
+    ///      `uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`
+    ///      (see `OutrunStakingPositionUpgradeable` and `docs/deployment.md` PA-6). Pre-mainnet the
+    ///      `owner` must be a timelock/multisig and this call must be atomically bundled with the SP-side
+    ///      ledger migration in a single deployment script; standalone use will desync the ledgers and
+    ///      is not self-healing (unlike `setMintingCap` over-cap which self-heals via repay).
     /// @param from Source minter address
     /// @param to Destination minter address
     /// @param amount Amount of debt to transfer

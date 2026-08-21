@@ -221,6 +221,7 @@ router 只暴露上述 3 个交易级 preview；SP 级共有 6 个 preview（`pr
   - locked stake、wrap stake 与 genesis 的 SY -> uAsset 阶段使用 `minUAssetMinted`。
   - `redeemSyToToken(...)` 的赎回阶段使用 `minTokenOut`。
   - `preview` 与执行期都以 mixed-decimals 可支持为目标，不把 `SY` canonical asset decimals 与 `uAsset` decimals 不同视为禁止配置；差异由归一化换算吸收。
+- **零下限 = 无滑点保护（委托式设计，GO-1 / 04a G-3 衔接）**：`minSyOut == 0` / `minTokenOut == 0` / `minUAssetMinted == 0` 时 router 层无任何强制，零值静默透传给 `SYBaseUpgradeable.sol::deposit`/`::redeem`（`IStandardizedYield.sol` L60-62 文档明示 `SYZeroSharesOut` 仅当 `minSharesOut` 为零时可观察到）与 `OutrunRouter.sol::_assertMinUAssetMinted`，链上唯一兜底是零输出守卫——`amountSharesOut == 0` 才 revert；非零而被压低至任意小值的输出在零下限下静默通过。`OutrunL2StakedUsdsSYUpgradeable.sol` 等经 `IPSM3.sol:swapExactIn(...,0,...)` 的路径（`minAmountOut == 0`）叠加时，全链路滑点防线仅剩调用方/前端纪律。**集成要求**：调用方必须基于 `previewDeposit`/`previewRedeem`/`previewStake`/`previewWrapStake` 的链上 quote 计算非零下限（quote ± slippage），SDK/前端默认禁止零下限并监控三明治/池失衡口径；`0` 仅在显式接受无保护语义时使用。
 
 ## 9. 当前实现提醒
 

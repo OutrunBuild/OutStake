@@ -24,7 +24,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 
 1. 调用前状态：用户持有 `SY`，或先经 router 把 token 转成 `SY`。
 2. 入口校验：`positionOwner`、`uAssetReceiver` 或 `amountInSY` 为零时 `ZeroInput()`；`amountInSY < minStake()` 时 `MinStakeInsufficient(minStake)`；合约 paused 时由 `whenNotPaused` 阻断。
-3. uAssetDebt 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`；其中 `canonicalAssetDecimals = SY.assetInfo().assetDecimals`，`uAssetDecimals = uAsset.decimals()`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`），先于 dust 守卫与 `_transferIn`/一切写入；原先 rate==0 下误归 `DustRoundedToZero()`（previewStake 0-返回）收敛为具名错误。
+3. uAssetDebt 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`；其中 `canonicalAssetDecimals = SY.assetInfo().assetDecimals`，`uAssetDecimals = uAsset.decimals()`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`，若 `maxExchangeRate != 0` 且 `rate` 超出 `[minExchangeRate, maxExchangeRate]` 则 `ExchangeRateOutOfBounds(rate, min, max)`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点带宽，0/0 表示禁用，见 PA-3），先于 dust 守卫与 `_transferIn`/一切写入；原先 rate==0 下误归 `DustRoundedToZero()`（previewStake 0-返回）收敛为具名错误。
 4. dust 守卫：若向下换算得到 `uAssetDebt == 0`，则 `DustRoundedToZero()`；该检查在 SY transfer 前，不会留下零债务 position。
 5. 资产进入：`SY` 被转入 `OutrunStakingPositionUpgradeable`。
 6. 状态进入：SY transfer 成功后增加 `syTotalStaking`，计算 `deadline256 = block.timestamp + uint256(lockupDays) * 1 days`。若 `deadline256 > type(uint128).max`，则 `LockupDaysOutOfRange(lockupDays)`；虽然该检查位于 transfer 和总账暂增之后，revert 会原子回滚这两步以及后续全部状态。
@@ -37,7 +37,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 
 1. 前置状态：position 不存在或 caller 不是记录 owner 时由 `onlyPositionOwner` revert `PositionAccessDenied()`；`uAssetReceiver` 为零时 `ZeroInput()`；合约不能 paused。
 2. 到期守卫：`block.timestamp >= position.deadline` 时 revert `LockTimeExpired(position.deadline)`；语义：draw 仅在锁定期内可用，deadline 起该入口关闭，与 `redeem`/`keepRedeem` 的 `LockTimeNotExpired`（`< deadline`）在 deadline 时刻精确互补。该守卫位于 position 存在性/owner 校验之后、估值阶段汇率读取与一切状态写入之前。
-3. 估值阶段：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`），先于 NothingToDraw 判定；原先误归 `NothingToDraw()`（previewDrawUAsset 0-返回）收敛为具名错误。
+3. 估值阶段：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`，若 `maxExchangeRate != 0` 且 `rate` 超出 `[minExchangeRate, maxExchangeRate]` 则 `ExchangeRateOutOfBounds(rate, min, max)`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点带宽，0/0 表示禁用，见 PA-3），先于 NothingToDraw 判定；原先误归 `NothingToDraw()`（previewDrawUAsset 0-返回）收敛为具名错误。
 4. 可追加额度计算：若 `currentValueInUAsset <= position.UAssetMinted`，则 `NothingToDraw()`；`previewDrawUAsset` 在同一条件返回 0（rate==0 时先在汇率读取点 revert `ZeroExchangeRate()`，不进入本条件）。否则差额即 `mintedUAsset`（`drawUAsset` 返回值与 `DrawUAsset` 事件字段，调用级铸出量；非 `position.UAssetMinted` 总债务）。
 5. 状态更新：将 `position.UAssetMinted` 写为 `currentValueInUAsset`（不是把当前 debt 再加一遍）。
 6. cap 校验与铸造：检查 `uAsset` mint cap，随后铸造新的 `uAsset` 到 `uAssetReceiver`；依赖错误会回滚第 5 步。
@@ -81,7 +81,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 
 1. 前置状态：`uAssetReceiver == address(0)` 或 `amountInSY == 0` 时 `ZeroInput()`；合约未 paused。
    其中，`minStake` 仅用于直接 `stake` / `previewStake`；共享 wrap 池的 `wrapStake` / `previewWrapStake` 不读取该阈值，分别按非零输入与 dust 守卫处理。
-2. uAssetDebt 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`），先于 dust 守卫与一切写入；原先 rate==0 下误归 `DustRoundedToZero()` 收敛为具名错误。
+2. uAssetDebt 定价：先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`。汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`，若 `maxExchangeRate != 0` 且 `rate` 超出 `[minExchangeRate, maxExchangeRate]` 则 `ExchangeRateOutOfBounds(rate, min, max)`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点带宽，0/0 表示禁用，见 PA-3），先于 dust 守卫与一切写入；原先 rate==0 下误归 `DustRoundedToZero()` 收敛为具名错误。
 3. dust 守卫：若 `uAssetDebt == 0` 则 `DustRoundedToZero()`，不会先转入 SY。
 4. 资产进入：`SY` 转入 position 合约。
 5. 聚合账务更新：
@@ -126,9 +126,9 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - keeper 侧 dust 守卫：`keeperPrincipalSY == 0` → revert `DustRoundedToZero()`——keeper 不得为零 SY 支付燃烧非零 uAsset 债（尘额输入在汇率上行后本金腿 floor 为 0 时，分账会把全部 `syRedeemed` 静默划归 owner）；与 `keepWrapRedeem` 的 `amountInSY == 0` 守卫对称
    - 若 `keeperPrincipalSY > syRedeemed`，则同样 revert `InsufficientSyCollateral()`（替代对 `keeperPrincipalSY` 的上限收敛写法）；该防御不重复全仓位判断、正常路径不触发，仅作防御性不变量检查保留
    - 否则分账不变：`ownerExcessSY = syRedeemed - keeperPrincipalSY`
-6. debt 清偿：上述全部本地分支通过后，keeper 才烧掉自己提供的 `uAsset`。`OutrunStakingPositionUpgradeable.sol::keepRedeem` 的 `uAsset.repay` 先于下一步骤的 `_applyPositionRedeem` 状态减记，属文档化逆 CEI——安全性依赖入口上的 `nonReentrant`（论证同 `SYBaseUpgradeable.sol::redeem` 的 token-out-before-burn，见 `docs/spec/yield/yield-adapters.md`）；调整执行序或移除该锁前必须保留此不变量。
-7. position 更新：与普通 redeem 一样减少 `syTotalStaking`、position principal 和 position debt。
+6. position 更新：与普通 `redeem` 一致，先行 `_applyPositionRedeem` 减少 `syTotalStaking`、position principal 和 position debt（CEI：状态先于外部调用，消除此前的逆 CEI；`nonReentrant` 保留为纵深防御）。
    - 守恒引用：`syTotalStaking` 的减少镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧，见 [accounting.md §10.1](./accounting.md)。
+7. debt 清偿：position 减记后，keeper 才烧掉自己提供的 `uAsset`（`OutrunStakingPositionUpgradeable.sol::keepRedeem` 的 `IUniversalAssets.repay` 在 `_applyPositionRedeem` 之后，镜像 `redeem` 的“状态→repay”顺序）。
 8. 分账输出：
    - `receiver` 接 keeper principal
    - position owner 接剩余 excess `SY`
@@ -165,7 +165,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 
 2. 盈余计算：
    - 读取 `wrapPoolSY = syWrapStaking`
-   - 汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`），先于 pool 扣减与收益输出；原先该 up/up 换算在 rate==0 下会暴露底层 Panic——wrap 债务非零时除零（Panic 0x12）、空池（`wrapUAssetDebt == 0`）时 `assetToSyUp` 分子下溢（Panic 0x11）——现为具名 revert，仍原子、先于一切写入
+   - 汇率读取点守卫：`exchangeRate()` 读回为 0 时先 revert `ZeroExchangeRate()`，若 `maxExchangeRate != 0` 且 `rate` 超出 `[minExchangeRate, maxExchangeRate]` 则 `ExchangeRateOutOfBounds(rate, min, max)`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点带宽，0/0 表示禁用，见 PA-3），先于 pool 扣减与收益输出；原先该 up/up 换算在 rate==0 下会暴露底层 Panic——wrap 债务非零时除零（Panic 0x12）、空池（`wrapUAssetDebt == 0`）时 `assetToSyUp` 分子下溢（Panic 0x11）——现为具名 revert，仍原子、先于一切写入
    - 先按 up 版本计算 `wrapDebtInCanonicalAsset = uAsset -> canonical asset`，再按 up 版本计算 `wrapDebtInSY = canonical asset -> SY`，保留足够的 `SY` 覆盖 wrap debt
    - 若 `wrapPoolSY <= wrapDebtInSY`，则返回 0，状态不变且不发出 `HarvestWrapYield`
    - 否则 `harvestAmount = wrapPoolSY - wrapDebtInSY`
@@ -190,9 +190,12 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `OutrunStakingPositionUpgradeable.sol::setMinStake` 由 owner 调用并更新 SY 最小 stake；允许设置为 0，成功后发出 `SetMinStake(minStake)`。
 - `OutrunStakingPositionUpgradeable.sol::setRevenuePool` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 harvest 收款目的地并发出 indexed `SetRevenuePool(revenuePool)`。
 - `OutrunStakingPositionUpgradeable.sol::setKeeper` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 keeper 权限并发出 indexed `SetKeeper(keeper)`。
-- 三个配置事件只记录新值/新地址，不记录旧值；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 17 个 manager errors。
+- `OutrunStakingPositionUpgradeable.sol::setExchangeRateBounds` 由 owner 调用，`max != 0` 时校验 `min <= max` 否则 `InvalidBounds()`，更新成功后发出 `ExchangeRateBoundsUpdated(oldMin, oldMax, newMin, newMax)`（PA-3 带宽，0/0 表示禁用，兼容已部署代理）。
+- 四个配置事件中 `SetMinStake` 只记录新值，`ExchangeRateBoundsUpdated` 记录旧/新上下界，`SetRevenuePool`/`SetKeeper` 为 indexed；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 17 个 manager errors。
 
-## 8. Pause / unpause 的影响
+## 8. Pause / unpause 的影响 (PA-1)
+
+> 审计 PA-1 暂停矩阵：三 owner 开关任一关闭即冻结 SP 全部用户面；uAsset 暂停为全协议熔断但 `_credit` 仍增供给（单边增长）。本节为执行真值，运维矩阵与告警见 `docs/deployment.md`。
 
 当前仓库存在三类 pause 语义：
 
@@ -230,3 +233,23 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 `harvestWrapYield` 不调用 uAsset 的 mint / repay，不受该级 pause 阻断（仅受 8.1 与 8.2 两级影响）；对应的 preview / view 函数同样不受该级 pause 影响。
 
 因此，在当前实现里，用户流程既可能被 position 级 pause 阻断，也可能被底层 `SY` token pause 阻断，还可能被 uAsset 级 pause 阻断。
+
+### 8.4 暂停矩阵（PA-1 执行真值）
+
+| 暂停方 | 触发 | SP 用户面影响 | uAsset 面 | SY 面 | 恢复 | 备注 |
+|---|---|---|---|---|---:|---|
+| SP `pause()` | `position.pause()` | `stake`/`drawUAsset`/`wrapStake`/`redeem`/`keepWrapRedeem`/`keepRedeem`/`harvestWrapYield` 全部 `EnforcedPause` | 无直接影响（但 SP 的 `mint`/`repay` 依赖 uAsset 未暂停） | 无直接影响 | `unpause()` | preview/view 不受影响 |
+| SY `pause()` | `sy.pause()` | `stake`/`wrapStake` 经 `SY` transfer 间接 `EnforcedPause`；`redeem`/`keep*` 的 SY 转出亦受阻 | 无直接影响 | `deposit`/`redeem` `EnforcedPause` | `unpause()` | `drawUAsset` 仅读 `exchangeRate` + `uAsset.mint`，未到期且有额度时仍可运行 |
+| uAsset `pause()` | `uAsset.pause()` | `stake`/`drawUAsset`/`wrapStake`(`mint`)、`redeem`/`keep*`(`repay`)、`transfer`/`_debit` 全部 `EnforcedPause` → 全协议熔断 | `mint`/`repay`/`transfer`/`_debit` `EnforcedPause`；`approve` 不受影响 (OZ 标准)；`_credit` 显式绕过 `whenNotPaused` 仍铸币 | 无直接影响 | `unpause()`；恢复后 `repay` 立即恢复 | 暂停期供给单边增长需告警，见 `docs/deployment.md` |
+
+- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol:185-194` 直调 `OutrunERC20Upgradeable._update`，符合 “桥接入账不可丢资产” 实践；暂停期 `totalSupply` 仍增，见 `PositionPauseMatrix.t.sol` 回归。
+- 限流器与暂停为两级出站熔断：`setOutboundRateLimit` 的 `limit==0` 已被 `InvalidRateLimit` 拒绝，不再用作单链冻结。
+- 运维：三 `owner` 主网前收敛为 timelock/multisig，暂停时长设告警 (`<24h`)，见 `docs/deployment.md`。
+
+### 8.5 Wrap 池欠担保语义（PA-2）
+
+共享 wrap 池 `keepWrapRedeem` 为 keeper-only 全有或全无语义：`_assetToSyUp(wrapUAssetDebt, rate) > syWrapStaking` 时 `WrapPoolUndercollateralized`，任何 `amountInUAsset>0` 均 revert，池内 `wrapUAssetDebt`/`syWrapStaking` 不变；汇率回升后同笔兑付恢复。`testFuzz_WrapPoolUndercollateralizedThenRecovers` 锁定该语义。
+
+### 8.6 跨账本不变量与治理（PA-6）
+
+`uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt` 仅由代码路径隐式维持，无链上强制；唯一可打破的是 `uAsset.transferMinterDebt`。主网前 `uAsset`/`SP` `owner` 收敛为 timelock/multisig，`transferMinterDebt` 须与 SP 侧账本迁移原子化执行，禁止单独调用；`setMinStake` 可即时 DoS 新 `stake`，变更走公示。对账见 `OutrunStakingPositionInvariantUpgradeable.t.sol:invariant_uAssetSupplyConsistency`。

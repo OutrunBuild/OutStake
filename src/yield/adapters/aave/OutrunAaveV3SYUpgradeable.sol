@@ -76,6 +76,13 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
         if (amountSharesOut == 0) revert AaveZeroShares();
     }
 
+    /// @notice Redeem SY shares to the requested output token.
+    /// @dev F3 (P1) 流动性依赖说明: 当 `tokenOut == underlying` 时本路径经 `IAaveV3Pool.withdraw` 兑付为底层资产,
+    ///      依赖 Aave 储备可用流动性; 高利用率、储备 pause/freeze 或流动性不足时会 fail-closed revert 直至恢复.
+    ///      `tokenOut == yieldBearingToken()` (aToken) 分支为流动性无关的直转逃生门 (`_transferOut`), 恒可用.
+    ///      上层 `OutrunStakingPositionUpgradeable.redeem` 若指定 `tokenOut==underlying` 同步继承该外部依赖;
+    ///      `keepRedeem`/`keepWrapRedeem` 固定以 SY (aToken) 结算, 不经 `withdraw`, 不受该依赖影响.
+    ///      运维/集成建议: 储备级登记流动性与暂停监控 (利用率阈值告警), position 兑付优先请求 YBT, 仅最终结算时经 Router 二次 `SY.redeem(..., underlying)` 退出底层.
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset being redeemed (underlying or aToken)
     /// @param amountSharesToRedeem scaled shares to redeem (1 SY = 1 scaled share)

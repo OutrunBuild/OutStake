@@ -30,12 +30,12 @@
 - `1e18` 是统一换算基准
 - oracle-backed upgradeable adapters 通过 `exchangeRateOracle` storage 读取外部汇率
 - `OutrunExchangeOracleAdapter` 做 raw answer 正性检查、新鲜度窗口校验（`maxStaleness`；`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）、可选 L2 sequencer 状态校验（构造期 `sequencerUptimeFeed == address(0)` 关闭）后做精度归一化，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds、fallback 或多源聚合；通过 `latestRoundData()` 读取（非 `latestAnswer()`）；构造期 `OutrunExchangeOracleAdapter.sol::constructor` 预计算 `_rawScale = 10 ** rawDecimals`，feed `decimals() >= 78` 时该幂超出 uint256、构造 revert `Panic(0x11)`（fail-fast，此类 feed 不可绑定，不属具名运行期错误）
-- `OutrunExchangeOracleAdapter.sol::constructor` 拒绝 `_maxStaleness == 0`（revert `InvalidStaleness`，零值不代表关闭新鲜度检查）：零窗口对异步 feed 等同同区块窗口/永久 stale，因此构造期 fail-fast，而非运行期才暴露
+- `OutrunExchangeOracleAdapter.sol::constructor` 拒绝 `_oracle == address(0)`（revert `InvalidOracle`）与 `_maxStaleness == 0`（revert `InvalidStaleness`，零值不代表关闭新鲜度检查）：零窗口对异步 feed 等同同区块窗口/永久 stale，因此构造期 fail-fast，而非运行期才暴露
 - `uAsset` minter 债务由 `amountInMinted` 记录；`revokeMinter(minter)` 通过把 `mintingCap` 置零禁止后续 mint，但保留既有 `amountInMinted` 直到偿还
 - `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` 可把 `mintingCap` 下调至低于既有 `amountInMinted`：此后 `OutrunUniversalAssetsUpgradeable.sol::mint` 的前置 cap 校验失败、revert `ReachMintCap`，直到 `OutrunUniversalAssetsUpgradeable.sol::repay` 把 `amountInMinted` 冲减至新 cap 以下方自愈——属预期自愈语义，非故障；cap 置零时 repay 不产生自愈，mint 持续被阻断直至重新调升 cap（同 `revokeMinter`）
 - `transferMinterDebt(from, to, amount)` 当前已实现为 owner-only 操作：要求 `from`、`to` 均非零、彼此不同、`amount` 非零；仅在两个 minter 地址之间迁移未偿债务，不 mint、不 burn、不 transfer，也不改变 `totalSupply` 或任一账户 `balance`
 - `transferMinterDebt` 执行时减少 `from.amountInMinted`、增加 `to.amountInMinted`，并要求来源 minter 具备足额未偿债务、目标 minter 具备足够 `mintingCap` headroom；用途限定为运维修复或迁移，不用于用户债务豁免
-- `transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务；若该 minter 还受 position、wrap 等模块账本约束，操作方只能在这些账本保持一致的协调迁移流程中使用它，`uAsset` 本身不会同步更新 position/wrap 台账
+- `transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务；若该 minter 还受 position、wrap 等模块账本约束，操作方只能在这些账本保持一致的协调迁移流程中使用它，`uAsset` 本身不会同步更新 position/wrap 台账。跨账本不变量（PA-6）：`uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt` 仅由代码路径隐式维持，无链上强制；唯一可打破的是 `transferMinterDebt`，主网前 `owner` 需收敛为 timelock/multisig 且该操作必须与 SP 侧账本原子迁移，见 `docs/deployment.md`；对账回归 `invariant_uAssetSupplyConsistency`
 
 ### uAsset 错误与事件观测
 
@@ -119,13 +119,13 @@ ray（`1e27`）是 Aave 流动性指数的数值域，区别于上文 SYUtils �
 - `AutoIncrementIdUpgradeable.sol::_nextId` 为 pre-increment：先自增再返回，首个签发 id = 1，严格单调递增，id 永不重用（自增用 `unchecked`，uint256 counter 溢出视为实际不可能）
 - 消费面：`OutrunStakingPositionUpgradeable` 以 `_nextId()` 作为 positionId 来源
 
-## Pause 与跨链 OFT 执行边界
+## Pause 与跨链 OFT 执行边界 (PA-1)
 
-`OutrunERC20PausableUpgradeable` 的 pause 语义用于阻断用户主动发起的本地 ERC20 transfer、mint、burn 业务入口，也阻断 pause 之后用户在源链新发起的 OFT outbound send。
+`OutrunERC20PausableUpgradeable` 的 pause 语义用于阻断用户主动发起的本地 ERC20 transfer、mint、burn 业务入口，也阻断 pause 之后用户在源链新发起的 OFT outbound send。三 pause 开关 (SP / SY / uAsset) 任一关闭即冻结 SP 全部用户面，uAsset 暂停为全协议熔断但 `_credit` 仍增供给，见 `docs/deployment.md` 暂停矩阵与 `docs/spec/position/state-machines.md:8`。
 
-`OutrunOFTUpgradeable` 的 LayerZero inbound `_credit` 执行路径是跨链消息生命周期的一部分，不能因为目标链本地 pause 阻断已经进入跨链流程的代币。因此，`_credit` 直接走基础 ERC20 `_update`，不经过 `OutrunERC20PausableUpgradeable._update whenNotPaused`。
+`OutrunOFTUpgradeable` 的 LayerZero inbound `_credit` 执行路径是跨链消息生命周期的一部分，不能因为目标链本地 pause 阻断已经进入跨链流程的代币。因此，`_credit` 直接走基础 ERC20 `_update`，不经过 `OutrunERC20PausableUpgradeable._update whenNotPaused` (暂停期 `totalSupply` 单边增长需告警，`PositionPauseMatrix.t.sol` 回归)。
 
-该规则只豁免 inbound `_credit`，不扩大到用户主动发起的 outbound send、普通用户 transfer、`uAsset.mint`、`SY.deposit` 或 `SY.redeem`。
+该规则只豁免 inbound `_credit`，不扩大到用户主动发起的 outbound send、普通用户 transfer、`uAsset.mint`、`SY.deposit` 或 `SY.redeem`。`approve` 不受暂停影响 (OZ 标准，暂停期可预授权，见 `OutrunERC20PausableUpgradeable` 与 PA-1)。
 
 ## OFT 与 minter 债务豁免边界
 
@@ -142,8 +142,8 @@ OFT outbound `_debit` burn 与 inbound `_credit` mint 均不触碰 minter 债务
 - `quoteOFT()` 的 `maxAmountLD` 受 rate limit 封顶：取 `min(amountCanBeSent, uint64.max × decimalConversionRate)` 再去 dust；`window == 0` 时不封顶
 - `window == 0` 表示无限额，只存在于未配置/删除态：`setOutboundRateLimit` 拒绝 `window == 0`（revert `InvalidWindowSeconds`），`removeOutboundRateLimit` 删除配置后回到无限额；`removeOutboundRateLimit` 删除的是整条 `RateLimit` 记录（`amountInFlight`/`lastUpdated`/`limit`/`window` 一并清零），因此删除后再 `setOutboundRateLimit` 是从零会计、满额重新开始——与重配置 `setOutboundRateLimit` 的 checkpoint 保留 in-flight（见下条 checkpoint 语义）不同，remove 不可当作“暂停限流但保留会计”；该状态下基座 `OutrunRateLimiterUpgradeable.sol::getAmountCanBeSent` 返回无限额哨兵 `(0, type(uint256).max)`，OFT 层 override（`OutrunOFTUpgradeable.sol::getAmountCanBeSent`）返回 SD 域包络 `(0, uint64.max × decimalConversionRate)`
 - checkpoint 语义：每次 `setOutboundRateLimit` 先以 0 记账结算当前 in-flight，再写入新限额；若限额被调低，已 in-flight 可瞬态超过新限额——此时可用额度为 0、outbound 暂时全部 revert，随衰减回补自愈
-- `limit == 0` 且 `window > 0` 是运行期可达的永久全阻断态：`OutrunOFTUpgradeable.sol::setOutboundRateLimit` 只拒绝 `window == 0`（revert `InvalidWindowSeconds`），不拒绝 `limit == 0`；此时 `OutrunRateLimiterUpgradeable.sol::_amountCanBeSent` 恒返 `(0, 0)`，任何非 dust outbound 都在 `OutrunRateLimiterUpgradeable.sol::_checkAndUpdateRateLimit` 处回退 `RateLimitExceeded`（纯 dust 已在 `OutrunOFTUpgradeable.sol::_debit` 被 `AmountTooSmall` 拒绝，不进入限流器）。与限额定低于 in-flight 的瞬态过限不同，该态不随衰减自愈——`decay = 0 × elapsed / window` 恒为 0，属于永久全阻断；`OutrunOFTUpgradeable.sol::quoteOFT` 的 `maxAmountLD` 亦封顶为 0。恢复仅两种：重配正限额或 `OutrunOFTUpgradeable.sol::removeOutboundRateLimit`。
-- 部署约束：部署脚本对每个远程链强制设置限额与窗口，限额/窗口由 env 显式配置、无生产默认值，任一为 0 即部署 revert；该约束只覆盖部署脚本配置路径，不约束运行期 `OutrunOFTUpgradeable.sol::setOutboundRateLimit`——运行期 owner 可配置 `limit = 0` 进入上述永久全阻断态；部署测试断言值为 1_000_000 ether / 1h（测试断言值，非生产默认值）；该设置路径当前随 uAsset 部署调用（`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB`）在 `OutstakeScript.s.sol::run` 中被注释，启用时生效
+- `limit == 0` 且 `window > 0` 的永久全阻断态已被 `InvalidRateLimit` 拒绝：`OutrunOFTUpgradeable.sol::setOutboundRateLimit` 现拒绝 `limit == 0`（revert `InvalidRateLimit`）与 `window == 0`（`InvalidWindowSeconds`），`limit == 0` 不再是运行期可达态；此前该态恒返 `(0,0)` 且不随衰减自愈，恢复需重配正限额或 `removeOutboundRateLimit`，现改为配置期 fail-fast，见 `docs/deployment.md` 与 PA-1 暂停矩阵 (暂停与限流为两级熔断，`limit==0` 单链冻结已由暂停替代)。
+- 部署约束：部署脚本对每个远程链强制设置限额与窗口，限额/窗口由 env 显式配置、无生产默认值，任一为 0 即部署 revert；该约束覆盖部署脚本与运行期 `setOutboundRateLimit` 双路径；部署测试断言值为 1_000_000 ether / 1h（测试断言值，非生产默认值）；该设置路径当前随 uAsset 部署调用（`OutstakeScript.s.sol::_deployUETH` / `_deployUUSD` / `_deployUBNB`）在 `OutstakeScript.s.sol::run` 中被注释，启用时生效
 - 配置变更事件可观测性：`setOutboundRateLimit` 成功时同时发出两个事件——`OutrunRateLimiterUpgradeable.sol::_setRateLimits` 发出 `RateLimitsChanged(RateLimitConfig[] rateLimitConfigs)`，`OutrunOFTUpgradeable.sol::setOutboundRateLimit` 发出 `OutboundRateLimitSet(indexed eid, limit, window)`；`removeOutboundRateLimit` 成功时仅由 `OutrunOFTUpgradeable.sol::removeOutboundRateLimit` 发出 `OutboundRateLimitRemoved(indexed eid)`，不发 `RateLimitsChanged`。事件声明位于 `OutrunRateLimiterUpgradeable.sol` 与 `OutrunOFTUpgradeable.sol`
 
 ## OFT 换算参数与发送/部署校验语义
