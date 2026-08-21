@@ -68,4 +68,8 @@ interface IPSM3 {
         external
         view
         returns (uint256 amountIn);
+
+    /// @notice Returns the PSM3 rate provider (SSR cross-chain mirror, 1e27).
+    /// @return The rate provider address (immutable in canonical PSM3).
+    function rateProvider() external view returns (address);
 }

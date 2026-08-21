@@ -4,17 +4,22 @@ pragma solidity ^0.8.35;
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {IPSM3} from "../../../integrations/sky/interfaces/IPSM3.sol";
+import {IRateProviderLike} from "../../../integrations/sky/interfaces/IRateProviderLike.sol";
 
 /// @title Outrun L2 Sky sUSDS SY adapter
-/// @notice L2 SY adapter for Sky sUSDS. Uses PSM3 (Peg Stability Module) to swap between USDC, USDS, and sUSDS.
-///      Deposit paths: USDC → swap to sUSDS via PSM3, USDS → swap to sUSDS via PSM3, or sUSDS directly.
-///      Exchange rate from PSM3.previewSwapExactIn(sUSDS→USDS).
+/// @notice L2 SY adapter for Sky sUSDS. Uses PSM3 for swap execution (USDC/USDS↔sUSDS)
+///      and an independent SSR RateProvider for accounting. Deposit paths: USDC → swap
+///      to sUSDS via PSM3, USDS → swap to sUSDS via PSM3, or sUSDS directly.
+///      Exchange rate from RateProvider.getConversionRate() (SSR cross-chain mirror, 1e27)
+///      with a PSM deviation guard; PSM remains execution-only.
 // solhint-disable-next-line gas-small-strings
 contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunL2StakedUsdsSY") is SYBaseUpgradeable {
     struct OutrunL2StakedUsdsSYStorage {
         address usdc;
         address usds;
         address psm3;
+        address rateProvider;
+        uint16 maxDeviationBps;
     }
     OutrunL2StakedUsdsSYStorage private outrunL2StakedUsdsSYStorage;
 
@@ -35,6 +40,12 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         $.usdc = usdc_;
         $.usds = usds_;
         $.psm3 = psm3_;
+        // Auto-bind RateProvider from canonical PSM3 (immutable) for pre-deployment proxies;
+        // owner can override via setRateProvider. Default deviation guard 1% (100 bps).
+        try IPSM3(psm3_).rateProvider() returns (address rp) {
+            $.rateProvider = rp;
+        } catch {}
+        $.maxDeviationBps = 100;
     }
 
     /// @notice Returns the USDC token address (stablecoin input on L2).
@@ -58,15 +69,63 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         return outrunL2StakedUsdsSYStorage.psm3;
     }
 
+    /// @notice Returns the independent SSR RateProvider (1e27) used for exchangeRate.
+    /// @return The rate provider address; falls back to PSM3.rateProvider() if zero.
+    function rateProvider() public view returns (address) {
+        address rp = outrunL2StakedUsdsSYStorage.rateProvider;
+        if (rp != address(0)) return rp;
+        // Fallback for proxies initialized before this field existed
+        try IPSM3(psm3()).rateProvider() returns (address v) {
+            return v;
+        } catch {
+            return address(0);
+        }
+    }
+
+    /// @notice Returns the max PSM vs SSR deviation in bps before exchangeRate reverts.
+    /// @return Deviation bound (e.g. 100 = 1%). Zero means default 100 bps.
+    function maxDeviationBps() public view returns (uint16) {
+        uint16 v = outrunL2StakedUsdsSYStorage.maxDeviationBps;
+        return v == 0 ? 100 : v;
+    }
+
+    /// @notice Sets the SSR RateProvider. Owner-only.
+    /// @param newRateProvider The new rate provider (1e27). Must not be zero.
+    function setRateProvider(address newRateProvider) external onlyOwner {
+        if (newRateProvider == address(0)) revert SYZeroAddress();
+        outrunL2StakedUsdsSYStorage.rateProvider = newRateProvider;
+    }
+
+    /// @notice Sets the max PSM deviation bound. Owner-only.
+    /// @param newMaxBps New bound in bps (e.g. 100 = 1%). Must be <= 10000.
+    function setMaxDeviationBps(uint16 newMaxBps) external onlyOwner {
+        if (newMaxBps == 0 || newMaxBps > 10000) revert InvalidMaxDeviationBps();
+        outrunL2StakedUsdsSYStorage.maxDeviationBps = newMaxBps;
+    }
+
+    error InvalidMaxDeviationBps();
+    error RateDeviationExceeded(uint256 psmRate, uint256 ssrRate, uint256 maxBps);
+    error RateProviderCallFailed();
+
+    error PSM3IncompleteConsumption(uint256 expectedConsumed, uint256 actualRemaining);
+
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _yieldBearingToken = yieldBearingToken();
         // Deposit: if depositing sUSDS directly, 1:1. Otherwise, swap the input token to sUSDS via PSM3 at the current pool rate.
         if (tokenIn == _yieldBearingToken) {
             amountSharesOut = amountDeposited;
         } else {
+            // Enforce full consumption of the input token to close F6 sweep residual:
+            // the PSM3 must pull the entire amountDeposited; any partial fill would
+            // leave user funds stranded in SY and sweepable via SYBaseUpgradeable.sol::sweep.
+            uint256 balanceBefore = _selfBalance(tokenIn);
             address _psm = psm3();
             _safeApproveInf(tokenIn, _psm);
             amountSharesOut = IPSM3(_psm).swapExactIn(tokenIn, _yieldBearingToken, amountDeposited, 0, address(this), 0);
+            uint256 balanceAfter = _selfBalance(tokenIn);
+            if (balanceAfter != balanceBefore - amountDeposited) {
+                revert PSM3IncompleteConsumption(amountDeposited, balanceBefore - balanceAfter);
+            }
         }
     }
 
@@ -87,13 +146,34 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         }
     }
 
-    /// @notice Returns the current exchange rate: USDS per 1 sUSDS, scaled by 1e18, quoted via PSM3.
-    /// @return res PSM3.previewSwapExactIn(sUSDS→USDS, 1 ether) — the sUSDS savings rate combined with
-    ///      any PSM3 pool imbalance.
+    /// @notice Returns the current exchangeRate: USDS per 1 sUSDS, scaled by 1e18, from SSR RateProvider.
+    /// @return res SSR-derived rate (sUSDS 18 -> USDS 18 via rate/1e27) with PSM deviation guard.
+    /// @dev PSM preview is execution-only; accounting uses independent RateProvider. If PSM quote
+    ///      deviates from SSR by more than maxDeviationBps, revert to fail-closed (prevents
+    ///      pool-imbalance or stale-oracle pollution of position mint/liquidation).
     function exchangeRate() public view override returns (uint256 res) {
-        // PSM3 previewSwapExactIn(sUSDS→USDS, 1 ether) gives the current exchange rate.
-        // PSM3 maintains a USDS/USDC peg, so this rate reflects the sUSDS savings rate multiplied by any PSM3 pool imbalance.
-        return IPSM3(psm3()).previewSwapExactIn(yieldBearingToken(), usds(), 1 ether);
+        address rp = rateProvider();
+        // If no independent provider is configured, fall back to PSM preview (pre-fix compat).
+        if (rp == address(0)) {
+            return IPSM3(psm3()).previewSwapExactIn(yieldBearingToken(), usds(), 1 ether);
+        }
+        uint256 rate;
+        try IRateProviderLike(rp).getConversionRate() returns (uint256 r) {
+            rate = r;
+        } catch {
+            revert RateProviderCallFailed();
+        }
+        if (rate == 0) revert RateProviderCallFailed();
+        // sUSDS 18, USDS 18: 1 sUSDS = rate/1e27 USDS => 1e18 * rate / 1e27
+        uint256 ssrRate = (1 ether * rate) / 1e27;
+        uint256 psmRate = IPSM3(psm3()).previewSwapExactIn(yieldBearingToken(), usds(), 1 ether);
+        uint256 maxBps = maxDeviationBps();
+        if (psmRate != ssrRate && ssrRate != 0) {
+            uint256 diff = psmRate > ssrRate ? psmRate - ssrRate : ssrRate - psmRate;
+            uint256 bps = (diff * 10000) / ssrRate;
+            if (bps > maxBps) revert RateDeviationExceeded(psmRate, ssrRate, maxBps);
+        }
+        return ssrRate;
     }
 
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
