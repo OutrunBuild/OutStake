@@ -121,7 +121,7 @@ contract OracleSetterUpgradeableTest is Test {
 
 /// @dev Minimal read surface shared by every oracle source the swap sequence can select: the
 /// fixed-rate mocks and the reverting mock all expose exactly this.
-interface OracleLike {
+interface IOracleLike {
     function getExchangeRate() external view returns (uint256);
 }
 
@@ -191,13 +191,13 @@ contract OracleSourceSwapSequenceTest is StdInvariant, Test {
         // vm.expectRevert is unusable inside invariants (they run as plain calls), so classify
         // outcomes with nested try/catch instead.
         try IStandardizedYield(address(sy)).exchangeRate() returns (uint256 got) {
-            try OracleLike(current).getExchangeRate() returns (uint256 expected) {
+            try IOracleLike(current).getExchangeRate() returns (uint256 expected) {
                 assertEq(got, expected, "SY rate does not mirror the current oracle (cache/blending leak)");
             } catch {
                 revert("SY returned a rate while its current oracle reverts");
             }
         } catch {
-            try OracleLike(current).getExchangeRate() returns (uint256) {
+            try IOracleLike(current).getExchangeRate() returns (uint256) {
                 revert("SY reverted while its current oracle returned a value");
             } catch {} // both revert: the SY propagates its current oracle's failure correctly
         }

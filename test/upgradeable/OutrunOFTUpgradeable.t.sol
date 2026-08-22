@@ -373,6 +373,8 @@ contract OutrunOFTUpgradeableTest is Test {
         assertTrue(envelope <= type(uint192).max);
 
         vm.prank(owner);
+        // uint192 cast is guarded by the envelope <= uint192.max assert above.
+        // forge-lint: disable-next-line(unsafe-typecast)
         oft.setOutboundRateLimit(DST_EID, uint192(envelope), 1 days);
 
         (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
@@ -732,6 +734,8 @@ contract RateLimiterSequenceHandler is Test {
             // against the unmoved model. RateLimitExceeded is the ONLY legal revert reason — any
             // other (including a Panic) is recorded here and hard-failed by
             // invariant_noUnexpectedRevert (review LR-007).
+            // Truncating to the first 4 bytes is the point: revert-selector extraction.
+            // forge-lint: disable-next-line(unsafe-typecast)
             if (bytes4(reason) != OutrunRateLimiterUpgradeable.RateLimitExceeded.selector) {
                 ghostUnexpectedRevertSeen = true;
             }

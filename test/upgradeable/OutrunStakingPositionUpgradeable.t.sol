@@ -970,7 +970,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
 
 // PA-1 pause matrix regression (04a)
 contract PositionPauseMatrixTest is PositionStackTestBase {
-    bytes4 constant ENFORCED_PAUSE = PausableUpgradeable.EnforcedPause.selector;
+    bytes4 internal constant ENFORCED_PAUSE = PausableUpgradeable.EnforcedPause.selector;
 
     function setUp() external {
         _deployPositionStack();

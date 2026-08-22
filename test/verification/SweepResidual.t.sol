@@ -2,7 +2,6 @@
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol";
 import {OutrunL2StakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol";
@@ -12,8 +11,7 @@ import {
     MockToken,
     MockListaStakeManager,
     MockYieldProxy,
-    MockAsBnbMinter,
-    MockPSM3
+    MockAsBnbMinter
 } from "../upgradeable/mocks/SYAdapterMocks.sol";
 import {IYieldProxy} from "../../src/integrations/aster/interfaces/IYieldProxy.sol";
 
@@ -96,15 +94,15 @@ contract MockPartialPSM3 {
     }
 }
 
-contract F6SweepResidualTest is Test {
+contract SweepResidualTest is Test {
     address internal owner = address(0xA11CE);
     address internal user = address(0xB0B);
     address internal constant NATIVE = address(0);
 
-    // Aster: partial minter should revert after fix - demonstrates F6 is now protected
+    // Aster: a partial minter fill must revert instead of stranding residue in the SY
     // Before fix: partial minter would leave 5 ether slisBNB residue in SY, sweepable by owner (loss).
     // After fix: deposit reverts with AsBnbMintIncompleteConsumption, preventing stranded funds.
-    function test_F6_Aster_PartialSlisBNB_ResidueIsSweepable() external {
+    function test_Aster_PartialSlisBNB_RevertPreventsResidue() external {
         MockToken asBNB = new MockToken("asBNB", "asBNB", 18);
         MockToken slisBNB = new MockToken("slisBNB", "slisBNB", 18);
         MockListaStakeManager stakeManager = new MockListaStakeManager();
@@ -137,7 +135,7 @@ contract F6SweepResidualTest is Test {
     }
 
     // Honest minter: no residue, sweep would find 0
-    function test_F6_Aster_HonestMinter_NoResidue() external {
+    function test_Aster_HonestMinter_NoResidue() external {
         MockToken asBNB = new MockToken("asBNB", "asBNB", 18);
         MockToken slisBNB = new MockToken("slisBNB", "slisBNB", 18);
         MockListaStakeManager stakeManager = new MockListaStakeManager();
@@ -164,8 +162,8 @@ contract F6SweepResidualTest is Test {
         assertEq(asBNB.balanceOf(sy), 10 ether, "YBT backing present");
     }
 
-    // PSM3: partial swap should revert after fix
-    function test_F6_PSM3_PartialUSDC_ResidueIsSweepable() external {
+    // PSM3: partial swap must revert after fix
+    function test_PSM3_PartialUSDC_RevertPreventsResidue() external {
         MockToken usdc = new MockToken("USDC", "USDC", 6);
         MockToken usds = new MockToken("USDS", "USDS", 18);
         MockToken sUSDS = new MockToken("sUSDS", "sUSDS", 18);
@@ -195,7 +193,7 @@ contract F6SweepResidualTest is Test {
     }
 
     // Direct donation not backing shares is currently sweepable and harmless - control case
-    function test_F6_DirectDonationNotBackingIsSweepableHarmless() external {
+    function test_DirectDonationNotBackingIsSweepableHarmless() external {
         MockToken asBNB = new MockToken("asBNB", "asBNB", 18);
         MockToken slisBNB = new MockToken("slisBNB", "slisBNB", 18);
         MockListaStakeManager stakeManager = new MockListaStakeManager();
@@ -216,7 +214,7 @@ contract F6SweepResidualTest is Test {
         // totalSupply is 0, no shares minted
         assertEq(SYBaseUpgradeable(payable(sy)).totalSupply(), 0);
 
-        // owner sweeping donation is harmless (audit says direct donation not share-backed)
+        // owner sweeping donation is harmless (the donation backs no shares)
         vm.prank(owner);
         SYBaseUpgradeable(payable(sy)).sweep(address(slisBNB), owner, donation);
         assertEq(slisBNB.balanceOf(owner), donation);

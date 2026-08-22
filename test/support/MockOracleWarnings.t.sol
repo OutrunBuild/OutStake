@@ -231,7 +231,11 @@ contract OracleAdapterPropertyTest is Test {
     function testFuzz_StalenessBoundaryTwoSided(uint48 maxStaleness, uint256 caseSeed) external {
         uint256 staleness = bound(maxStaleness, 1, 30 days);
         // delta ∈ {−1, 0, +1} probes below, exactly on, and above the boundary.
+        // uint256→int256 is lossless: caseSeed % 3 ∈ {0, 1, 2}.
+        // forge-lint: disable-next-line(unsafe-typecast)
         int256 delta = int256(caseSeed % 3) - 1;
+        // staleness ≥ 1 and delta ≥ −1 keep the sum in [0, 30 days]: both casts are lossless.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 age = uint256(int256(staleness) + delta);
 
         // Warp past the largest possible age (30 days + 1): the feed timestamp is written as
@@ -263,6 +267,8 @@ contract OracleAdapterPropertyTest is Test {
         MockAggregator feed = new MockAggregator(d);
         OutrunExchangeOracleAdapter adapter = new OutrunExchangeOracleAdapter(address(feed), 2 days, address(0), 0);
         vm.warp(10 days);
+        // r is bounded to [1, 1e12], so the int256 cast is lossless.
+        // forge-lint: disable-next-line(unsafe-typecast)
         feed.setLatestRoundData(int256(r), block.timestamp);
 
         // raw ≤ 1e12 keeps every intermediate product below 1e30, so a plain mul/div equals
@@ -295,7 +301,10 @@ contract OracleAdapterPropertyTest is Test {
 
         vm.warp(10 days);
         // Integer physical price, exactly representable in both decimal domains, fresh timestamps.
+        // p ≤ 1e12 with a, b ≤ 18 keeps p·10^d below 1e30 — far inside int256, both casts lossless.
+        // forge-lint: disable-next-line(unsafe-typecast)
         feedA.setLatestAnswer(int256(p * 10 ** a));
+        // forge-lint: disable-next-line(unsafe-typecast)
         feedB.setLatestAnswer(int256(p * 10 ** b));
 
         uint256 rateA = adapterA.getExchangeRate();
@@ -343,6 +352,8 @@ contract OracleAdapterPropertyTest is Test {
         try adapter.getExchangeRate() returns (uint256) {
             revert("sequencer-unhealthy state returned a rate");
         } catch (bytes memory reason) {
+            // Truncating to the first 4 bytes is the point: revert-selector extraction.
+            // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             bytes4 expectedSelector = seq == 0 ? SEQUENCER_DOWN_SELECTOR : SEQUENCER_GRACE_PERIOD_NOT_OVER_SELECTOR;
             assertTrue(selector == expectedSelector, "main-feed state leaked past the sequencer guard");
@@ -390,10 +401,15 @@ contract OracleAdapterPropertyTest is Test {
             assertGt(rate, 0);
             // On this domain (|raw| ≤ 2^90, d ≤ 18) the plain product cannot overflow, so the
             // only legal return value is the exact normalized form.
+            // Success implies bounded ≥ 0 (a negative raw answer makes the adapter revert), so the
+            // int→uint cast only reinterprets a non-negative value.
+            // forge-lint: disable-next-line(unsafe-typecast)
             assertEq(rate, (uint256(int256(bounded)) * 1e18) / 10 ** d);
         } catch (bytes memory reason) {
             // Fail-closed means named errors only: an arithmetic Panic escaping this surface
             // would be indistinguishable from a bug for downstream callers.
+            // bytes4(reason) truncates by design (selector extraction); bytes32(...) only zero-pads.
+            // forge-lint: disable-next-line(unsafe-typecast)
             assertNotEq(bytes32(bytes4(reason)), bytes32(PANIC_SELECTOR), "Panic escaped the fail-closed surface");
         }
     }

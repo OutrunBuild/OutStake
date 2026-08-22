@@ -187,7 +187,8 @@
         "test/upgradeable/SYUpgradeable.t.sol",
         "test/upgradeable/SYAdaptersUpgradeable.t.sol",
         "test/upgradeable/SYAdaptersFork.t.sol",
-        "test/upgradeable/OracleSetterUpgradeable.t.sol"
+        "test/upgradeable/OracleSetterUpgradeable.t.sol",
+        "test/verification/SweepResidual.t.sol"
       ],
       "rules": [
         {
@@ -199,12 +200,14 @@
           "change_tests": [
             "test/upgradeable/SYUpgradeable.t.sol",
             "test/upgradeable/SYAdaptersUpgradeable.t.sol",
-            "test/upgradeable/OracleSetterUpgradeable.t.sol"
+            "test/upgradeable/OracleSetterUpgradeable.t.sol",
+            "test/verification/SweepResidual.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/SYUpgradeable.t.sol",
             "test/upgradeable/SYAdaptersUpgradeable.t.sol",
-            "test/upgradeable/OracleSetterUpgradeable.t.sol"
+            "test/upgradeable/OracleSetterUpgradeable.t.sol",
+            "test/verification/SweepResidual.t.sol"
           ]
         }
       ]
@@ -301,14 +304,6 @@
         "id": "outstake-router-drift-fix-gap",
         "paths": [
           "test/deploy/OutstakeRouterDriftFix.t.sol"
-        ],
-        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
-        "enforcement": "residual-risk"
-      },
-      {
-        "id": "f6-sweep-residual-gap",
-        "paths": [
-          "test/verification/F6SweepResidual.t.sol"
         ],
         "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
         "enforcement": "residual-risk"
