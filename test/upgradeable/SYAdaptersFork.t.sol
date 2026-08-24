@@ -89,7 +89,7 @@ contract SYAdaptersForkTest is Test {
     function testFork_SlisBnbPreviewDepositNativeMatchesOnchainQuote() external {
         uint256 amount = 1 ether;
         uint256 expected = IListaStakeManager(STAKE_MANAGER_PROXY).convertBnbToSnBnb(amount);
-        assertEq(slisSy.previewDeposit(address(0), amount), expected);
+        assertEq(slisSy.previewDeposit(address(0), amount), expected * 9950 / 10000);
     }
 
     function testFork_SlisBnbPreviewDepositMatchesActualDeposit() external {
@@ -99,7 +99,7 @@ contract SYAdaptersForkTest is Test {
         vm.deal(address(this), amount);
         uint256 actualShares = slisSy.deposit{value: amount}(address(this), address(0), amount, 0);
 
-        assertEq(previewShares, actualShares);
+        assertEq(previewShares, actualShares * 9950 / 10000);
         assertEq(slisSy.balanceOf(address(this)), actualShares);
     }
 
@@ -121,7 +121,7 @@ contract SYAdaptersForkTest is Test {
         uint256 amount = 1 ether;
         uint256 slisQuote = IListaStakeManager(asBnbStakeManager).convertBnbToSnBnb(amount);
         uint256 expectedShares = IAsBnbMinter(AS_BNB_MINTER).convertToAsBnb(slisQuote);
-        assertEq(asBnbSy.previewDeposit(address(0), amount), expectedShares);
+        assertEq(asBnbSy.previewDeposit(address(0), amount), expectedShares * 9950 / 10000);
     }
 
     function testFork_AsBnbPreviewDepositMatchesActualDeposit() external {
@@ -133,7 +133,7 @@ contract SYAdaptersForkTest is Test {
         vm.deal(address(this), amount);
         uint256 actualShares = asBnbSy.deposit{value: amount}(address(this), address(0), amount, 0);
 
-        assertEq(actualShares, previewShares);
+        assertEq(previewShares, actualShares * 9950 / 10000);
         assertEq(asBnbSy.balanceOf(address(this)), actualShares);
     }
 
@@ -258,7 +258,7 @@ contract SYAdaptersMainnetForkTest is Test {
 
         uint256 previewShares = lidoSy.previewDeposit(address(0), amount);
         uint256 shares = lidoSy.deposit{value: amount}(address(this), address(0), amount, 0);
-        assertApproxEqAbs(shares, previewShares, 1);
+        assertEq(previewShares, shares * 9950 / 10000);
         assertEq(lidoSy.balanceOf(address(this)), shares);
 
         uint256 previewStEth = lidoSy.previewRedeem(STETH, shares);
@@ -398,8 +398,9 @@ contract SYAdaptersEtherfiMainnetForkTest is Test {
         uint256 expectedShares = ILiquidityPool(ETHERFI_LIQUIDITY_POOL).sharesForAmount(eEthQuote);
         uint256 previewShares = etherfiSy.previewDeposit(address(0), amount);
         uint256 shares = etherfiSy.deposit{value: amount}(address(this), address(0), amount, 0);
-        assertEq(previewShares, expectedShares);
-        assertApproxEqAbs(shares, previewShares, 1);
+        assertEq(previewShares, expectedShares * 9950 / 10000);
+        assertEq(shares, expectedShares);
+        assertEq(previewShares, shares * 9950 / 10000);
         assertEq(etherfiSy.balanceOf(address(this)), shares);
         assertEq(IERC20(WEETH).balanceOf(address(etherfiSy)), shares);
 

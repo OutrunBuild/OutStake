@@ -361,6 +361,7 @@ contract SYAdaptersUpgradeableTest is Test {
 
         // 10 ether divides evenly by 1.25, so the share amount and the stETH roundtrip are exact.
         uint256 expectedShares = AMOUNT * 1e18 / rate;
+        uint256 expectedPreview = expectedShares * 9950 / 10000;
         vm.deal(user, AMOUNT);
         vm.startPrank(user);
         uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
@@ -371,9 +372,9 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 redeemed = _asSY(sy).redeem(user, sharesOut, address(stETH), 0, false);
         vm.stopPrank();
 
-        assertEq(previewShares, expectedShares);
+        assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(sharesOut, previewShares);
+        assertEq(previewShares, expectedShares * 9950 / 10000);
         assertEq(previewOut, AMOUNT);
         assertEq(redeemed, previewOut);
         assertEq(redeemed, AMOUNT);
@@ -708,12 +709,12 @@ contract SYAdaptersUpgradeableTest is Test {
 
         address lista = _deployLista();
         _assertYieldTokenRoundtrip(lista, token, AMOUNT);
-        assertEq(_asSY(lista).previewDeposit(NATIVE, AMOUNT), AMOUNT);
+        assertEq(_asSY(lista).previewDeposit(NATIVE, AMOUNT), AMOUNT * 9950 / 10000);
         assertEq(_asSY(lista).exchangeRate(), 1e18);
 
         address aster = _deployAster();
         _assertYieldTokenRoundtrip(aster, token, AMOUNT);
-        assertEq(_asSY(aster).previewDeposit(NATIVE, AMOUNT), AMOUNT);
+        assertEq(_asSY(aster).previewDeposit(NATIVE, AMOUNT), AMOUNT * 9950 / 10000);
         assertEq(_asSY(aster).exchangeRate(), 1e18);
     }
 
@@ -731,15 +732,16 @@ contract SYAdaptersUpgradeableTest is Test {
         );
 
         uint256 expectedShares = AMOUNT * 1e18 / rate;
+        uint256 expectedPreview = expectedShares * 9950 / 10000;
         vm.deal(user, AMOUNT);
         vm.startPrank(user);
         uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
         uint256 sharesOut = _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
         vm.stopPrank();
 
-        assertEq(previewShares, expectedShares);
+        assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(sharesOut, previewShares);
+        assertEq(previewShares, expectedShares * 9950 / 10000);
         assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
@@ -758,15 +760,16 @@ contract SYAdaptersUpgradeableTest is Test {
         );
 
         uint256 expectedShares = AMOUNT * 1e18 / rate;
+        uint256 expectedPreview = expectedShares * 9950 / 10000;
         vm.deal(user, AMOUNT);
         vm.startPrank(user);
         uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
         uint256 sharesOut = _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
         vm.stopPrank();
 
-        assertEq(previewShares, expectedShares);
+        assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(sharesOut, previewShares);
+        assertEq(previewShares, expectedShares * 9950 / 10000);
         // The minter mock delivers the minted asBNB to the SY, matching the real Aster delivery seam.
         assertEq(token.balanceOf(address(sy)), sharesOut);
         assertEq(_asSY(sy).exchangeRate(), rate);
@@ -787,6 +790,7 @@ contract SYAdaptersUpgradeableTest is Test {
         );
 
         uint256 expectedShares = AMOUNT * 1e18 / rate;
+        uint256 expectedPreview = expectedShares * 9950 / 10000;
         slis.mint(user, AMOUNT);
         vm.startPrank(user);
         slis.approve(sy, AMOUNT);
@@ -794,9 +798,9 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 sharesOut = _asSY(sy).deposit(user, address(slis), AMOUNT, 0);
         vm.stopPrank();
 
-        assertEq(previewShares, expectedShares);
+        assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(sharesOut, previewShares);
+        assertEq(previewShares, expectedShares * 9950 / 10000);
         // Delivery seams: the minter pulled the SY's slisBNB and minted the asBNB shares back to it.
         assertEq(slis.balanceOf(address(minter)), AMOUNT);
         assertEq(slis.balanceOf(address(sy)), 0);
@@ -843,18 +847,19 @@ contract SYAdaptersUpgradeableTest is Test {
         );
 
         // Native ETH preview reduces to sharesForAmount(amount) at the pool rate; execution routes ETH
-        // through the deposit adapter, which mints the quoted weETH amount to the SY, so preview ==
-        // actual is non-tautological and the SY ends up holding real weETH backing.
+        // through the deposit adapter, which mints the quoted weETH amount to the SY, so preview
+        // is conservative (raw *9950/10000) and actual is the raw quote.
         uint256 expectedShares = AMOUNT * 1e18 / rate;
+        uint256 expectedPreview = expectedShares * 9950 / 10000;
         vm.deal(user, AMOUNT);
         vm.startPrank(user);
         uint256 previewShares = _asSY(sy).previewDeposit(NATIVE, AMOUNT);
         uint256 sharesOut = _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
         vm.stopPrank();
 
-        assertEq(previewShares, expectedShares);
+        assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(sharesOut, previewShares);
+        assertEq(previewShares, expectedShares * 9950 / 10000);
         // The adapter-minted weETH backing sits on the SY, matching the fork-observed behaviour.
         assertEq(weETH.balanceOf(sy), sharesOut);
         assertEq(_asSY(sy).exchangeRate(), rate);
@@ -1066,14 +1071,13 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 actual = _asSY(sy).deposit{value: amount}(user, NATIVE, amount, 0);
         vm.stopPrank();
 
-        // The native path chains three floors (submit -> getPooledEthByShares -> wrap) against
-        // the preview's single floor, so the executed output never exceeds the preview and stays
-        // within one quantum below it while the rate stays >= 1x. The one-quantum bound is
-        // proven on the mock's unified-rate model (pooledEthPerShare == stEthPerTokenRate); the
-        // real-chain composite deviation keeps the adapter NatSpec guidance — callers leave
-        // slippage headroom rather than passing the preview verbatim.
-        assertLe(actual, preview, "native wstETH actual exceeds preview");
-        assertGe(actual, preview - 1, "native wstETH preview overquotes actual by more than one quantum");
+        // After the 9950/10000 conservative headroom, the native preview is `raw *9950/10000`
+        // where `raw == actual` at the same block (single floor via WstETH.receive). The executed
+        // output is therefore ~0.5% above the preview, not within 1 wei. Check the discount
+        // identity and that verbatim preview as minSharesOut never reverts.
+        assertGe(actual, preview, "native wstETH actual falls below conservative preview");
+        assertEq(preview, actual * 9950 / 10000, "native wstETH preview not discounted by 9950/10000");
+        assertLe(actual, preview * 10000 / 9950 + 1, "native wstETH actual exceeds discounted preview bound");
     }
 
     function testFuzz_WeETHNativePreviewBoundsActualWithinOneQuantum(uint128 amountSeed, uint96 rateSeed) external {
@@ -1101,11 +1105,14 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 actual = _asSY(sy).deposit{value: amount}(user, NATIVE, amount, 0);
         vm.stopPrank();
 
-        // The native preview chains two extra floors (sharesForAmount -> amountForShare ->
-        // sharesForAmount) against the deposit adapter's single floor, so the executed output
-        // never falls below the preview and stays within one quantum above it.
-        assertGe(actual, preview, "native weETH actual falls below preview");
-        assertLe(actual, preview + 1, "native weETH preview underquotes actual by more than one quantum");
+        // After the 9950/10000 conservative headroom, the native preview is `raw *9950/10000`
+        // where `raw` is the double-floor quote. Execution via DepositAdapter is the single-floor
+        // raw, so actual is ~0.5% above preview. Check the discount identity.
+        assertGe(actual, preview, "native weETH actual falls below conservative preview");
+        // preview should equal raw*9950/10000 and actual should equal raw (within 1 wei of raw)
+        // so preview == actual*9950/10000 within rounding.
+        assertEq(preview, actual * 9950 / 10000, "native weETH preview not discounted by 9950/10000");
+        assertLe(actual, preview * 10000 / 9950 + 1, "native weETH actual exceeds discounted preview bound");
     }
 
     function testFuzz_L2OracleFamilyRoundtripIsExact(uint128 amountSeed) external {

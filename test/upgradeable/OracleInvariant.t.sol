@@ -173,6 +173,8 @@ contract OracleHarness {
         unchecked {
             if (block.timestamp - updatedAt > maxStaleness) revert StaleOracleAnswer();
         }
+        // casting to 'uint256' is safe because answer > 0 checked above, int256 positive < uint256 max
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 rate = (uint256(answer) * ONE) / rawScale;
         if (rate == 0) revert ZeroNormalizedRate();
         return rate;
