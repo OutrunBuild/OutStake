@@ -14,6 +14,7 @@ import {IL2StETH} from "../../src/integrations/lido/interfaces/IL2StETH.sol";
 import {IListaStakeManager} from "../../src/integrations/lista/interfaces/IListaStakeManager.sol";
 import {IWstETH} from "../../src/integrations/lido/interfaces/IWstETH.sol";
 import {IPSM3} from "../../src/integrations/sky/interfaces/IPSM3.sol";
+import {IRateProviderLike} from "../../src/integrations/sky/interfaces/IRateProviderLike.sol";
 import {IWETH} from "../support/IWETH.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
 import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol";
@@ -560,7 +561,15 @@ contract SYAdaptersBaseForkTest is Test {
         assertEq(skyL2Sy.usdc(), BASE_USDC);
         assertEq(skyL2Sy.usds(), BASE_USDS);
         assertEq(skyL2Sy.psm3(), BASE_PSM3);
-        assertEq(skyL2Sy.exchangeRate(), IPSM3(BASE_PSM3).previewSwapExactIn(BASE_SUSDS, BASE_USDS, 1 ether));
+        // Post G-007: exchangeRate is SSR-derived (1e18 * getConversionRate() / 1e27) from the PSM3's
+        // live rate provider, not the PSM quote; the deviation guard enforces the 100 bps band at runtime.
+        address rp = IPSM3(BASE_PSM3).rateProvider();
+        uint256 ssr = 1e18 * IRateProviderLike(rp).getConversionRate() / 1e27;
+        assertEq(skyL2Sy.exchangeRate(), ssr);
+        // Peg check carried over from the pre-fix assertion: the live PSM quote stays within the band.
+        uint256 psmQuote = IPSM3(BASE_PSM3).previewSwapExactIn(BASE_SUSDS, BASE_USDS, 1 ether);
+        uint256 deviation = psmQuote > ssr ? psmQuote - ssr : ssr - psmQuote;
+        assertLe(deviation * 10000 / ssr, 100);
 
         uint256 previewShares = skyL2Sy.previewDeposit(BASE_USDS, amount);
         uint256 shares = skyL2Sy.deposit(address(this), BASE_USDS, amount, 0);

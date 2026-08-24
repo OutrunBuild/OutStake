@@ -5,6 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {IYieldProxy} from "../../../src/integrations/aster/interfaces/IYieldProxy.sol";
+import {IListaStakeManager} from "../../../src/integrations/lista/interfaces/IListaStakeManager.sol";
 
 /// @notice Thrown when the caller tries to burn more scaled balance than they hold.
 error NotEnoughAvailableUserBalance();
@@ -18,6 +19,14 @@ contract MockToken is ERC20 {
 
     function mint(address to, uint256 amount) public virtual {
         _mint(to, amount);
+    }
+
+    /// @notice Minimal IeETH seam for EtherFi preview simulation (shares == supply in mock).
+    /// @dev Returns synthetic 1M shares at genesis so getTotalPooledEther/shareRate stay consistent
+    ///      before any eETH has been minted, matching LiquidityPool's synthetic pooled.
+    function totalShares() external view returns (uint256) {
+        uint256 s = totalSupply();
+        return s == 0 ? 1_000_000 ether : s;
     }
 }
 
@@ -160,9 +169,24 @@ contract MockOracle {
 /// Tests set a non-1e18 rate so preview and execution traverse genuinely different arithmetic.
 contract MockLiquidityPool {
     uint256 public shareRate = 1e18;
+    uint256 public totalPooledEtherOverride;
+    bool public usePooledOverride;
 
     function setShareRate(uint256 rate_) external {
         shareRate = rate_;
+    }
+
+    /// @notice Override total pooled ether for precise preview simulation tests.
+    function setTotalPooledEther(uint256 pooled_) external {
+        totalPooledEtherOverride = pooled_;
+        usePooledOverride = true;
+    }
+
+    function getTotalPooledEther() external view returns (uint256) {
+        if (usePooledOverride) return totalPooledEtherOverride;
+        // Synthetic pooled consistent with a large base shares (1M ether) at current rate.
+        // Keeps rate = pooled*1e18/shares, so preview simulation matches mock rate.
+        return 1_000_000 ether * shareRate / 1e18;
     }
 
     function amountForShare(uint256 shares) external view returns (uint256) {
@@ -271,6 +295,14 @@ contract MockWstETH is MockToken {
         uint256 stEthAmount = wstEthAmount * stEthPerTokenRate / 1e18;
         MockToken(STETH).mint(msg.sender, stEthAmount);
         return stEthAmount;
+    }
+
+    receive() external payable {
+        // Mimic real WstETH.receive: stake ETH via stETH and mint wstETH directly
+        // Real path is shares = stETH.submit{value}(); _mint(msg.sender, shares);
+        // MockStETH.submit mints stETH token to caller and returns shares
+        uint256 shares = MockStETH(STETH).submit{value: msg.value}(address(0));
+        _mint(msg.sender, shares);
     }
 }
 
@@ -415,13 +447,20 @@ contract MockVault is MockToken, IERC4626 {
 /// @notice Mock PSM3 that swaps tokens at a configurable rate around one appreciating share token.
 /// @dev `shareToken` is the vault token that appreciates vs the underlying (e.g. sUSDS). Swaps into
 /// the share divide by `rate`; swaps out of the share multiply by `rate`; underlying<->underlying is 1:1.
+/// Also models IPSM3's `rateProvider` seam: the L2 sUSDS SY initializer auto-binds it as the SSR
+/// pricing source for exchangeRate (unset means zero, i.e. no provider configured).
 contract MockPSM3 {
     address public shareToken;
     uint256 public rate = 1e18;
+    address public rateProvider;
 
     function setRate(address shareToken_, uint256 rate_) external {
         shareToken = shareToken_;
         rate = rate_;
+    }
+
+    function setRateProvider(address rp) external {
+        rateProvider = rp;
     }
 
     function _convert(address tokenIn, address tokenOut, uint256 amountIn) internal view returns (uint256) {
@@ -442,6 +481,21 @@ contract MockPSM3 {
 
     function previewSwapExactIn(address tokenIn, address tokenOut, uint256 amountIn) external view returns (uint256) {
         return _convert(tokenIn, tokenOut, amountIn);
+    }
+}
+
+/// @notice Mock SSR rate provider returning a configurable 1e27-scaled (ray) conversion rate.
+/// @dev Models IRateProviderLike: the L2 sUSDS SY derives exchangeRate as 1e18 * rate / 1e27,
+/// so a 1e18 quote corresponds to the 1e27 default parity rate.
+contract MockRateProvider {
+    uint256 public rate = 1e27;
+
+    function setRate(uint256 rate_) external {
+        rate = rate_;
+    }
+
+    function getConversionRate() external view returns (uint256) {
+        return rate;
     }
 }
 
@@ -513,7 +567,20 @@ contract MockAsBnbMinter {
 
     function mintAsBnb() external payable returns (uint256) {
         if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
-        uint256 out = msg.value * 1e18 / rate;
+        // Align with live Aster: native BNB -> slisBNB via Lista then slisBNB -> asBNB.
+        // Previously single floor msg.value*1e18/rate masked the double-floor vs preview.
+        address stakeManager = IYieldProxy(yieldProxy).stakeManager();
+        // If yieldProxy has no stakeManager (unit tests with zero), fallback to single-floor.
+        uint256 out;
+        if (stakeManager != address(0) && stakeManager.code.length != 0) {
+            try IListaStakeManager(stakeManager).convertBnbToSnBnb(msg.value) returns (uint256 slis) {
+                out = slis * 1e18 / rate;
+            } catch {
+                out = msg.value * 1e18 / rate;
+            }
+        } else {
+            out = msg.value * 1e18 / rate;
+        }
         MockToken(asBnb).mint(msg.sender, out);
         return out;
     }

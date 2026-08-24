@@ -141,6 +141,84 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(MockPositionUUPSV2(address(position)).version(), 2);
     }
 
+    /// @notice G-022: frozen decimals are ERC-7201 storage, not immutables — upgrade must not
+    /// misread canonicalAssetDecimals/uAssetDecimals. Pin slot0 packing and scaling across upgrade.
+    function testDecimalsAreImmutableAcrossUpgrade() external {
+        _deployPositionStack();
+        // refresh mock state for this isolated run
+        vm.startPrank(user);
+        token.approve(address(sy), type(uint256).max);
+        sy.deposit(user, address(token), 10e18, 0);
+        sy.approve(address(position), type(uint256).max);
+        vm.stopPrank();
+
+        bytes32 baseSlot = _erc7201("outrun.storage.OutrunStakingPosition");
+        uint256 wordBefore = uint256(vm.load(address(position), baseSlot));
+        uint8 canonicalBefore = uint8(wordBefore >> 160);
+        uint8 uAssetBefore = uint8(wordBefore >> 168);
+        uint256 previewBefore = position.previewStake(1e18);
+
+        MockPositionUUPSV2 v2 = new MockPositionUUPSV2();
+        vm.prank(owner);
+        position.upgradeToAndCall(address(v2), "");
+
+        uint256 wordAfter = uint256(vm.load(address(position), baseSlot));
+        assertEq(wordAfter, wordBefore, "G-022: slot0 packing must survive upgrade");
+        assertEq(
+            MockPositionUUPSV2(address(position)).canonicalAssetDecimals(),
+            canonicalBefore,
+            "canonicalAssetDecimals frozen"
+        );
+        assertEq(MockPositionUUPSV2(address(position)).uAssetDecimals(), uAssetBefore, "uAssetDecimals frozen");
+        // previewStake is not exposed by the minimal mock; verify scaling via frozen decimals instead
+        uint256 expectedAfter;
+        if (uAssetBefore >= canonicalBefore) {
+            expectedAfter = 1e18 * 10 ** (uAssetBefore - canonicalBefore);
+        } else {
+            expectedAfter = 1e18 / 10 ** (canonicalBefore - uAssetBefore);
+        }
+        assertEq(expectedAfter, previewBefore, "scaling derived from frozen decimals must match preview before upgrade");
+
+        // deprecated bounds slots (G-020) remain zero and pinned at slot8/9
+        uint256 depMinAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
+        uint256 depMaxAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9)));
+        assertEq(depMinAfter, 0, "deprecated slot8 stays zero");
+        assertEq(depMaxAfter, 0, "deprecated slot9 stays zero");
+        (uint256 depMinMock, uint256 depMaxMock) = MockPositionUUPSV2(address(position)).deprecatedBounds();
+        assertEq(depMinMock, 0);
+        assertEq(depMaxMock, 0);
+    }
+
+    /// @notice G-022 cross-decimals: 6-dec canonical vs 18-dec uAsset (1e12 scale) must stay 1e12 after upgrade.
+    function testMixedDecimalsUpgradePreservesScaling() external {
+        _setupMixedDecimalsPosition();
+        uint256 previewBefore = mixedPosition.previewStake(1e6);
+        assertEq(previewBefore, 1e18, "1e6 SY (6 dec) -> 1e18 uAsset before upgrade");
+
+        bytes32 baseSlot = _erc7201("outrun.storage.OutrunStakingPosition");
+        uint256 wordBefore = uint256(vm.load(address(mixedPosition), baseSlot));
+
+        MockPositionUUPSV2 v2 = new MockPositionUUPSV2();
+        vm.prank(owner);
+        mixedPosition.upgradeToAndCall(address(v2), "");
+
+        uint256 wordAfter = uint256(vm.load(address(mixedPosition), baseSlot));
+        assertEq(wordAfter, wordBefore, "G-022: cross-decimals slot0 must survive upgrade");
+        assertEq(MockPositionUUPSV2(address(mixedPosition)).canonicalAssetDecimals(), 6, "canonical 6 frozen");
+        assertEq(MockPositionUUPSV2(address(mixedPosition)).uAssetDecimals(), 18, "uAsset 18 frozen");
+        // mock does not expose previewStake; verify the 1e12 scale is preserved via decimals
+        assertEq(previewBefore, 1e18, "cross-decimals scaling 1e6 -> 1e18 before upgrade");
+        uint8 canonicalAfter = MockPositionUUPSV2(address(mixedPosition)).canonicalAssetDecimals();
+        uint8 uAssetAfter = MockPositionUUPSV2(address(mixedPosition)).uAssetDecimals();
+        uint256 expectedAfter = 1e6 * 10 ** (uAssetAfter - canonicalAfter);
+        assertEq(expectedAfter, 1e18, "cross-decimals scaling preserved after upgrade");
+    }
+
+    /// @notice Helper for G-022 slot derivation (same as OutrunStakingPositionStorageLayoutTest).
+    function _erc7201(string memory id) internal pure returns (bytes32) {
+        return keccak256(abi.encode(uint256(keccak256(bytes(id))) - 1)) & ~bytes32(uint256(0xff));
+    }
+
     function testStakeRevertsWhenDeadlineWouldExceedUint128() external {
         // floor((2^128 - 1) / 86400) is the largest lockup whose day-product still fits uint128, yet at
         // any realistic timestamp it pushes the deadline past uint128.max. The guard must reject it;

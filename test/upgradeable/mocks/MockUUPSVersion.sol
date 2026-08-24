@@ -80,6 +80,8 @@ contract MockPositionUUPSV2 is UUPSUpgradeable {
         address uAsset;
         address revenuePool;
         address keeper;
+        uint256 __deprecated_minExchangeRate;
+        uint256 __deprecated_maxExchangeRate;
         mapping(uint256 positionId => IOutrunStakeManager.Position) positions;
     }
 
@@ -101,6 +103,21 @@ contract MockPositionUUPSV2 is UUPSUpgradeable {
     /// @notice Returns the Standardized Yield token address.
     function SY() public view returns (address) {
         return _getStorage().SY;
+    }
+
+    /// @notice Returns frozen canonical asset decimals (G-022 immutability check).
+    function canonicalAssetDecimals() public view returns (uint8) {
+        return _getStorage().canonicalAssetDecimals;
+    }
+
+    /// @notice Returns frozen uAsset decimals (G-022 immutability check).
+    function uAssetDecimals() public view returns (uint8) {
+        return _getStorage().uAssetDecimals;
+    }
+
+    /// @notice Returns deprecated bounds slots (must stay zero, layout reserved).
+    function deprecatedBounds() public view returns (uint256 min, uint256 max) {
+        return (_getStorage().__deprecated_minExchangeRate, _getStorage().__deprecated_maxExchangeRate);
     }
 
     /// @notice Returns version 2 to confirm the upgrade took effect.

@@ -872,50 +872,12 @@ contract OutrunStakingPositionFuzzTest is Test {
     }
 
     // ============================================
-    // 16. PA-3 bandwidth guard (真正值得做, 需配合 setExchangeRateBounds)
+    // 16. PA-3 bandwidth guard — REMOVED per G-020 deletion path
     // ============================================
-
-    function testFuzz_BandwidthGuardRejectsOutOfBoundsRate(uint256 amountInSY, uint256 outOfBoundsRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        // Configure a tight band around 1e18: [0.9e18, 1.1e18]
-        vm.prank(owner);
-        position.setExchangeRateBounds(9e17, 11e17);
-
-        outOfBoundsRate = bound(outOfBoundsRate, 11e17 + 1, RATE_MAX);
-        sy.setExchangeRate(outOfBoundsRate);
-
-        vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, outOfBoundsRate, 9e17, 11e17)
-        );
-        position.stake(amountInSY, 30, owner, owner);
-
-        // Also test low side
-        sy.setExchangeRate(8e17);
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, 8e17, 9e17, 11e17));
-        position.stake(amountInSY, 30, owner, owner);
-
-        // Inside band should succeed
-        sy.setExchangeRate(1e18);
-        vm.prank(owner);
-        (uint256 pid,) = position.stake(amountInSY, 30, owner, owner);
-        assertEq(pid, 1);
-
-        // Disable guard (0/0) → previously out-of-bounds rate now passes zero-guard only
-        vm.prank(owner);
-        position.setExchangeRateBounds(0, 0);
-        sy.setExchangeRate(outOfBoundsRate);
-        vm.prank(owner);
-        (uint256 pid2,) = position.stake(amountInSY, 30, owner, owner);
-        assertEq(pid2, 2);
-    }
-
-    function test_BandwidthGuardInvalidBoundsReverts() public {
-        vm.prank(owner);
-        vm.expectRevert(IOutrunStakeManager.InvalidBounds.selector);
-        position.setExchangeRateBounds(2e18, 1e18);
-    }
+    // `setExchangeRateBounds` / `ExchangeRateOutOfBounds` band removed: chain-side guard is now
+    // only `ZeroExchangeRate` with off-chain `StaleOracleAnswer` / `ZeroExchangeRate` monitoring.
+    // Deprecated slots retained at 8/9 for layout compatibility. See `OutrunStakingPositionUpgradeable.sol:46`.
+    // (Previous band tests deleted; see git history for original `testFuzz_BandwidthGuard*`.)
 }
 
 /**
@@ -1290,96 +1252,10 @@ contract OutrunStakingPositionPropertyTest is Test {
 
     // ============================================
     // 8. Exchange-rate bandwidth guard [OR-2b]
-    // ============================================
-
-    function testFuzz_ExchangeRateBoundsInclusiveAndAllRateReadersReject(uint256 inBandSeed, uint256 amountSeed)
-        public
-    {
-        uint256 min = bound(inBandSeed, 5e17, 2e18);
-        uint256 max = min + bound(amountSeed, 1e17, 8e18);
-        vm.prank(owner);
-        position.setExchangeRateBounds(min, max);
-
-        uint256 amount = 1e18;
-
-        // Inclusive boundaries: both endpoints are accepted.
-        sy.setExchangeRate(min);
-        vm.prank(owner);
-        (uint256 positionIdMin,) = position.stake(amount, 30, owner, owner);
-
-        sy.setExchangeRate(max);
-        vm.prank(owner);
-        position.stake(amount, 30, owner, owner);
-
-        // Wrap debt must exist before the out-of-band phase (wrapStake itself is rejected below).
-        vm.prank(owner);
-        position.wrapStake(amount, owner);
-
-        // Out of band on the low side (min >= 5e17 keeps the rate non-zero): all eleven rate-reading
-        // paths reject — six consuming paths (stake, wrapStake, drawUAsset, keepRedeem,
-        // keepWrapRedeem, harvestWrapYield) and five preview paths (previewStake, previewWrapStake,
-        // previewDrawUAsset, previewWrapRedeem, previewKeepRedeem). redeem and previewRedeem never
-        // read the exchange rate, so they are intentionally not tested here. Bandwidth guard source:
-        // PA-3. The revert data is matched in full because this foundry version does not prefix-match
-        // parameterized errors by selector alone.
-        sy.setExchangeRate(min - 1);
-        bytes memory outOfBoundsRevert =
-            abi.encodeWithSelector(IOutrunStakeManager.ExchangeRateOutOfBounds.selector, min - 1, min, max);
-
-        vm.prank(owner);
-        vm.expectRevert(outOfBoundsRevert);
-        position.stake(amount, 30, owner, owner);
-
-        vm.prank(owner);
-        vm.expectRevert(outOfBoundsRevert);
-        position.wrapStake(amount, owner);
-
-        vm.expectRevert(outOfBoundsRevert);
-        position.previewDrawUAsset(positionIdMin);
-
-        vm.prank(owner);
-        vm.expectRevert(outOfBoundsRevert);
-        position.drawUAsset(positionIdMin, owner);
-
-        // keepRedeem on a matured position: the debt-bound check runs before the rate read.
-        (,,, uint128 deadlineMin) = position.positions(positionIdMin);
-        vm.warp(deadlineMin + 1);
-        (,, uint256 debtMin,) = position.positions(positionIdMin);
-        uAsset.mint(keeper, debtMin);
-        vm.prank(keeper);
-        vm.expectRevert(outOfBoundsRevert);
-        position.keepRedeem(positionIdMin, debtMin, keeper);
-
-        // keepWrapRedeem with an in-debt amount and a funded keeper.
-        uint256 wrapDebt = position.wrapUAssetDebt();
-        uAsset.mint(keeper, wrapDebt);
-        vm.prank(keeper);
-        vm.expectRevert(outOfBoundsRevert);
-        position.keepWrapRedeem(wrapDebt, keeper);
-
-        // harvestWrapYield (owner-only) reads the rate too.
-        vm.prank(owner);
-        vm.expectRevert(outOfBoundsRevert);
-        position.harvestWrapYield(address(sy), 0);
-
-        // The remaining four preview paths go through the same single rate-reading home
-        // (_currentExchangeRate) as the consuming paths above. Their preceding checks must pass so
-        // the revert can only come from the bandwidth guard: previewStake needs amount >= minStake,
-        // previewWrapStake needs a non-zero amount, previewWrapRedeem needs a non-zero amount within
-        // the wrap debt (ExceedsWrapDebt is checked before the rate read), and previewKeepRedeem
-        // needs the matured position and a non-zero amount within its UAssetMinted
-        // (PositionAccessDenied/LockTimeNotExpired/ExceedsPositionDebt are checked before the rate
-        // read). None of them are permissioned, so no prank is needed.
-        vm.expectRevert(outOfBoundsRevert);
-        position.previewStake(amount);
-
-        vm.expectRevert(outOfBoundsRevert);
-        position.previewWrapStake(amount);
-
-        vm.expectRevert(outOfBoundsRevert);
-        position.previewWrapRedeem(wrapDebt);
-
-        vm.expectRevert(outOfBoundsRevert);
-        position.previewKeepRedeem(positionIdMin, debtMin);
+    // 8. Exchange-rate bandwidth guard [OR-2b] — REMOVED per G-020
+    // Band deleted; chain-side guard is only ZeroExchangeRate. Previous inclusive-bounds test removed.
+    // See OutrunStakingPositionUpgradeable.sol:46 and G-020.
+    function testFuzz_ExchangeRateBoundsInclusiveAndAllRateReadersReject(uint256, uint256) public pure {
+        // no-op: band removed
     }
 }
