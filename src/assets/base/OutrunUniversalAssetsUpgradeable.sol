@@ -13,6 +13,17 @@ import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
 ///      burning uAsset, which reduces their outstanding debt. amountInMinted is a minter debt ledger, not a
 ///      same-chain totalSupply invariant: OFT cross-chain sends burn on the source chain and mint on the
 ///      destination chain without changing this minter debt ledger.
+/// @dev No `sweep` rescue exists by design — the contract does not inherit `TokenHelper` and the full
+///      inheritance chain (`OutrunOFTUpgradeable`, `OutrunERC20PausableUpgradeable`, `OFTCoreUpgradeable`,
+///      `OutrunRateLimiterUpgradeable`) exposes no rescue entrypoint. Stranded ERC20/NATIVE balances have
+///      no owner rescue path. Any future rescue `sweep` MUST be `onlyOwner nonReentrant` behind a
+///      timelock/multisig, MUST revert on `token == address(this)` (uAsset itself), `token == SY`,
+///      and `token == NATIVE (address(0))` before `TokenHelper::_transferOut`, and MUST NOT move
+///      `balanceOf` without updating `amountInMinted` — otherwise it desyncs
+///      `OutrunUniversalAssetsUpgradeable.sol::checkMintableAmount`/`OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable`
+///      from `totalSupply` and breaks the PA-6 invariant
+///      `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`,
+///      which is not self-healing (unlike `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` over-cap). See G-021.
 contract OutrunUniversalAssetsUpgradeable 
     // solhint-disable-next-line gas-small-strings
     layout at erc7201("outrun.storage.OutrunUniversalAssets")

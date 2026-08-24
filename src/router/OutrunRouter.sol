@@ -1,18 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-// OutrunTODO (pre-mainnet): when mainnet goes live, remove the temporary owner/admin surface.
-// The cleanup list is the full owner/setter surface, not just this import:
-// 1. this Ownable import
-// 2. Ownable inheritance on the contract
-// 3. constructor `_owner` parameter and `Ownable(_owner)` initializer
-// 4. `onlyOwner` modifier on setMemeverseLauncher
-// 5. `setMemeverseLauncher` implementation
-// 6. `IOutrunRouter::setMemeverseLauncher` interface declaration
-// 7. `setTrustedSY` and `trustedSY` registry storage/getter
-// 8. `setTrustedSP` and `trustedSYForSP` registry storage/getter
-// 9. `TrustedSYUpdated` and `TrustedSPUpdated` configuration events
-// 10. `IOutrunRouter` registry declarations
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {IOutrunRouter} from "./interfaces/IOutrunRouter.sol";
@@ -34,7 +22,7 @@ import {IOutrunStakeManager} from "../position/interfaces/IOutrunStakeManager.so
  * `verseId` is opaque to this router: the launcher interprets it, while the router forwards it unchanged and does not validate it.
  */
 contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
-    // These targets are configured during deployment; the owner setters are temporary pre-mainnet wiring.
+    // These targets are configured after deployment; owner setters remain live for dynamic addition under Ownable (multisig off-chain).
     mapping(address => bool) public trustedSY;
     mapping(address => address) public trustedSYForSP;
 
@@ -497,8 +485,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
     /**
      * @notice Updates the memeverse launcher address.
-     * @dev Owner-only maintenance hook for the pre-mainnet launcher wiring.
-     * OutrunTODO: delete this function when mainnet goes live as part of the owner/setter cleanup list documented above.
+     * @dev Owner-only hook for launcher wiring (governed off-chain via Ownable/multisig).
+     *      Keep live for dynamic launcher updates; make immutable only if the launcher is final.
      * @param _memeverseLauncher New launcher contract address.
      */
     function setMemeverseLauncher(address _memeverseLauncher) external onlyOwner {

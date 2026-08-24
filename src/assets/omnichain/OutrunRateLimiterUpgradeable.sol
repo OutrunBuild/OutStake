@@ -122,7 +122,7 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     ///      forwarded to block.timestamp, so refill is stepwise. With tight limit + large window
     ///      (e.g. limit=100, window=86400, decay=0 for 863s) capacity appears frozen. Deployer should
     ///      keep limit >= window (LayerZero devtools advice) to keep per-second refill >= 1; see
-    ///      docs/spec/common-foundations.md OFT 与 rate limiter.
+    ///      docs/spec/common-foundations.md OFT and rate limiter.
     /// @param amountInFlight Current in-flight amount, in LD (local decimals)
     /// @param lastUpdated Timestamp of the last rate limit update
     /// @param limit Maximum amount allowed in the window, in LD (local decimals)
@@ -198,7 +198,7 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     }
 
     /// @notice Deletes the stored rate limit for a destination, removing all capacity constraints.
-    /// @dev `delete` 清空整条记录（amountInFlight/lastUpdated/limit/window 一并归零）。与 `_setRateLimits` 的 checkpoint 保留 in-flight 语义不同，删除后重新 setOutboundRateLimit 从零会计、满额开始，不可当作“暂停限流但保留会计”。
+    /// @dev `delete` clears the entire record (amountInFlight/lastUpdated/limit/window all zeroed). Unlike `_setRateLimits` which checkpoints and preserves in-flight semantics, deleting then calling setOutboundRateLimit restarts accounting from zero with full capacity; do not use as "pause rate limiting while retaining accounting".
     /// @param dstEid Destination endpoint ID
     function _deleteRateLimit(uint32 dstEid) internal {
         delete _getOutrunRateLimiterStorage().rateLimits[dstEid];

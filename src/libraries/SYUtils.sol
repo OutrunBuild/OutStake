@@ -9,6 +9,8 @@ pragma solidity ^0.8.35;
 ///      when enough value must remain to cover debt or required backing.
 library SYUtils {
     // Exchange rates are always scaled by 1e18 for precision, matching DeFi convention.
+    // Wad-only domain (1e18): Position, oracle adapter, and SY exchangeRate use this scale exclusively;
+    // never substitute WadRayMath.RAY (1e27) — ray is exclusive to AaveAdapterLib index conversions.
     uint256 internal constant ONE = 1e18;
 
     /// @notice Converts SY amount to canonical asset amount, rounded down.
@@ -37,8 +39,10 @@ library SYUtils {
     /// @param assetAmount Amount of asset to convert.
     /// @return The equivalent SY amount, rounded up.
     /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale from uAsset
-    /// decimals.
-    // Rounds up — use when enough SY must remain to cover an asset-denominated debt.
+    /// decimals. Position-only coverage helper — adapters intentionally use AaveAdapterLib half-up/floor for
+    /// previews (quote), not this ceiling; see docs/spec/common-foundations.md § ray-domain rounding comparison.
+    // Rounds up — use when enough SY must remain to cover an asset-denominated debt. Position-only (coverage);
+    // adapters use AaveAdapterLib half-up/floor for previews, not this ceiling.
     // The ceil term (+ exchangeRate - 1) moves the checked-add overflow threshold to assetAmount * ONE >
     // type(uint256).max - exchangeRate,
     // slightly narrower than the floor variant's 2^256 - 1. Real debt and rates stay far below it.

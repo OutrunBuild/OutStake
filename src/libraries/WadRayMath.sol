@@ -10,11 +10,17 @@ pragma solidity ^0.8.35;
  */
 library WadRayMath {
     // RAY is a decimal literal because inline assembly cannot reference constants whose values are defined with operations (expressions).
+    // Ray-only domain (1e27): Aave liquidity-index conversions via AaveAdapterLib only;
+    // never use RAY for SY/Position exchangeRate — those are wad (1e18) via SYUtils.ONE.
     uint256 internal constant RAY = 1e27;
 
     /**
      * @notice Divides two ray, rounding half up to the nearest ray
      * @dev assembly optimized for improved gas savings, see https://twitter.com/transmissions11/status/1451131036377571328
+     * @dev Revert data is intentionally empty `revert(0,0)` mirroring Aave's gas-optimized assembly; this is a
+     * documented exception to the repository's custom-error observability convention (see
+     * `docs/spec/common-foundations.md` ray-domain section). Callers needing a decoded selector may add a
+     * caller-side guard such as `if (b == 0) revert ZeroIndex()` before calling.
      * @param a Ray
      * @param b Ray
      * @return c = a raydiv b
@@ -23,6 +29,8 @@ library WadRayMath {
         // to avoid overflow, a <= (type(uint256).max - halfB) / RAY
         // solhint-disable-next-line no-inline-assembly
         assembly {
+            // Empty revert `revert(0,0)` intentionally mirrors Aave's gas-optimized assembly; documented
+            // exception to custom-error convention (see NatSpec and docs/spec/common-foundations.md).
             if or(iszero(b), iszero(iszero(gt(a, div(sub(not(0), div(b, 2)), RAY))))) {
                 revert(0, 0)
             }
