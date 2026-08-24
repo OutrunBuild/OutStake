@@ -830,7 +830,7 @@ contract OutrunStakingPositionFuzzTest is Test {
     }
 
     // ============================================
-    // 15. PA-2 wrap pool undercollateralized → recover state machine (真正值得做)
+    // 15. PA-2 wrap pool undercollateralized -> recover state machine (genuinely worth covering)
     // ============================================
 
     function testFuzz_WrapPoolUndercollateralizedThenRecovers(
@@ -876,7 +876,6 @@ contract OutrunStakingPositionFuzzTest is Test {
     // ============================================
     // `setExchangeRateBounds` / `ExchangeRateOutOfBounds` band removed: chain-side guard is now
     // only `ZeroExchangeRate` with off-chain `StaleOracleAnswer` / `ZeroExchangeRate` monitoring.
-    // Deprecated slots retained at 8/9 for layout compatibility. See `OutrunStakingPositionUpgradeable.sol:46`.
     // (Previous band tests deleted; see git history for original `testFuzz_BandwidthGuard*`.)
 }
 
@@ -1248,14 +1247,5 @@ contract OutrunStakingPositionPropertyTest is Test {
         vm.prank(owner);
         (, uint256 outActual) = position.redeem(positionId, syRedeemed, owner, address(underlying), 0);
         assertEq(outActual, outPreview, "actual redeem output must match the preview");
-    }
-
-    // ============================================
-    // 8. Exchange-rate bandwidth guard [OR-2b]
-    // 8. Exchange-rate bandwidth guard [OR-2b] — REMOVED per G-020
-    // Band deleted; chain-side guard is only ZeroExchangeRate. Previous inclusive-bounds test removed.
-    // See OutrunStakingPositionUpgradeable.sol:46 and G-020.
-    function testFuzz_ExchangeRateBoundsInclusiveAndAllRateReadersReject(uint256, uint256) public pure {
-        // no-op: band removed
     }
 }

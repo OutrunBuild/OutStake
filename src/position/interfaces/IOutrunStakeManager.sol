@@ -53,6 +53,8 @@ interface IOutrunStakeManager {
     error NothingToDraw();
     error PartialRedeemMustLeaveDebt();
     error InsufficientTokenOut(uint256 actual, uint256 minExpected);
+    /// @dev Reverts when cached decimals diverge from live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` during upgrade; indicates SY/uAsset was upgraded to a different decimals domain which would silently mis-scale all sy<->uAsset conversions by 10**delta (I-008).
+    error DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset);
 
     /**
      * @notice Returns the SY token handled by the staking manager.
@@ -124,6 +126,21 @@ interface IOutrunStakeManager {
         external
         view
         returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 deadline);
+
+    /**
+     * @dev Preview / executor divergence matrix — intentional floor/ceil (G-023):
+     * Rounding is correct by design: `_syToAsset` (via `SYUtils.syToAsset`) floors to avoid over-minting;
+     * `_assetToSyUp` (via `SYUtils.assetToSyUp` + `_scaleUAssetToCanonicalAsset` ceil `(a-1)/f+1`) ceils to
+     * guarantee coverage (`ceil >= floor`; harvest `syWrap - ceil(debt)` may under-harvest dust, never over-harvest).
+     * Dust handling is intentionally divergent between quote and execution so callers can pre-check dust off-chain:
+     * - `previewStake` returns 0 when floor zeroes dust; `stake` reverts `DustRoundedToZero` for the same input (mirrors
+     *   `previewDrawUAsset` returning 0 vs `drawUAsset` reverting `NothingToDraw`).
+     * - `previewWrapStake` reverts `DustRoundedToZero` on dust (mirrors `wrapStake`); `previewKeepRedeem`/`previewWrapRedeem`
+     *   revert `DustRoundedToZero` when `syRedeemed==0`/`keeperPrincipalSY==0`/`amountInSY==0` (keeper tails must be
+     *   owner-cleared via `redeem`).
+     * - An exactly-zero `SY.exchangeRate()` always reverts `ZeroExchangeRate` at the shared `_currentExchangeRate`
+     *   read home, before any dust check; callers must not treat a 0 preview as stakeable (`require UAssetMintable > 0`).
+     */
 
     /**
      * @notice Previews how much uAsset a direct stake would mint.
@@ -198,6 +215,8 @@ interface IOutrunStakeManager {
      * permission, burning uAsset, or changing state. Reverts if the position is missing, not matured, the amount
      * is zero or exceeds position debt, the position is undercollateralized, the SY exchange rate reads zero, or
      * the proportional SY rounds to dust or the keeper's debt-equivalent SY rounds to dust.
+     * Dust amounts that would make syRedeemed==0 or keeperPrincipalSY==0 revert DustRoundedToZero —
+     * such tails cannot be keeper-cleared and must be owner-cleared via redeem(positionId, remainingSY).
      * @param positionId Identifier of the position being redeemed.
      * @param amountInUAsset Amount of uAsset the keeper would burn.
      * @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
@@ -283,7 +302,10 @@ interface IOutrunStakeManager {
      * @dev Keeper-only path. Burns keeper-provided uAsset, sends floor-converted debt-equivalent SY to
      * `receiver`, and sends any remaining released SY to the position owner. Reverts with
      * `InsufficientSyCollateral` if the position is undercollateralized or the keeper's debt-equivalent
-     * share would exceed the proportional SY released (no capping).
+     * share would exceed the proportional SY released (no capping). Reverts with `DustRoundedToZero`
+     * if amountInUAsset is so small that syRedeemed or keeperPrincipalSY rounds to zero — keeper tails
+     * below the floor threshold cannot be cleared via keepRedeem and must be owner-cleared via
+     * redeem(positionId, remainingSY).
      * @param positionId Identifier of the position being redeemed.
      * @param amountInUAsset Amount of uAsset the keeper burns.
      * @param receiver Address receiving the keeper principal in SY.

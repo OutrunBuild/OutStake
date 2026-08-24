@@ -20,9 +20,11 @@ contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
         assertEq(uint8(storageWord >> 168), 18);
     }
 
-    /// @notice Pins the full ERC-7201 layout for G-022: frozen decimals must survive upgrades,
+    /// @notice Pins the full ERC-7201 layout: frozen decimals must survive upgrades,
     /// so field order, width, and count are frozen. Any reorder/insertion would misread
     /// canonicalAssetDecimals/uAssetDecimals and silently mis-scale by 1e12.
+    /// Pre-deployment cleanup: deprecated G-020 band slots (min/maxExchangeRate) removed,
+    /// mapping `positions` now sits at slot8.
     function test_StorageLayoutIsPinnedWithBoundsAndMapping() external {
         _deployPositionStack();
 
@@ -63,55 +65,27 @@ contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
             keeper,
             "keeper slot7"
         );
-        // slot8: deprecated minExchangeRate must stay 0
-        assertEq(
-            uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8))), 0, "deprecated minExchangeRate slot8"
-        );
-        // slot9: deprecated maxExchangeRate must stay 0
-        assertEq(
-            uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9))), 0, "deprecated maxExchangeRate slot9"
-        );
-        // slot10: mapping positions base slot must be empty before any position
-        assertEq(
-            uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 10))),
-            0,
-            "positions mapping slot10 must stay empty"
-        );
-        // slot11: must stay empty — any appended field would spill here
-        assertEq(uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 11))), 0, "slot11 must stay empty");
-    }
-
-    /// @notice Deprecated bounds slots (G-020) are reserved at slot8/9 and must stay zero and not be reused.
-    function test_DeprecatedBoundsSlotsAreReservedAndZero() external {
-        _deployPositionStack();
-        bytes32 baseSlot = _erc7201("outrun.storage.OutrunStakingPosition");
-        // Deprecated slots must remain zero after init and must not be repurposed
+        // slot8: mapping positions base slot must be empty before any position
         assertEq(
             uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8))),
             0,
-            "deprecated minExchangeRate must stay 0 at slot8"
+            "positions mapping slot8 must stay empty"
         );
-        assertEq(
-            uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9))),
-            0,
-            "deprecated maxExchangeRate must stay 0 at slot9"
-        );
-        // read deprecated slots via vm.load before upgrade
-        uint256 depMinBefore = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
-        uint256 depMaxBefore = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9)));
+        // slot9: must stay empty — any appended field would spill here
+        assertEq(uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9))), 0, "slot9 must stay empty");
+    }
+
+    /// @notice Positions mapping slot is pinned at slot8 after G-020 cleanup; survives upgrade unchanged.
+    function test_PositionsMappingSlotPinnedAfterCleanup() external {
+        _deployPositionStack();
+        bytes32 baseSlot = _erc7201("outrun.storage.OutrunStakingPosition");
+        uint256 mappingSlotBefore = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
+        assertEq(mappingSlotBefore, 0, "positions mapping slot8 must be empty before upgrade");
         MockPositionUUPSV2 v2 = new MockPositionUUPSV2();
         vm.prank(owner);
         position.upgradeToAndCall(address(v2), "");
-        uint256 depMinAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
-        uint256 depMaxAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9)));
-        assertEq(depMinAfter, depMinBefore, "deprecated slot8 must survive upgrade unchanged");
-        assertEq(depMaxAfter, depMaxBefore, "deprecated slot9 must survive upgrade unchanged");
-        assertEq(depMinAfter, 0, "deprecated slot8 still zero after upgrade");
-        assertEq(depMaxAfter, 0, "deprecated slot9 still zero after upgrade");
-        // Use mock deprecated getter as well
-        (uint256 depMinMock, uint256 depMaxMock) = MockPositionUUPSV2(address(position)).deprecatedBounds();
-        assertEq(depMinMock, 0);
-        assertEq(depMaxMock, 0);
+        uint256 mappingSlotAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
+        assertEq(mappingSlotAfter, mappingSlotBefore, "positions mapping slot8 must survive upgrade unchanged");
         // Mapping integrity: syTotalStaking remains 0 when no stakes done
         assertEq(MockPositionUUPSV2(address(position)).syTotalStaking(), 0);
     }

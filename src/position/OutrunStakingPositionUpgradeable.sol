@@ -42,11 +42,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         address uAsset;
         address revenuePool;
         address keeper;
-        // Deprecated exchange-rate band slots retained for ERC-7201 layout compatibility.
-        // Previously `minExchangeRate` / `maxExchangeRate` for `setExchangeRateBounds`; band removed
-        // per G-020 deletion path — chain-side guard is now only `ZeroExchangeRate` with off-chain monitoring.
-        uint256 __deprecated_minExchangeRate;
-        uint256 __deprecated_maxExchangeRate;
         mapping(uint256 positionId => Position) positions;
     }
 
@@ -257,6 +252,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @dev Quote-only: does not check keeper permission, burn uAsset, or change state. Mirrors keepRedeem's
     /// keeper/owner SY split and every failure path (position existence, lockup, amount bounds, zero exchange
     /// rate at the shared rate-reading point, full-position solvency guard, dust, and per-amount defense).
+    /// Dust amounts that would make syRedeemed==0 or keeperPrincipalSY==0 revert DustRoundedToZero —
+    /// such tails cannot be keeper-cleared and must be owner-cleared via redeem(positionId, remainingSY).
     /// @param positionId The position identifier.
     /// @param amountInUAsset The uAsset amount the keeper would burn.
     /// @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
@@ -525,9 +522,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Debt-equivalent SY goes to receiver; any excess SY above debt goes back to position owner.
     /// @dev Reverts with InsufficientSyCollateral if the position's staked SY value is below its debt face
     /// value (full-position guard) or if the keeper's debt-equivalent share exceeds the proportional SY share.
-    /// The keeper must first approve this position to spend its uAsset: repay burns the keeper's balance with
-    /// msg.sender = address(this) (the minter whose mint debt decreases), so allowance[keeper][this] must cover
-    /// amountInUAsset.
+    /// Reverts with DustRoundedToZero if amountInUAsset is so small that the proportional SY share
+    /// (syRedeemed) or the keeper principal (keeperPrincipalSY) rounds to zero — keeper tails below
+    /// the floor threshold cannot be cleared via keepRedeem and must be owner-cleared via
+    /// redeem(positionId, remainingSY). The keeper must first approve this position to spend its uAsset:
+    /// repay burns the keeper's balance with msg.sender = address(this) (the minter whose mint debt
+    /// decreases), so allowance[keeper][this] must cover amountInUAsset.
     /// @param positionId Identifier of the position being redeemed.
     /// @param amountInUAsset Amount of uAsset the keeper burns.
     /// @param receiver Address receiving the keeper principal in SY.
@@ -671,6 +671,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @dev Converts SY principal to uAsset value. Rounds down to avoid over-minting.
+    /// Domain: wad-only (1e18) via SYUtils.ONE; never WadRayMath.RAY (1e27) — ray is for AaveAdapterLib only.
     /// @param amountInSY The SY amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _syToAsset(uint256 amountInSY, uint256 exchangeRate_) internal view returns (uint256) {
@@ -679,6 +680,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @dev Converts uAsset debt to SY for repayment. Rounds down to avoid releasing too much SY.
+    /// Domain: wad-only (1e18) via SYUtils.ONE; never WadRayMath.RAY (1e27) — ray is for AaveAdapterLib only.
     /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _assetToSy(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
@@ -687,6 +689,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @dev Converts uAsset debt to SY for coverage checks. Rounds up to leave enough SY covering all debt.
+    /// Domain: wad-only (1e18) via SYUtils.ONE; never WadRayMath.RAY (1e27) — ray is for AaveAdapterLib only.
+    /// Invariant: ceilDebt >= floorDebt; harvest `syWrap - ceil(debt)` is safe — may under-harvest dust, never over-harvest.
+    /// When `uAssetDecimals > canonicalAssetDecimals` and `a % f != 0` (`f = 10**(uDec-cDec)`), the up/up composite
+    /// `roundUpDiv(roundUpDiv(a,f)*1e18, exchangeRate)` exceeds the ideal `roundUpDiv(a*1e18, f*exchangeRate)` by
+    /// at most `1e18/exchangeRate + 1` SY wei (1 wei if exchangeRate >= 1e18) per `docs/spec/common-foundations.md`
+    /// § mixed-decimals up/up two-stage composite rounding bias; bias is intentionally conservative (harder to pass solvency, never looser).
     /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _assetToSyUp(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
@@ -704,6 +712,10 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @dev Rescales from uAsset decimals back to canonical asset decimals.
+    /// When `canonicalAssetDecimals < uAssetDecimals` (`f = 10**(uDec-cDec)`), ceil is `(amount-1)/f+1`.
+    /// Drift vs floor: at most 1 canonical unit (< f); per-unit `amount=1` drifts `f-1` u units where `f=1e12` for
+    /// cDec=6/uDec=18 implies 1e12 canonical units = 1e-6 tokens max. Info-only, intentionally conservative for
+    /// coverage checks (`_assetToSyUp`); floor is used for mint/release (`_assetToSy`). See `SYUtils.sol::assetToSyUp`.
     function _scaleUAssetToCanonicalAsset(uint256 amount, Math.Rounding rounding) internal view returns (uint256) {
         (uint8 canonicalAssetDecimals, uint8 uAssetDecimals) = _cachedAssetDecimals();
         if (canonicalAssetDecimals >= uAssetDecimals) {
@@ -711,7 +723,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         }
 
         uint256 factor = 10 ** (uAssetDecimals - canonicalAssetDecimals);
-        // Ceil rounding: (amount - 1) / factor + 1 ensures rounding up even for amounts not evenly divisible by the factor.
+        // Ceil rounding: (amount-1)/factor+1. Drift bound: ceil - floor <= 1 canonical unit (< factor);
+        // e.g. cDec=6/uDec=18 f=1e12 => max 1e-6 tokens; amount=1 => ceil=1, drift f-1. Conservative for solvency guards.
         if (rounding == Math.Rounding.Ceil && amount != 0) {
             return (amount - 1) / factor + 1;
         }
@@ -726,6 +739,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @dev Shared keeper-redeem accounting: full-position solvency guard, proportional SY release,
     /// keeper principal conversion, keeper dust guard, per-amount defense, and owner excess. Quote-only;
     /// makes no state change and no external call other than reading `SY.exchangeRate()`.
+    /// Dust inputs where syRedeemed==0 or keeperPrincipalSY==0 revert DustRoundedToZero — keeper
+    /// tails below the floor threshold cannot be cleared via keepRedeem and must be owner-cleared
+    /// via redeem(positionId, remainingSY) (ceil debt, full-redeem exact).
     /// @param _SY The Standardized Yield token address.
     /// @param syStaked The position's staked SY amount.
     /// @param positionUAssetMinted The position's outstanding uAsset debt.
@@ -878,5 +894,19 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         }
     }
 
-    function _authorizeUpgrade(address) internal override onlyOwner {}
+    /// @notice UUPS upgrade guard that enforces decimals immutability (I-008).
+    /// @dev Reverts with `DecimalsMismatch` if live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` diverges from the values cached at `initialize`; such divergence would silently mis-scale every sy<->uAsset conversion by 10**delta and brick debt accounting. The divergence must be resolved by redeploying SY + position rather than upgrading in place (see docs/spec/yield/yield-adapters.md and docs/deployment.md).
+    function _authorizeUpgrade(address) internal override onlyOwner {
+        OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
+        // SY/uAsset are immutable after initialize (zero only before first initialize, which never reaches _authorizeUpgrade).
+        if ($.SY != address(0) && $.uAsset != address(0)) {
+            (,, uint8 liveCanonical) = IStandardizedYield($.SY).assetInfo();
+            uint8 liveUAsset = IERC20Metadata($.uAsset).decimals();
+            uint8 cachedCanonical = $.canonicalAssetDecimals;
+            uint8 cachedUAsset = $.uAssetDecimals;
+            if (liveCanonical != cachedCanonical || liveUAsset != cachedUAsset) {
+                revert DecimalsMismatch(cachedCanonical, liveCanonical, cachedUAsset, liveUAsset);
+            }
+        }
+    }
 }

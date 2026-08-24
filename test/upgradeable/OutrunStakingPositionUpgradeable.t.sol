@@ -154,7 +154,11 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
 
         bytes32 baseSlot = _erc7201("outrun.storage.OutrunStakingPosition");
         uint256 wordBefore = uint256(vm.load(address(position), baseSlot));
+        // casting to 'uint8' is safe because truncating to low byte is intentional slot0 packing extraction
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint8 canonicalBefore = uint8(wordBefore >> 160);
+        // casting to 'uint8' is safe because truncating to low byte is intentional slot0 packing extraction
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint8 uAssetBefore = uint8(wordBefore >> 168);
         uint256 previewBefore = position.previewStake(1e18);
 
@@ -179,14 +183,13 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         }
         assertEq(expectedAfter, previewBefore, "scaling derived from frozen decimals must match preview before upgrade");
 
-        // deprecated bounds slots (G-020) remain zero and pinned at slot8/9
-        uint256 depMinAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
-        uint256 depMaxAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9)));
-        assertEq(depMinAfter, 0, "deprecated slot8 stays zero");
-        assertEq(depMaxAfter, 0, "deprecated slot9 stays zero");
-        (uint256 depMinMock, uint256 depMaxMock) = MockPositionUUPSV2(address(position)).deprecatedBounds();
-        assertEq(depMinMock, 0);
-        assertEq(depMaxMock, 0);
+        // G-020 deprecated slots removed pre-deployment; positions mapping now at slot8
+        assertEq(
+            uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8))),
+            0,
+            "positions mapping slot8 stays empty"
+        );
+        assertEq(uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9))), 0, "slot9 stays empty");
     }
 
     /// @notice G-022 cross-decimals: 6-dec canonical vs 18-dec uAsset (1e12 scale) must stay 1e12 after upgrade.
