@@ -12,7 +12,7 @@
 - router 业务入口仍通过用户传入的独立 `SY` 地址、`SP` 地址或从 `SP.SY()` 派生的 canonical `SY` 调用下游，但目标必须先由 owner 注册。
 - 下游 product address 可以是 `ERC1967Proxy` 地址：uAsset proxy、SY proxy、staking position proxy。
 - router 本身不持有 core accounting state；切换 router 需要用户/集成侧重新授权或改用新入口，但不迁移 position、uAsset debt 或 SY share state。
-- router 不获得 upgrade admin、timelock、pause 或 oracle 管理能力；owner 只维护 router 的 SY 白名单和 SP -> SY 配对登记。
+- router 不获得 upgrade admin、timelock、pause 或 oracle 管理能力；owner 只维护 router 的 SY 白名单、SP -> SY 配对登记、launcher 地址以及脱困回收 `sweep`（`OutrunRouter.sol::sweep`，`onlyOwner nonReentrant`，无背书资产故无 blocklist，瞬态余额上限约单笔交易量，见 §1.2/§7.6）—— 均为 pre-mainnet 临时能力，主网前随 `OutrunRouter.sol` OutrunTODO 清理清单冻结移除。
 
 ### 1.2 Router target registry
 
@@ -24,7 +24,8 @@
 - 每次 SP 路径都会重新读取 `SP.SY()` 与登记值比较；即使 pair 曾经登记成功，canonical SY 发生漂移也会在拉取或 approve 前回退。
 - `OutrunRouter.sol::setTrustedSP(SP, address(0))` 用于撤销配对；`OutrunRouter.sol::setTrustedSY(SY, false)` 只撤销 SY 信任，不会自动清零已有的 SP mapping，但后续调用会因 SY 不再 trusted 而失败，因此应显式撤销 pair 并核对 getter / event。
 - 撤销 SY 或配对只影响后续 router 入口，已完成的 position、uAsset debt 和 SY share state 不受影响。
-- 当前 setter 是 pre-mainnet deployment wiring：部署后先注册全部 SY，再登记匹配的 SP -> SY pair，核对 getter 与事件后才开放入口。主网发布前冻结并移除临时 owner/admin setter（包括 `OutrunRouter.sol::setTrustedSY`、`OutrunRouter.sol::setTrustedSP`、`OutrunRouter.sol::setMemeverseLauncher`），主网不依赖运行期新增或替换 target。
+- `OutrunRouter.sol::sweep(token,to,amount)` 为 owner-only 脱困回收，`onlyOwner nonReentrant`，零地址回退 `SweepZeroAddress`、零额回退 `SweepZeroAmount`，经 `TokenHelper._transferOut` 支持 `NATIVE` sentinel（`address(0)`）的 ERC20/native 转出并发 `Sweep(token,to,amount)` 事件；无 yield-token/SY-share blocklist 为有意设计——路由器本身不托管背书资产，余额仅在 `_mintSY` 到 `SP.stake/wrapStake` 的同一交易瞬态内出现，上界约单笔 `tokenIn` 量，非全池；主网前随 OutrunTODO 一并移除。
+- 当前 setter 与 `sweep` 均为 pre-mainnet deployment wiring：部署后先注册全部 SY，再登记匹配的 SP -> SY pair，核对 getter 与事件后才开放入口。主网发布前冻结并移除全部临时 owner/admin 面（包括 `OutrunRouter.sol::setTrustedSY`、`OutrunRouter.sol::setTrustedSP`、`OutrunRouter.sol::setMemeverseLauncher`、`OutrunRouter.sol::sweep` 及对应 `IOutrunRouter` 接口/事件/错误和 `Ownable` 继承），主网不依赖运行期新增或替换 target。
 
 ## 2. token / native -> SY
 
@@ -184,6 +185,7 @@
 - `InvalidMemeverseLauncher(address)` 由 `OutrunRouter.sol::_setMemeverseLauncher` 在 `_memeverseLauncher.code.length == 0` 时触发；`OutrunRouter.sol::constructor` 与 `OutrunRouter.sol::setMemeverseLauncher` 都经过该检查，因此配置阶段对零地址和无代码地址 fail fast。
 - `IOutrunRouter.sol::InvalidMemeverseLauncher` 是该公共 error 的 canonical 声明来源，`OutrunRouter.sol` 通过继承暴露相同 selector/revert payload；使用 Solidity 类型化 selector 的集成代码从 `OutrunRouter.InvalidMemeverseLauncher.selector` 迁移到 `IOutrunRouter.InvalidMemeverseLauncher.selector`，仅发生源码命名空间迁移，链上 ABI/runtime 保持。
 - `InsufficientUAssetMinted(...)` 由 `OutrunRouter.sol::_assertMinUAssetMinted` 在实际 `mintedUAsset < minUAssetMinted` 时触发。locked stake/genesis 在 `OutrunRouter.sol::_stakeFromSYBalance` 返回后检查，wrap stake 在 `OutrunRouter.sol::_wrapStakeFromSYBalance` 完成 `SP.wrapStake(...)` 后检查；检查失败会回退整笔调用。
+- `SweepZeroAddress()` / `SweepZeroAmount()` 由 `OutrunRouter.sol::sweep` 在 `to == address(0)` / `amount == 0` 时触发，避免静默无操作；`Sweep(address indexed token,address indexed to,uint256 amount)` 事件记录回收。`sweep` 可转出路由器当前持有的任意 ERC20/native（含瞬态 SY/uAsset），无 per-token blocklist 为有意——路由器无背书资产，外置 SY 的 `yieldBearingToken` / `address(this)` blocklist（`SYBaseUpgradeable.sol::sweep`）不适用；瞬态风险仅限单笔交易内余额且受 `onlyOwner` + `nonReentrant`（`ReentrancyGuardTransient`）保护，未授权调用方 DENIED，主网前移除，运行手册需以 OutrunTODO 清单核对 `owner()` 已冻结/移交 timelock。
 - 下游 `SY` 的 `deposit(...)` / `redeem(...)`、`SP` 的 `SY()` / `stake(...)` / `wrapStake(...)` 以及 launcher 的 `genesis(...)` 若自身回退，router 不捕获、不改写错误数据，原始 revert 透传给上层；router 自身的白名单、金额、精确 approve、最小铸造量和 `uint128` 边界检查可能在相应下游调用前先回退。launcher 仅在配置期做 code-size 校验，`genesis(...)` 返回后 router 不额外断言 allowance 是否已被精确消费。
 
 ## 8. preview 语义与 slippage 边界

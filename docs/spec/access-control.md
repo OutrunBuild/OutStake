@@ -27,7 +27,7 @@
   - 铸造面：`setMintingCap`、`revokeMinter`、`transferMinterDebt`
   - 暂停面：`pause`、`unpause`
   - 跨链限流：`setOutboundRateLimit`、`removeOutboundRateLimit`（逐链出站限额）
-  - LayerZero OApp 跨链配置：`setPeer`、`setDelegate`、`setMsgInspector`、`setEnforcedOptions`、`setPreCrime`
+  - LayerZero OApp 跨链配置（均为 `OutrunOFTUpgradeable.sol` 经 `OFTCoreUpgradeable.sol`/`OAppUpgradeable.sol` 继承的 src OFT 合约 `onlyOwner` 入口，配置关联 LayerZero endpoint，其中仅 `OAppCoreUpgradeable.sol::setDelegate` 转发至 `endpoint`，其余为 OApp 本地存储）：`OutrunOFTUpgradeable.sol::setPeer`（`OAppCoreUpgradeable.sol::setPeer`）、`OutrunOFTUpgradeable.sol::setDelegate`（`OAppCoreUpgradeable.sol::setDelegate`）、`OutrunOFTUpgradeable.sol::setMsgInspector`（`OFTCoreUpgradeable.sol::setMsgInspector`）、`OutrunOFTUpgradeable.sol::setEnforcedOptions`（`OAppOptionsType3Upgradeable.sol::setEnforcedOptions`）、`OutrunOFTUpgradeable.sol::setPreCrime`（`OAppPreCrimeSimulatorUpgradeable.sol::setPreCrime`）
   - 注：`setPeer` 与出站限额是部署流程的生产必经路径；该路径当前经 `OutstakeScript.s.sol::run` 中被注释的 `_deployUETH` / `_deployUUSD` / `_deployUBNB` 到达，启用时按需解除注释
 - SY 赎回授权面：每个 `SYBaseUpgradeable.sol` 实例维护一个 `trustedRouter` 地址。owner 通过 `SYBaseUpgradeable.sol::setTrustedRouter` 设置或替换；初始值为零地址，零地址表示暂未配置且 `burnFromInternalBalance=true` 全部拒绝。`SYBaseUpgradeable.sol::trustedRouter` 提供当前值，`SetTrustedRouter(address indexed oldRouter, address indexed newRouter)` 记录轮换；设置零地址可撤销旧 router。`SYBaseUpgradeable.sol::redeem` 在调用 adapter `_redeem` 前检查 caller，非当前 trusted router 使用 `true` 回退 `SYUnauthorizedInternalRedeemer(address caller)`；`false` 仍由 caller 直接赎回。
 
