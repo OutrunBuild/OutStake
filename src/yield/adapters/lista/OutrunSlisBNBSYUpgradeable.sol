@@ -82,11 +82,18 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
     ///      the remainder (BSC 98_653_065 fork single point `preview==execution` does not guarantee).
     ///      `ListaStakeManager.sol:195,890` has no deposit fee — `synFee` is charged only on `compoundRewards`
     ///      profit. Inter-block `totalPooledBnb` growth can make next-block execution < prior preview
-    ///      (quote-only cost per EIP-4626). Callers MUST NOT use preview verbatim as `minSharesOut`; apply bps
-    ///      headroom e.g. `preview * 9950 / 10000`. The fixed `-1 wei` trick is intentionally not used: it
-    ///      neither covers inter-block drift nor satisfies EIP-4626 `preview <= execution` as-close-as-possible.
+    ///      (quote-only cost per EIP-4626).
+    ///      Apply 50 bps conservative headroom so a verbatim `previewDeposit` as `minSharesOut`
+    ///      cannot revert on ≤1 wei floor rounding or inter-block drift. The 9950/10000 bound is
+    ///      generic across adapters and dominates the bounded error. The fixed `-1 wei` trick is
+    ///      intentionally not used: it neither covers inter-block drift nor satisfies EIP-4626
+    ///      `preview <= execution` as-close-as-possible — bps does.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
-        if (tokenIn == NATIVE) return IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
+        if (tokenIn == NATIVE) {
+            uint256 raw = IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
+            if (raw != 0) raw = raw * 9950 / 10000;
+            return raw;
+        }
         return amountTokenToDeposit;
     }
 

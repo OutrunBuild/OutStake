@@ -99,9 +99,16 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             // For direct stETH deposits the quote equals the executed wrap via the Lido identity
             // wrap(x) == getSharesByPooledEth(x) (1 wstETH unit == 1 stETH internal share, see IWstETH.wrap @dev).
             // Native deposits now stake via WstETH.receive() which is also a single
-            // getSharesByPooledEth (WstETH.receive -> stETH.submit -> _mint), so this preview
+            // getSharesByPooledEth (WstETH.receive -> stETH.submit -> _mint), so the raw quote
             // matches the executed _deposit exactly at the same block (both single floor).
-            amountSharesOut = IStETH(_stETH).getSharesByPooledEth(amountTokenToDeposit);
+            // Apply 50 bps conservative headroom only to NATIVE so a verbatim `previewDeposit`
+            // as `minSharesOut` cannot revert on 1-3 wei floor rounding or inter-block rate drift.
+            // The 9950/10000 bound is generic across adapters and dominates the bounded error while
+            // keeping the preview usable for slippage checks. stETH preview stays exact at the
+            // same block because wrap == getSharesByPooledEth.
+            uint256 raw = IStETH(_stETH).getSharesByPooledEth(amountTokenToDeposit);
+            if (tokenIn == NATIVE && raw != 0) raw = raw * 9950 / 10000;
+            amountSharesOut = raw;
         } else {
             // Existing wstETH is already the yield-bearing share token.
             amountSharesOut = amountTokenToDeposit;

@@ -77,12 +77,12 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     }
 
     /// @notice Redeem SY shares to the requested output token.
-    /// @dev F3 (P1) 流动性依赖说明: 当 `tokenOut == underlying` 时本路径经 `IAaveV3Pool.withdraw` 兑付为底层资产,
-    ///      依赖 Aave 储备可用流动性; 高利用率、储备 pause/freeze 或流动性不足时会 fail-closed revert 直至恢复.
-    ///      `tokenOut == yieldBearingToken()` (aToken) 分支为流动性无关的直转逃生门 (`_transferOut`), 恒可用.
-    ///      上层 `OutrunStakingPositionUpgradeable.redeem` 若指定 `tokenOut==underlying` 同步继承该外部依赖;
-    ///      `keepRedeem`/`keepWrapRedeem` 固定以 SY (aToken) 结算, 不经 `withdraw`, 不受该依赖影响.
-    ///      运维/集成建议: 储备级登记流动性与暂停监控 (利用率阈值告警), position 兑付优先请求 YBT, 仅最终结算时经 Router 二次 `SY.redeem(..., underlying)` 退出底层.
+    /// @dev F3 (P1) Liquidity dependency: when `tokenOut == underlying`, this path redeems to the underlying asset via `IAaveV3Pool.withdraw`,
+    ///      and depends on available liquidity in the Aave reserve; high utilization, reserve pause/freeze, or insufficient liquidity will fail-closed and revert until recovery.
+    ///      The `tokenOut == yieldBearingToken()` (aToken) branch is a liquidity-independent escape hatch (`_transferOut`), always available.
+    ///      The upper-layer `OutrunStakingPositionUpgradeable.redeem` inherits the same external dependency when `tokenOut==underlying` is requested;
+    ///      `keepRedeem`/`keepWrapRedeem` always settle in SY (aToken) without calling `withdraw`, and are unaffected by this dependency.
+    ///      Operational/integration recommendation: monitor reserve-level liquidity and pause state (utilization threshold alerts); have positions request YBT for redemption first, and only exit to underlying via a second `SY.redeem(..., underlying)` through the Router at final settlement.
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset being redeemed (underlying or aToken)
     /// @param amountSharesToRedeem scaled shares to redeem (1 SY = 1 scaled share)
@@ -111,6 +111,11 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// @notice Aave liquidity index / 1e9 = canonical asset per SY.
     /// Aave's liquidity index is ray-scaled (1e27).
     /// Divide by 1e9 to get the standard 1e18-scaled exchange rate.
+    /// @dev Truncation (G-014): RAY->WAD is integer division (floor, remainder <1e9 Ray).
+    ///      i.e. <1 wei per 1e18 unit and relative <1e-18 at index ~1e27. Bias is
+    ///      conservative — covering the same uAsset debt needs marginally more SY, never
+    ///      less — and negligible. Half-up would need coordinated Position change and is
+    ///      not adopted.
     /// @return exchange rate in 1e18 precision
     function exchangeRate() public view override returns (uint256) {
         address _underlying = underlying();

@@ -118,14 +118,21 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
             // ETH → eETH → weETH conversion.
             // First compute how much eETH the ETH buys, then how much weETH that eETH represents.
             // This quote chain approximates the live _deposit route (DepositAdapter.depositETHForWeETH) and may
-            // deviate slightly by rounding (observed within 1 wei on the pinned fork); unfavorable deviations are
-            // rejected by deposit's minSharesOut, so callers should leave slippage headroom below this preview.
+            // deviate slightly by rounding (observed within 1 wei on the pinned fork).
+            // Apply 50 bps conservative headroom so a verbatim `previewDeposit` as `minSharesOut`
+            // cannot revert on 0-1 wei floor rounding or inter-block rate drift. The 9950/10000
+            // bound is generic across adapters and dominates the bounded error.
             uint256 eETHAmount =
                 ILiquidityPool(_pool).amountForShare(ILiquidityPool(_pool).sharesForAmount(amountTokenToDeposit));
-            amountSharesOut = ILiquidityPool(_pool).sharesForAmount(eETHAmount);
+            uint256 raw = ILiquidityPool(_pool).sharesForAmount(eETHAmount);
+            if (raw != 0) raw = raw * 9950 / 10000;
+            amountSharesOut = raw;
         } else if (tokenIn == eETH()) {
             // Matches the executed path (_deposit wraps via IWeETH.wrap) because 1 weETH == 1 eETH share,
             // so wrap returns the same amount this sharesForAmount quote produces (see IWeETH.wrap @dev).
+            // Keep exact at the same block (no headroom) because the quote equals the executed wrap
+            // within the same pool rate snapshot; inter-block drift is still covered by the caller's
+            // own minSharesOut, not by the preview itself (generic NATIVE headroom is below).
             amountSharesOut = ILiquidityPool(_pool).sharesForAmount(amountTokenToDeposit);
         } else {
             amountSharesOut = amountTokenToDeposit;

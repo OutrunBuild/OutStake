@@ -140,20 +140,31 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
 
     /// @notice Preview asBNB shares for a deposit (quote-only, not reserved).
     /// @dev NATIVE: `convertBnbToSnBnb@P_old -> convertToAsBnb@P_old` two views; slisBNB: `convertToAsBnb@P_old`
-    ///      single view. Execution mints via `mintAsBnb` balance-diff at `P_new` with
-    ///      `AsBnbMintIncompleteConsumption` guard; same Floor family but different snapshot, composed two
-    ///      floors may overquote `execution` by ≤2 wei when remainder straddles (single-point fork
-    ///      `preview==execution` at 98_653_065 does not guarantee). Callers MUST NOT use preview verbatim as
-    ///      `minSharesOut`; apply bps headroom e.g. `preview * 9950 / 10000`.
+    ///      single view. Execution mints via `mintAsBnb` at `P_new` with `AsBnbMintIncompleteConsumption` guard;
+    ///      same Floor family but different snapshot, composed two floors may overquote `execution` by ≤2 wei
+    ///      when remainder straddles (single-point fork `preview==execution` at 98_653_065 does not guarantee).
+    ///      Preview does NOT account for Aster queue state: if `IYieldProxy.activitiesOnGoing()==true`
+    ///      execution returns 0 and reverts `AsBnbMintQueued` (retry liveness) while preview still quotes the
+    ///      view rate (100% delta, fail-closed).
+    ///      Apply 50 bps conservative headroom so a verbatim `previewDeposit` as `minSharesOut`
+    ///      cannot revert on ≤2 wei floor rounding or inter-block drift. The 9950/10000 bound is
+    ///      generic across adapters and dominates the bounded error. Callers should still handle
+    ///      `AsBnbMintQueued` retry.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         address _minter = asBnbMinter();
         if (tokenIn == NATIVE) {
             // Preview mirrors the live path: BNB -> slisBNB -> asBNB.
             uint256 slisBnbAmount = IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
-            return IAsBnbMinter(_minter).convertToAsBnb(slisBnbAmount);
+            uint256 raw = IAsBnbMinter(_minter).convertToAsBnb(slisBnbAmount);
+            if (raw != 0) raw = raw * 9950 / 10000;
+            return raw;
         }
         // slisBNB deposits convert through the Aster minter; asBNB deposits stay 1:1.
-        if (tokenIn == slisBnb()) return IAsBnbMinter(_minter).convertToAsBnb(amountTokenToDeposit);
+        if (tokenIn == slisBnb()) {
+            uint256 raw = IAsBnbMinter(_minter).convertToAsBnb(amountTokenToDeposit);
+            if (raw != 0) raw = raw * 9950 / 10000;
+            return raw;
+        }
         return amountTokenToDeposit;
     }
 
