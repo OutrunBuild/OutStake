@@ -4,8 +4,9 @@ pragma solidity ^0.8.35;
 /**
  * @title Sky Peg Stability Module (PSM3) interface
  * @notice Sky's Peg Stability Module that swaps between USDC, USDS, and sUSDS; OutrunL2StakedUsdsSY swaps
- *      through it for deposits and redemptions and reads `previewSwapExactIn` for its exchange rate and
- *      previews.
+ *      through it for deposits/redemptions and previews. `previewSwapExactIn` additionally serves as the
+ *      deviation-guard reference for `exchangeRate()`, whose rate source is the SSR `IRateProviderLike`
+ *      (see rateProvider()).
  */
 interface IPSM3 {
     /// @notice Swaps an exact amount of `assetIn` for as much `assetOut` as the PSM returns.
@@ -47,7 +48,8 @@ interface IPSM3 {
     ) external returns (uint256 amountIn);
 
     /// @notice Quotes `assetOut` for an exact `assetIn` swap.
-    /// @dev OutrunL2StakedUsdsSY consumes this for `exchangeRate()`, deposit previews, and redemption previews.
+    /// @dev OutrunL2StakedUsdsSY consumes this for deposit/redemption previews and as the PSM-side
+    ///      deviation-guard reference in `exchangeRate()` (rate source is `IRateProviderLike`, not this quote).
     /// @param assetIn Address of the ERC-20 asset to swap in.
     /// @param assetOut Address of the ERC-20 asset to swap out.
     /// @param amountIn Amount of the asset to swap in.

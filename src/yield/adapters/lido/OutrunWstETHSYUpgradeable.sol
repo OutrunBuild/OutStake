@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {IStETH} from "../../../integrations/lido/interfaces/IStETH.sol";
@@ -42,12 +43,14 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
         address _stETH = stETH();
         address _yieldBearingToken = yieldBearingToken();
         if (tokenIn == NATIVE) {
-            // Submit ETH to Lido to receive stETH, then wrap stETH into wstETH.
-            // Uses getPooledEthByShares to convert the stETH share amount
-            // to a precise stETH balance before wrapping.
-            uint256 stETHShareAmount = IStETH(_stETH).submit{value: amountDeposited}(address(0));
-            _safeApproveInf(_stETH, _yieldBearingToken);
-            amountSharesOut = IWstETH(_yieldBearingToken).wrap(IStETH(_stETH).getPooledEthByShares(stETHShareAmount));
+            // Stake ETH via wstETH's receive() shortcut which does stETH.submit + _mint in one step.
+            // This is Lido's canonical ETH->wstETH path (WstETH.receive) and is a single floor
+            // `getSharesByPooledEth`, matching _previewDeposit and avoiding the extra
+            // getPooledEthByShares->wrap round-trip that lost 1-2 wei.
+            uint256 before = IERC20(_yieldBearingToken).balanceOf(address(this));
+            (bool success,) = _yieldBearingToken.call{value: amountDeposited}("");
+            require(success, "WstETH stake failed");
+            amountSharesOut = IERC20(_yieldBearingToken).balanceOf(address(this)) - before;
         } else if (tokenIn == _stETH) {
             // Wrap existing stETH into wstETH at current rate.
             _safeApproveInf(_stETH, _yieldBearingToken);
@@ -95,10 +98,9 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             // ETH and stETH deposits both end as wstETH shares, so use Lido's pooled-ETH-to-share quote.
             // For direct stETH deposits the quote equals the executed wrap via the Lido identity
             // wrap(x) == getSharesByPooledEth(x) (1 wstETH unit == 1 stETH internal share, see IWstETH.wrap @dev).
-            // Native deposits instead execute submit -> getPooledEthByShares -> wrap upstream (two floor
-            // roundings), so actual shares out can be up to a few wei below this quote (composite 2-3 wei
-            // across the three floors); callers must leave slippage headroom rather than pass the quote
-            // verbatim as minSharesOut.
+            // Native deposits now stake via WstETH.receive() which is also a single
+            // getSharesByPooledEth (WstETH.receive -> stETH.submit -> _mint), so this preview
+            // matches the executed _deposit exactly at the same block (both single floor).
             amountSharesOut = IStETH(_stETH).getSharesByPooledEth(amountTokenToDeposit);
         } else {
             // Existing wstETH is already the yield-bearing share token.

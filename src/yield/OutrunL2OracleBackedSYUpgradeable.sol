@@ -48,13 +48,22 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     /// adapter exposes its own external initializer (the wstETH adapter hardcodes its name
     /// and symbol), while the oracle and underlying-asset wiring is identical for every
     /// adapter in this family, so it lives here once.
+    /// @dev `underlyingAssetOnEthDecimals_` is L1 canonical-asset decimals (e.g. 18 for stETH, 6 for USDC/USDS).
+    /// L2 cannot verify it on-chain via `IERC20Metadata.decimals()` without a bridge; a misconfiguration
+    /// (e.g. 18 vs 6) is silently cached by `OutrunStakingPositionUpgradeable.initialize` as
+    /// `canonicalAssetDecimals` and systematically mis-scales `wrapUAssetDebt` / `syToAsset` via
+    /// `OutrunStakingPositionUpgradeable._scaleUAssetToCanonicalAsset` / `_scaleCanonicalAssetToUAsset`
+    /// by `10**12` (G-011). Validate off-chain against L1 Etherscan / official docs and via
+    /// `L2AssetValidation.validateL2OracleBackedParams` in deployment scripts before broadcasting;
+    /// post-deploy the value is immutable (no setter) and requires SY + SP redeployment to fix.
+    /// See `docs/deployment.md` L2 checklist and `script/lib/L2AssetValidation.sol`.
     /// @param name_ Token name for the ERC20 representation.
     /// @param symbol_ Token symbol for the ERC20 representation.
     /// @param owner_ Address that will be granted the owner role.
     /// @param token_ The yield-bearing token on L2 (IS the SY — no wrapping needed).
     /// @param exchangeRateOracle_ Oracle that reports the canonical-asset-per-SY exchange rate.
     /// @param underlyingAssetOnEthAddr_ Address of the underlying asset on Ethereum mainnet.
-    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet.
+    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet (must match L1 truth; see @dev).
     function __L2OracleBackedSY_init(
         string memory name_,
         string memory symbol_,

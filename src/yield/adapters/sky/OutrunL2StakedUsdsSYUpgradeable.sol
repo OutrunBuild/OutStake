@@ -40,11 +40,10 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         $.usdc = usdc_;
         $.usds = usds_;
         $.psm3 = psm3_;
-        // Auto-bind RateProvider from canonical PSM3 (immutable) for pre-deployment proxies;
-        // owner can override via setRateProvider. Default deviation guard 1% (100 bps).
-        try IPSM3(psm3_).rateProvider() returns (address rp) {
-            $.rateProvider = rp;
-        } catch {}
+        // Bind RateProvider directly from canonical PSM3; misconfigured PSM must fail at deployment.
+        // No try/catch — pre-deployment has no historical proxies to keep compatible.
+        $.rateProvider = IPSM3(psm3_).rateProvider();
+        if ($.rateProvider == address(0)) revert RateProviderCallFailed();
         $.maxDeviationBps = 100;
     }
 
@@ -70,16 +69,9 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     }
 
     /// @notice Returns the independent SSR RateProvider (1e27) used for exchangeRate.
-    /// @return The rate provider address; falls back to PSM3.rateProvider() if zero.
+    /// @return The rate provider address.
     function rateProvider() public view returns (address) {
-        address rp = outrunL2StakedUsdsSYStorage.rateProvider;
-        if (rp != address(0)) return rp;
-        // Fallback for proxies initialized before this field existed
-        try IPSM3(psm3()).rateProvider() returns (address v) {
-            return v;
-        } catch {
-            return address(0);
-        }
+        return outrunL2StakedUsdsSYStorage.rateProvider;
     }
 
     /// @notice Returns the max PSM vs SSR deviation in bps before exchangeRate reverts.
@@ -148,15 +140,12 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
 
     /// @notice Returns the current exchangeRate: USDS per 1 sUSDS, scaled by 1e18, from SSR RateProvider.
     /// @return res SSR-derived rate (sUSDS 18 -> USDS 18 via rate/1e27) with PSM deviation guard.
-    /// @dev PSM preview is execution-only; accounting uses independent RateProvider. If PSM quote
-    ///      deviates from SSR by more than maxDeviationBps, revert to fail-closed (prevents
-    ///      pool-imbalance or stale-oracle pollution of position mint/liquidation).
+    /// @dev Accounting uses independent RateProvider and reverts with RateProviderCallFailed if none is configured
+    ///      (fail-closed, no PSM fallback). If PSM quote deviates from SSR by more than maxDeviationBps, reverts
+    ///      to fail-closed (prevents pool-imbalance or stale-oracle pollution of position mint/liquidation).
     function exchangeRate() public view override returns (uint256 res) {
         address rp = rateProvider();
-        // If no independent provider is configured, fall back to PSM preview (pre-fix compat).
-        if (rp == address(0)) {
-            return IPSM3(psm3()).previewSwapExactIn(yieldBearingToken(), usds(), 1 ether);
-        }
+        if (rp == address(0)) revert RateProviderCallFailed();
         uint256 rate;
         try IRateProviderLike(rp).getConversionRate() returns (uint256 r) {
             rate = r;

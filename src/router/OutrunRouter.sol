@@ -145,6 +145,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Quotes the uAsset amount minted when staking from an input token.
      * @dev Derives canonical SY from `SP.SY()`, then uses the SY deposit preview and stake-manager preview.
+     * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
+     * with `ReachMintCap`/`SYZeroSharesOut`/`InsufficientUAssetMinted`/`DustRoundedToZero` where preview succeeded.
      * `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param tokenIn Token to deposit into SY.
@@ -167,6 +169,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Quotes the uAsset amount minted when staking existing SY.
      * @dev Reads the stake-manager preview for an SY-funded stake without changing state.
+     * Preview is quote-only and does not reserve uAsset mint cap or slippage floors; execution can revert
+     * with `ReachMintCap`/`DustRoundedToZero`/`InsufficientUAssetMinted` where preview succeeded.
      * `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param amountInSY Amount of SY to stake.
@@ -187,6 +191,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     /**
      * @notice Quotes the uAsset amount minted when wrap-staking from an input token.
      * @dev Derives canonical SY from `SP.SY()`, then combines the SY deposit preview with the wrap preview.
+     * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
+     * with `ReachMintCap`/`SYZeroSharesOut`/`DustRoundedToZero` where preview succeeded.
      * @param SP Stake manager receiving the wrapped stake.
      * @param tokenIn Token to deposit into SY.
      * @param tokenAmount Amount of `tokenIn` to convert.

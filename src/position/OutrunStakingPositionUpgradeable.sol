@@ -42,8 +42,11 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         address uAsset;
         address revenuePool;
         address keeper;
-        uint256 minExchangeRate;
-        uint256 maxExchangeRate;
+        // Deprecated exchange-rate band slots retained for ERC-7201 layout compatibility.
+        // Previously `minExchangeRate` / `maxExchangeRate` for `setExchangeRateBounds`; band removed
+        // per G-020 deletion path — chain-side guard is now only `ZeroExchangeRate` with off-chain monitoring.
+        uint256 __deprecated_minExchangeRate;
+        uint256 __deprecated_maxExchangeRate;
         mapping(uint256 positionId => Position) positions;
     }
 
@@ -629,31 +632,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         emit SetMinStake(minStake_);
     }
 
-    /// @notice Sets the allowed exchange rate bounds checked in `_currentExchangeRate` (PA-3).
-    /// @dev 0/0 disables the check (fresh deployments and upgraded proxies start disabled for
-    ///      backward compatibility; the zero-rate guard in `_currentExchangeRate` still applies).
-    ///      When `max != 0`, any `rate` outside `[min, max]` reverts `ExchangeRateOutOfBounds`.
-    ///      Bounds are 1e18-scaled, same scale as `IStandardizedYield.exchangeRate()`.
-    /// @param newMin Minimum acceptable rate (inclusive), 0 to disable lower bound when max==0.
-    /// @param newMax Maximum acceptable rate (inclusive), 0 to disable both bounds.
-    function setExchangeRateBounds(uint256 newMin, uint256 newMax) external onlyOwner {
-        if (newMax != 0 && newMin > newMax) revert InvalidBounds();
-        OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
-        uint256 oldMin = $.minExchangeRate;
-        uint256 oldMax = $.maxExchangeRate;
-        $.minExchangeRate = newMin;
-        $.maxExchangeRate = newMax;
-        emit ExchangeRateBoundsUpdated(oldMin, oldMax, newMin, newMax);
-    }
-
-    /// @notice Returns the current exchange rate bounds.
-    /// @return min Minimum bound (0 when disabled)
-    /// @return max Maximum bound (0 when disabled, otherwise the upper bound)
-    function exchangeRateBounds() external view returns (uint256 min, uint256 max) {
-        OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
-        return ($.minExchangeRate, $.maxExchangeRate);
-    }
-
     function setRevenuePool(address revenuePool_) external onlyOwner {
         if (revenuePool_ == address(0)) revert ZeroInput();
         outrunStakingPositionStorage.revenuePool = revenuePool_;
@@ -686,14 +664,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // Zero rate means the external SY is reporting a broken state; fail closed with a named
         // error here (the single rate-reading home) instead of leaking a division panic or a
         // misleading dust/nothing error into any conversion path.
+        // Exchange-rate band removed (G-020): chain-side guard is only `rate != 0`; drift
+        // monitoring is off-chain (`ZeroExchangeRate` / `StaleOracleAnswer` etc.).
         if (rate == 0) revert ZeroExchangeRate();
-        OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
-        // Bandwidth guard (PA-3/G-1): when bounds are configured (max != 0), enforce the single-home
-        // band. 0/0 disables the check for backward compatibility with existing proxies; the zero
-        // guard above remains the fail-closed floor.
-        if ($.maxExchangeRate != 0 && (rate < $.minExchangeRate || rate > $.maxExchangeRate)) {
-            revert ExchangeRateOutOfBounds(rate, $.minExchangeRate, $.maxExchangeRate);
-        }
         return rate;
     }
 

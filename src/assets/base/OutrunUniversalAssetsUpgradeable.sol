@@ -99,16 +99,21 @@ contract OutrunUniversalAssetsUpgradeable
     }
 
     /// @notice Moves outstanding debt between minter records without minting or burning tokens.
-    /// @dev Owner-only accounting operation. Used when migrating or rebalancing stake manager allocations.
-    ///      Migrates only the uAsset minter-level debt; if the minter is also constrained by position, wrap,
-    ///      or other module ledgers, those ledgers must be migrated in the same coordinated flow because this
-    ///      operation does not update them.
+    /// @dev Owner-only accounting repair tool. Intended ONLY for correcting debt records that have no
+    ///      position/wrap-debt backing (e.g. stray debt created by an operational incident): it migrates
+    ///      only the uAsset minter-level debt and never updates position, wrap, or other module ledgers.
+    ///      Live SP retirement or SY replacement must use the wind-down path instead
+    ///      (`setMintingCap(SP, 0)` → matured `redeem`/`keepRedeem`/`keepWrapRedeem` burn down → `revokeMinter`):
+    ///      the SP side exposes no ledger export/import entrypoint and a full-ledger move cannot fit
+    ///      in one transaction, so a live-ledger transfer would leave a non-self-healing desync.
     ///      @dev PA-6: this is the ONLY operation that can silently break the cross-ledger invariant
     ///      `uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`
-    ///      (see `OutrunStakingPositionUpgradeable` and `docs/deployment.md` PA-6). Pre-mainnet the
-    ///      `owner` must be a timelock/multisig and this call must be atomically bundled with the SP-side
-    ///      ledger migration in a single deployment script; standalone use will desync the ledgers and
-    ///      is not self-healing (unlike `setMintingCap` over-cap which self-heals via repay).
+    ///      (see `OutrunStakingPositionUpgradeable`). Pre-mainnet the
+    ///      `owner` must be a timelock/multisig; every call must be followed by a mirror reconciliation
+    ///      (`mintingStatusTable` direct read vs Σ positions + wrapUAssetDebt; `checkMintableAmount`
+    ///      clamps to zero when debt exceeds cap and is not a reconciliation source) with the desync
+    ///      alert clearing as repair confirmation. Any call against position/wrap-backed debt desyncs
+    ///      the ledgers and is not self-healing (unlike `setMintingCap` over-cap which self-heals via repay).
     /// @param from Source minter address
     /// @param to Destination minter address
     /// @param amount Amount of debt to transfer

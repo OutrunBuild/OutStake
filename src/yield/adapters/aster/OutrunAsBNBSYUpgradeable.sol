@@ -138,6 +138,13 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         return IListaStakeManager(stakeManager()).convertSnBnbToBnb(slisBnbPerShare);
     }
 
+    /// @notice Preview asBNB shares for a deposit (quote-only, not reserved).
+    /// @dev NATIVE: `convertBnbToSnBnb@P_old -> convertToAsBnb@P_old` two views; slisBNB: `convertToAsBnb@P_old`
+    ///      single view. Execution mints via `mintAsBnb` balance-diff at `P_new` with
+    ///      `AsBnbMintIncompleteConsumption` guard; same Floor family but different snapshot, composed two
+    ///      floors may overquote `execution` by ≤2 wei when remainder straddles (single-point fork
+    ///      `preview==execution` at 98_653_065 does not guarantee). Callers MUST NOT use preview verbatim as
+    ///      `minSharesOut`; apply bps headroom e.g. `preview * 9950 / 10000`.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         address _minter = asBnbMinter();
         if (tokenIn == NATIVE) {

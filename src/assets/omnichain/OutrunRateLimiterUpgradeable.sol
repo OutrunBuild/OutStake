@@ -87,6 +87,17 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         return _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
     }
 
+    /// @notice Returns whether a destination is currently rate-limited (I-009 observability).
+    /// @param dstEid Destination endpoint ID
+    /// @return True if a rate limit is configured (window != 0), false if unconfigured/deleted (infinite sentinel)
+    /// @dev Distinct from `getAmountCanBeSent` sentinel reading: `window == 0` is the intentional infinite sentinel
+    ///      for unconfigured or `removeOutboundRateLimit`-deleted destinations (see `getAmountCanBeSent` NatSpec).
+    ///      Use this view to distinguish intentionally uncapped (must remain operationally tracked) from forgotten
+    ///      misconfiguration, and to assert every live `dstEid` is rate-limited after deployment or peer addition.
+    function isRateLimited(uint32 dstEid) public view returns (bool) {
+        return _getOutrunRateLimiterStorage().rateLimits[dstEid].window != 0;
+    }
+
     /// @notice Applies a batch of rate limit configurations, checkpointing each before updating.
     /// @param rateLimitConfigs Array of rate limit configs (dstEid, limit, window)
     function _setRateLimits(RateLimitConfig[] memory rateLimitConfigs) internal virtual {
@@ -107,6 +118,11 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
 
     /// @notice Computes current in-flight and available capacity using linear decay.
     /// @dev Capacity refills proportionally over time: decay = (limit * timeSinceLastUpdate) / window.
+    /// @dev G-030 / LayerZero upstream: integer division discards remainder and lastUpdated is always
+    ///      forwarded to block.timestamp, so refill is stepwise. With tight limit + large window
+    ///      (e.g. limit=100, window=86400, decay=0 for 863s) capacity appears frozen. Deployer should
+    ///      keep limit >= window (LayerZero devtools advice) to keep per-second refill >= 1; see
+    ///      docs/spec/common-foundations.md OFT 与 rate limiter.
     /// @param amountInFlight Current in-flight amount, in LD (local decimals)
     /// @param lastUpdated Timestamp of the last rate limit update
     /// @param limit Maximum amount allowed in the window, in LD (local decimals)
@@ -121,6 +137,8 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     {
         // Computes how much capacity has refilled since the last rate limit update.
         // Decay = (limit * timeSinceLastUpdate) / window.
+        // G-030: truncating division discards (limit*time)%window and time remainder via lastUpdated
+        // forwarding; stepwise refill, keep limit >= window to avoid frozen capacity.
         // Current in-flight = max(0, previousInFlight - decay).
         // Available = limit - currentInFlight.
         // Zero in-flight already means the full limit is available; the decay below

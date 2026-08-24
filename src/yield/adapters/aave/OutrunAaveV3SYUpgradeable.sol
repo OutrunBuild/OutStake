@@ -119,12 +119,23 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     }
 
     /// @notice Preview the scaled shares received for a given deposit.
+    /// @dev Underlying path uses floor (`calcSharesFromAssetDown`) for a conservative preview
+    ///      (`preview <= execution`), matching the on-chain `scaledBalanceOf` delta's floor
+    ///      lower bound vs the half-up `rayDiv` execution. This guarantees
+    ///      `minSharesOut = preview` never reverts due to rounding (max 1 wei under-quote,
+    ///      0 wei over-quote). aToken path stays `half-up` exact because both preview
+    ///      and execution use the same `rayDiv`.
+    /// @param tokenIn token being deposited (underlying or aToken)
     /// @param amountTokenToDeposit amount of token to deposit
     /// @return amountSharesOut expected scaled shares
-    function _previewDeposit(address, uint256 amountTokenToDeposit) internal view override returns (uint256) {
+    function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         address _underlying = underlying();
         address _pool = aavePool();
-        return AaveAdapterLib.calcSharesFromAssetHalfUp(amountTokenToDeposit, _getNormalizedIncome(_underlying, _pool));
+        uint256 index = _getNormalizedIncome(_underlying, _pool);
+        if (tokenIn == _underlying) {
+            return AaveAdapterLib.calcSharesFromAssetDown(amountTokenToDeposit, index);
+        }
+        return AaveAdapterLib.calcSharesFromAssetHalfUp(amountTokenToDeposit, index);
     }
 
     /// @notice Preview the asset amount received for a given share redemption.

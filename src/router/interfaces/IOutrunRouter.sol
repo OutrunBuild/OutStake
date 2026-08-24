@@ -112,7 +112,10 @@ interface IOutrunRouter {
     /**
      * @notice Quotes the uAsset amount minted when staking from an input token.
      * @dev Requires an owner-registered SP -> SY pair, then derives canonical SY from `SP.SY()` and combines `SY.previewDeposit` and `SP.previewStake`.
-     * Preview does not reserve liquidity, cap, or slippage floors. `stakeParam` fields do not alter the quote.
+     * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
+     * with `ReachMintCap`/`SYZeroSharesOut`/`InsufficientUAssetMinted`/`DustRoundedToZero` where preview succeeded.
+     * Integrators must treat the quote as an estimate, pass `stakeParam.minSyOut`/`minUAssetMinted` as `quote±slippage`,
+     * and handle `ReachMintCap` reverts. `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param tokenIn Token to deposit into SY (`NATIVE` = address(0) for the native currency).
      * @param tokenAmount Amount of `tokenIn` to convert.
@@ -126,7 +129,10 @@ interface IOutrunRouter {
 
     /**
      * @notice Quotes the uAsset amount minted when staking existing SY.
-     * @dev Requires an owner-registered SP -> SY pair, then reads `SP.previewStake` for a quote-only SY-funded stake. `stakeParam` fields do not alter the quote.
+     * @dev Requires an owner-registered SP -> SY pair, then reads `SP.previewStake` for a quote-only SY-funded stake.
+     * Preview is quote-only and does not reserve uAsset mint cap or slippage floors; execution can revert
+     * with `ReachMintCap`/`DustRoundedToZero`/`InsufficientUAssetMinted` where preview succeeded.
+     * Integrators must treat the quote as an estimate and handle `ReachMintCap` reverts. `stakeParam` fields do not alter the quote.
      * @param SP Stake manager receiving the SY stake.
      * @param amountInSY Amount of SY to stake.
      * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
@@ -140,7 +146,9 @@ interface IOutrunRouter {
     /**
      * @notice Quotes the uAsset amount minted when wrap-staking from an input token.
      * @dev Requires an owner-registered SP -> SY pair, then derives canonical SY from `SP.SY()` and combines `SY.previewDeposit` and `SP.previewWrapStake`.
-     * Preview does not reserve liquidity, cap, or slippage floors.
+     * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
+     * with `ReachMintCap`/`SYZeroSharesOut`/`DustRoundedToZero` where preview succeeded.
+     * Integrators must treat the quote as an estimate and handle `ReachMintCap` reverts.
      * @param SP Stake manager receiving the wrapped stake.
      * @param tokenIn Token to deposit into SY (`NATIVE` = address(0) for the native currency).
      * @param tokenAmount Amount of `tokenIn` to convert.

@@ -74,8 +74,18 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
         return IListaStakeManager(stakeManager()).convertSnBnbToBnb(1 ether);
     }
 
+    /// @notice Preview slisBNB shares for a deposit (quote-only, not reserved).
+    /// @dev Native BNB path returns `IListaStakeManager.convertBnbToSnBnb(amountTokenToDeposit)` which is
+    ///      `floor(amount * totalShares / totalPooledBnb)` at `P_old`. Execution mints `floor(...)` at `P_new`
+    ///      via `deposit{value:amount}` balance-diff; same Floor family but different snapshot, so
+    ///      `preview` may overquote `execution` by ≤1 wei when `amount*totalShares mod totalPooled` straddles
+    ///      the remainder (BSC 98_653_065 fork single point `preview==execution` does not guarantee).
+    ///      `ListaStakeManager.sol:195,890` has no deposit fee — `synFee` is charged only on `compoundRewards`
+    ///      profit. Inter-block `totalPooledBnb` growth can make next-block execution < prior preview
+    ///      (quote-only cost per EIP-4626). Callers MUST NOT use preview verbatim as `minSharesOut`; apply bps
+    ///      headroom e.g. `preview * 9950 / 10000`. The fixed `-1 wei` trick is intentionally not used: it
+    ///      neither covers inter-block drift nor satisfies EIP-4626 `preview <= execution` as-close-as-possible.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
-        // Native BNB preview uses Lista's conversion quote; existing slisBNB deposits are 1:1.
         if (tokenIn == NATIVE) return IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
         return amountTokenToDeposit;
     }

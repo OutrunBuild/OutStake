@@ -42,10 +42,11 @@ interface IUniversalAssets {
 
     /**
      * @notice Transfers outstanding minted debt from one minter record to another.
-     * @dev Owner-only debt accounting operation. Does not mint, burn, transfer, or change total supply.
-     * `from` and `to` must be nonzero, distinct minter records. Migrates only uAsset minter-level debt; if the
-     * minter is also constrained by position, wrap, or other module ledgers, those ledgers must be migrated in
-     * the same coordinated flow because this operation does not update them.
+     * @dev Owner-only debt accounting repair tool. Does not mint, burn, transfer, or change total supply.
+     * `from` and `to` must be nonzero, distinct minter records. Intended ONLY for correcting debt records
+     * with no position/wrap-debt backing: it migrates only uAsset minter-level debt and never updates
+     * position, wrap, or other module ledgers. Live SP retirement uses the wind-down path
+     * (cap to zero → repay down → revoke) instead of moving backed debt.
      * @param from Minter whose outstanding debt is decreased.
      * @param to Minter whose outstanding debt is increased.
      * @param amount Amount of outstanding debt to transfer.

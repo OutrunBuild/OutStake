@@ -24,11 +24,15 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     OutrunL2WrappableWstETHSYStorage private outrunL2WrappableWstETHSYStorage;
 
     /// @notice Initializes the SY adapter with L2 stETH/wstETH wrap capability.
+    /// @dev `underlyingAssetOnEthDecimals_` is L1 canonical-asset decimals and cannot be verified on-chain on L2.
+    /// A misconfiguration is silently cached by `OutrunStakingPositionUpgradeable.initialize` and mis-scales
+    /// `wrapUAssetDebt` by `10**|delta|` (e.g. 18 vs 6 => 1e12, G-011). Validate off-chain against L1 truth and via
+    /// `L2AssetValidation.validateL2WrappableParams` before broadcasting; see `docs/deployment.md` L2 checklist.
     /// @param owner_ The contract owner address.
     /// @param stETH_ Address of the L2 stETH token.
     /// @param wstETH_ Address of the wstETH yield-bearing token.
     /// @param underlyingAssetOnEthAddr_ Address of the underlying asset on Ethereum mainnet (for cross-chain accounting).
-    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet.
+    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet (must match L1 truth; see @dev).
     function initialize(
         address owner_,
         address stETH_,
