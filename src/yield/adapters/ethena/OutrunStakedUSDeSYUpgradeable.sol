@@ -67,6 +67,14 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     }
 
     /// @notice Previews the amount of sUSDe shares that would be received for depositing a given token.
+    /// @dev USDe path forwards to `IERC4626(yieldBearingToken()).previewDeposit` (floor quote).
+    ///      Standard ERC4626 `previewDeposit` may over-quote the shares actually minted by
+    ///      `IERC4626(yieldBearingToken()).deposit` by at most 1 wei depending on the vault's
+    ///      virtual offset (`totalSupply + 10 ** offset` / `totalAssets + 1`) and on inter-block
+    ///      `totalAssets` drift (Ethena `StakedUSDe.totalAssets()` vests `balance - unvested` over 8h).
+    ///      Callers should not use the preview verbatim as `SYBaseUpgradeable.sol::deposit` `minSharesOut`;
+    ///      leave 1 wei headroom (e.g. `preview > 1 ? preview - 1 : preview`) or a small bps margin.
+    ///      No local vault-math fix is applied here; the bound is an ERC4626 preview-vs-execution caveat.
     /// @param tokenIn The input token address.
     /// @param amountTokenToDeposit The amount of the input token to deposit.
     /// @return The expected amount of sUSDe shares received.

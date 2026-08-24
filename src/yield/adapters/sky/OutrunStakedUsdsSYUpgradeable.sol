@@ -72,6 +72,15 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return IERC4626(yieldBearingToken()).convertToAssets(1 ether);
     }
 
+    /// @notice Previews the sUSDS shares that would be received for depositing a given token.
+    /// @dev USDS path forwards to `IERC4626(yieldBearingToken()).previewDeposit` (floor quote).
+    ///      Standard ERC4626 `previewDeposit` may over-quote the shares actually minted by
+    ///      `IERC4626(yieldBearingToken()).deposit` by at most 1 wei depending on the vault's
+    ///      virtual offset (`totalSupply + 10 ** offset` / `totalAssets + 1`) and on inter-block
+    ///      `totalAssets` drift (Sky SSR accrues per block, shifting the vault rate between preview
+    ///      and execution). Callers should not use the preview verbatim as `SYBaseUpgradeable.sol::deposit`
+    ///      `minSharesOut`; leave 1 wei headroom (e.g. `preview > 1 ? preview - 1 : preview`) or a small
+    ///      bps margin. No local vault-math fix is applied here; the bound is an ERC4626 preview-vs-execution caveat.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         // USDS deposits mint sUSDS through the vault; sUSDS deposits are already shares.
         if (tokenIn == usds()) return IERC4626(yieldBearingToken()).previewDeposit(amountTokenToDeposit);
