@@ -13,4 +13,9 @@ cd "$repo_root"
 # the regressions fast misses (cross-file breaks) are caught in CI, not at push
 # time. --all checks every surface file instead of the worktree diff, since
 # changes are already committed and the worktree is usually clean at push time.
-npm run gate:fast -- --all
+# via_ir budget 12-15 min; allow 15 min (900s)
+if command -v timeout >/dev/null 2>&1; then
+  timeout 900 npm run gate:fast -- --all
+else
+  npm run gate:fast -- --all
+fi

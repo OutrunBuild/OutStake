@@ -17,4 +17,9 @@ fi
 diff_file="$(mktemp "${TMPDIR:-/tmp}/precommit-gate.XXXXXX.diff")"
 trap 'rm -f "$diff_file"' EXIT
 git diff --cached -- "${staged[@]}" > "$diff_file"
-CHANGE_CLASSIFIER_DIFF_FILE="$diff_file" npm run gate:fast -- --changed-files "${staged[@]}"
+# via_ir build may take 12-15 min; allow 15 min (900s) before failing — previously implicit short timeout truncated pre-commit
+if command -v timeout >/dev/null 2>&1; then
+  CHANGE_CLASSIFIER_DIFF_FILE="$diff_file" timeout 900 npm run gate:fast -- --changed-files "${staged[@]}"
+else
+  CHANGE_CLASSIFIER_DIFF_FILE="$diff_file" npm run gate:fast -- --changed-files "${staged[@]}"
+fi
