@@ -12,7 +12,7 @@
 - router 业务入口仍通过用户传入的独立 `SY` 地址、`SP` 地址或从 `SP.SY()` 派生的 canonical `SY` 调用下游，但目标必须先由 owner 注册。
 - 下游 product address 可以是 `ERC1967Proxy` 地址：uAsset proxy、SY proxy、staking position proxy。
 - router 本身不持有 core accounting state；切换 router 需要用户/集成侧重新授权或改用新入口，但不迁移 position、uAsset debt 或 SY share state。
-- router 不获得 upgrade admin、timelock、pause 或 oracle 管理能力；owner 只维护 router 的 SY 白名单、SP -> SY 配对登记、launcher 地址以及脱困回收 `sweep`（`OutrunRouter.sol::sweep`，`onlyOwner nonReentrant`，无背书资产故无 blocklist，瞬态余额上限约单笔交易量，见 §1.2/§7.6）—— 均为 pre-mainnet 临时能力，主网前随 `OutrunRouter.sol` OutrunTODO 清理清单冻结移除。
+- router 不获得 upgrade admin、timelock、pause 或 oracle 管理能力；owner 只维护 router 的 SY 白名单、SP -> SY 配对登记、launcher 地址以及脱困回收 `sweep`（`OutrunRouter.sol::sweep`，`onlyOwner nonReentrant`，无背书资产故无 blocklist，瞬态余额上限约单笔交易量，见 §1.2/§7.6）—— 均为持续 live 的动态注册表能力，由 `Ownable` 持有、产品外经 multisig 治理（产品合约内不设 `TimelockController`）。
 
 ### 1.2 Router target registry
 
@@ -24,8 +24,8 @@
 - 每次 SP 路径都会重新读取 `SP.SY()` 与登记值比较；即使 pair 曾经登记成功，canonical SY 发生漂移也会在拉取或 approve 前回退。
 - `OutrunRouter.sol::setTrustedSP(SP, address(0))` 用于撤销配对；`OutrunRouter.sol::setTrustedSY(SY, false)` 只撤销 SY 信任，不会自动清零已有的 SP mapping，但后续调用会因 SY 不再 trusted 而失败，因此应显式撤销 pair 并核对 getter / event。
 - 撤销 SY 或配对只影响后续 router 入口，已完成的 position、uAsset debt 和 SY share state 不受影响。
-- `OutrunRouter.sol::sweep(token,to,amount)` 为 owner-only 脱困回收，`onlyOwner nonReentrant`，零地址回退 `SweepZeroAddress`、零额回退 `SweepZeroAmount`，经 `TokenHelper._transferOut` 支持 `NATIVE` sentinel（`address(0)`）的 ERC20/native 转出并发 `Sweep(token,to,amount)` 事件；无 yield-token/SY-share blocklist 为有意设计——路由器本身不托管背书资产，余额仅在 `_mintSY` 到 `SP.stake/wrapStake` 的同一交易瞬态内出现，上界约单笔 `tokenIn` 量，非全池；主网前随 OutrunTODO 一并移除。
-- 当前 setter 与 `sweep` 均为 pre-mainnet deployment wiring：部署后先注册全部 SY，再登记匹配的 SP -> SY pair，核对 getter 与事件后才开放入口。主网发布前冻结并移除全部临时 owner/admin 面（包括 `OutrunRouter.sol::setTrustedSY`、`OutrunRouter.sol::setTrustedSP`、`OutrunRouter.sol::setMemeverseLauncher`、`OutrunRouter.sol::sweep` 及对应 `IOutrunRouter` 接口/事件/错误和 `Ownable` 继承），主网不依赖运行期新增或替换 target。
+- `OutrunRouter.sol::sweep(token,to,amount)` 为 owner-only 脱困回收，`onlyOwner nonReentrant`，零地址回退 `SweepZeroAddress`、零额回退 `SweepZeroAmount`，经 `TokenHelper._transferOut` 支持 `NATIVE` sentinel（`address(0)`）的 ERC20/native 转出并发 `Sweep(token,to,amount)` 事件；无 yield-token/SY-share blocklist 为有意设计——路由器本身不托管背书资产，余额仅在 `_mintSY` 到 `SP.stake/wrapStake` 的同一交易瞬态内出现，上界约单笔 `tokenIn` 量，非全池；该能力随注册表持续 live，由 `Ownable`（产品外 multisig）管控，不随主网上线移除。
+- 当前 setter 与 `sweep` 为持续 live 的动态注册表能力：部署后先注册首批 SY/SP 并核对 getter/事件，后续运行期仍可经 `OutrunRouter.sol::setTrustedSY`/`setTrustedSP`/`setMemeverseLauncher`/`sweep` 动态新增、撤销或救援，均由 `Ownable`（产品外 multisig）管控，产品合约内不设 `TimelockController`；治理与监控见 `docs/spec/access-control.md`。
 
 ## 2. token / native -> SY
 
@@ -147,7 +147,7 @@
 - router 在 stake 后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 - router 校验 `mintedUAsset <= type(uint128).max`。
 - 之后 router 授权 `memeverseLauncher`，再调用 `memeverseLauncher.genesis(verseId, uint128(mintedUAsset), genesisUser)`。
-- router 当前不会在 `genesis(...)` 返回后再检查 launcher 是否把本次 allowance 全部消费；这一步依赖当前 launcher 实现按传入的 `mintedUAsset` 精确拉取 `uAsset`。
+- 之后 router 做严格后置校验（`G-039`）：`genesis(...)` 返回后读取 `IERC20(uAsset).balanceOf(address(this))` 与 `IERC20(uAsset).allowance(address(this), launcher)`，任一非零即回退 `GenesisUAssetNotConsumed(residualBalance, residualAllowance)`；要求 launcher 在同一交易内 `transferFrom` 消费全部 `mintedUAsset`（`balance==0 && allowance==0`，遗留 1 wei 即回退），避免无救援路径的残留余额/授权。旧版 spec 误写为“不会检查、依赖 launcher 实现”，现已修正——代码自 `daf879c` 起即为 fail-closed 断言。
 
 ### 7.2 genesisBySY
 
@@ -155,13 +155,13 @@
 - 后续和 `genesisByToken(...)` 一样，仍然调用 `SP.stake(...)` 创建 locked position。
 - router 在 stake 后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 - 最终也是由 launcher 拉走本次 stake 产出的 `uAsset`。
-- router 当前不会对 launcher 的 allowance 消费结果做额外断言；精确消费由当前 launcher 实现负责。
+- 最终同样受与 `genesisByToken` 相同的严格后置校验覆盖：`genesis(...)` 返回后 `balance==0 && allowance==0` 否则 `GenesisUAssetNotConsumed`（`G-039`），精确消费由代码断言保证而非仅依赖 launcher 实现；旧版“不会额外断言”已过时。
 
 ### 7.3 当前实现可确认的 genesis 语义
 
 - genesis 当前一定会生成 locked position，并写入 `deadline`。
 - genesis 当前不会走 wrap 池，所以不会增加 `syWrapStaking`。
-- 测试明确证明：`genesisBySY(...)` 成功后 `syWrapStaking == 0`，`syTotalStaking` 增加；在当前受信任的 launcher 实现下，本次 stake 产出的 `uAsset` 会被 launcher 拉走，而不是留在用户或 router。
+- 测试明确证明：`genesisBySY(...)` 成功后 `syWrapStaking == 0`，`syTotalStaking` 增加；`genesisByToken`/`genesisBySY` 均经 `OutrunRouter.sol::_genesisFromSYBalance` 同一尾部，后置 `GenesisUAssetNotConsumed` 严格检查覆盖两入口——在当前受信任且正确实现的 launcher 下本次 `uAsset` 会被完全拉走，否则整笔回退而非残留。
 - genesis 入口没有 preview 参数；`genesisByToken(...)` 有 `minSyOut` 和 `minUAssetMinted`，`genesisBySY(...)` 有 `minUAssetMinted`。
 
 ### 7.4 launcher 配置校验
@@ -169,8 +169,8 @@
 - `OutrunRouter` 的 constructor 与 `setMemeverseLauncher(...)` 会在配置期 fail fast，拒绝 `address(0)` 和 `code.length == 0` 的 launcher 地址。
 - `OutrunRouter.sol::setMemeverseLauncher` 成功轮换时发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件已落地（`IOutrunRouter.sol` 声明、`OutrunRouter.sol::_setMemeverseLauncher` emit）。部署验收时注意 constructor 部署期同样经 `_setMemeverseLauncher` 首发 `SetMemeverseLauncher(address(0), launcher)`（`oldLauncher` 为零初值），并核对 `OutrunRouter.sol::memeverseLauncher` 读取值。
 - genesis 流程可把 `memeverseLauncher` 已通过配置期 code-size 校验视为前置条件。
-- router 对 launcher 的运行期信任边界目前只到“地址存在代码、当前实现按参数执行 `genesis(...)`”；router 不额外校验 launcher 是否把本次 allowance 精确消费完。
-- 这属于运行/测试可观测性加固，不改变 launcher 内部仍是外部信任边界这一语义。
+- router 对 launcher 的运行期信任边界已从“地址存在代码即信任”升级为可验证断言：`genesis(...)` 返回后必须 `balance==0 && allowance==0`，否则 `GenesisUAssetNotConsumed` 整笔回退（`OutrunRouter.sol:403-407`，`G-039`）；配置期 code-size 校验仍为前置条件，运行期再以同一交易内后置检查兜底。
+- 该后置检查属于运行期可观测性/健壮性加固（`daf879c` 引入），不改变 launcher 内部仍是外部信任边界这一语义，但将“完全消费”从信任假设升级为强制断言。
 
 ### 7.5 target registry 与撤销
 
@@ -185,8 +185,9 @@
 - `InvalidMemeverseLauncher(address)` 由 `OutrunRouter.sol::_setMemeverseLauncher` 在 `_memeverseLauncher.code.length == 0` 时触发；`OutrunRouter.sol::constructor` 与 `OutrunRouter.sol::setMemeverseLauncher` 都经过该检查，因此配置阶段对零地址和无代码地址 fail fast。
 - `IOutrunRouter.sol::InvalidMemeverseLauncher` 是该公共 error 的 canonical 声明来源，`OutrunRouter.sol` 通过继承暴露相同 selector/revert payload；使用 Solidity 类型化 selector 的集成代码从 `OutrunRouter.InvalidMemeverseLauncher.selector` 迁移到 `IOutrunRouter.InvalidMemeverseLauncher.selector`，仅发生源码命名空间迁移，链上 ABI/runtime 保持。
 - `InsufficientUAssetMinted(...)` 由 `OutrunRouter.sol::_assertMinUAssetMinted` 在实际 `mintedUAsset < minUAssetMinted` 时触发。locked stake/genesis 在 `OutrunRouter.sol::_stakeFromSYBalance` 返回后检查，wrap stake 在 `OutrunRouter.sol::_wrapStakeFromSYBalance` 完成 `SP.wrapStake(...)` 后检查；检查失败会回退整笔调用。
-- `SweepZeroAddress()` / `SweepZeroAmount()` 由 `OutrunRouter.sol::sweep` 在 `to == address(0)` / `amount == 0` 时触发，避免静默无操作；`Sweep(address indexed token,address indexed to,uint256 amount)` 事件记录回收。`sweep` 可转出路由器当前持有的任意 ERC20/native（含瞬态 SY/uAsset），无 per-token blocklist 为有意——路由器无背书资产，外置 SY 的 `yieldBearingToken` / `address(this)` blocklist（`SYBaseUpgradeable.sol::sweep`）不适用；瞬态风险仅限单笔交易内余额且受 `onlyOwner` + `nonReentrant`（`ReentrancyGuardTransient`）保护，未授权调用方 DENIED，主网前移除，运行手册需以 OutrunTODO 清单核对 `owner()` 已冻结/移交 timelock。
-- 下游 `SY` 的 `deposit(...)` / `redeem(...)`、`SP` 的 `SY()` / `stake(...)` / `wrapStake(...)` 以及 launcher 的 `genesis(...)` 若自身回退，router 不捕获、不改写错误数据，原始 revert 透传给上层；router 自身的白名单、金额、精确 approve、最小铸造量和 `uint128` 边界检查可能在相应下游调用前先回退。launcher 仅在配置期做 code-size 校验，`genesis(...)` 返回后 router 不额外断言 allowance 是否已被精确消费。
+- `SweepZeroAddress()` / `SweepZeroAmount()` 由 `OutrunRouter.sol::sweep` 在 `to == address(0)` / `amount == 0` 时触发，避免静默无操作；`Sweep(address indexed token,address indexed to,uint256 amount)` 事件记录回收。`sweep` 可转出路由器当前持有的任意 ERC20/native（含瞬态 SY/uAsset），无 per-token blocklist 为有意——路由器无背书资产，外置 SY 的 `yieldBearingToken` / `address(this)` blocklist（`SYBaseUpgradeable.sol::sweep`）不适用；瞬态风险仅限单笔交易内余额且受 `onlyOwner` + `nonReentrant`（`ReentrancyGuardTransient`）保护，未授权调用方 DENIED，持续 live（`Ownable` 产品外 multisig 治理，产品合约内不设 `TimelockController`）。
+- `GenesisUAssetNotConsumed(uint256 residualBalance, uint256 residualAllowance)` 由 `OutrunRouter.sol::_genesisFromSYBalance` 在 `IMemeverseLauncher.genesis` 返回后触发：`residualBalance = IERC20(uAsset).balanceOf(address(this))`、`residualAllowance = IERC20(uAsset).allowance(address(this), launcher)` 任一非零即回退（`G-039` 严格 `==0`，1 wei 残留即回退），覆盖 `genesisByToken`/`genesisBySY` 两入口；`mintedUAsset` 已在 `uint128` 边界内，此检查在同一 `nonReentrant` 交易内原子执行，launcher 无法跨块延迟消费。旧版“不额外断言”已修正。
+- 下游 `SY` 的 `deposit(...)` / `redeem(...)`、`SP` 的 `SY()` / `stake(...)` / `wrapStake(...)` 以及 launcher 的 `genesis(...)` 若自身回退，router 不捕获、不改写错误数据，原始 revert 透传给上层；router 自身的白名单、金额、精确 approve、最小铸造量、`uint128` 边界与上述 `GenesisUAssetNotConsumed` 后置检查可能在相应下游调用前/后回退。
 
 ## 8. preview 语义与 slippage 边界
 

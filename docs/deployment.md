@@ -60,6 +60,44 @@
   2. 核对 `OutboundRateLimitSet(dstEid, limit, window)` 事件参数与 `rateLimits(dstEid).limit/window` 读取值一致
   3. 执行 `quoteOFT(SendParam)` 抽检 `maxAmountLD` 受限于新限额且 `minAmountLD == decimalConversionRate`
 - 失败特征：误配为 SD 量级时 `getAmountCanBeSent` 返回 dust 级、`quoteOFT.maxAmountLD == 0` 或 `1e12`，出站即 `RateLimitExceeded`；与在途超限不同，dust 限额不随衰减自愈，需重配正限额或 `removeOutboundRateLimit` 恢复
+- 暂停误用警告（G-031）：`removeOutboundRateLimit` 会 `delete` 整条 `RateLimit` 记录（`amountInFlight/lastUpdated/limit/window` 一并清零），重设 `setOutboundRateLimit` 后从零会计、满额开始，不保留衰减后残留；不可当作“暂停限流但保留会计”的开关。需保留会计的暂停应直接重配（`setOutboundRateLimit` 会先以 `amount==0` checkpoint 结算，见 `OutrunRateLimiterUpgradeable.sol::_setRateLimits`）或使用 `pause` 熔断；删除后应监控 `OutboundRateLimitRemoved` 与 `isRateLimited(dstEid)==false` 的无限态，重设后复核 `isRateLimited==true` 且 `getAmountCanBeSent` 接近新限额（见 `docs/spec/common-foundations.md## OFT 与 rate limiter` 与 `OutrunRateLimiterUpgradeable.sol:200-201`）
+
+## 跨链信任根投产校验与应急处置 (G-033/G-034)
+
+`OutrunOFTUpgradeable.sol::_credit` 的入站铸币权完全委托给 LayerZero `endpoint` / `DVN` / `peers` 三元组（`OAppUpgradeable::lzReceive` 校验后经 `OFTCoreUpgradeable::_lzReceive` 调 `OutrunOFTUpgradeable::_credit` 直调 `OutrunERC20Upgradeable::_update` 铸造，不叠加链上二次签名/金额复核）。该路径为跨链活性刻意 bypass `OutrunERC20PausableUpgradeable::whenNotPaused`（`docs/spec/common-foundations.md## Pause 与跨链 OFT 执行边界` PA-1、`docs/spec/common-foundations.md## OFT 信任根与入站不限流/暂停豁免边界`），但导致目标链单方 `pause()` 不阻断入站增发，`totalSupply` 可单边增长需告警（`PositionPauseMatrix.t.sol` 回归，G-034）。语义真值在 `docs/spec/common-foundations.md`，本节为操作真值。
+
+- 信任根：`endpoint` 地址、`DVN` quorum/`enforcedOptions`/`ULN` 配置、`peers[dstEid]` 三者即为伪造边界；任意一方被接管/误配即可按 `uint64` wire 包络 `OutrunOFTUpgradeable::_maxOFTAmountLD = type(uint64).max × decimalConversionRate` 单消息任意 `_amountLD`、无限消息累积铸造，无链上 cap。
+- 限流与暂停边界：`OutrunRateLimiterUpgradeable::_outflow` 仅在 `OutrunOFTUpgradeable::_debit` 出站 burn 前记账，`_credit` 入站不经限流、不减 `amountInFlight`；`getAmountCanBeSent`/`quoteOFT` 的出站可用额度不约束入站；单链 `pause()` 仅阻断本地 transfer/`mint`/`repay` 与 pause 之后新发起的 outbound send，不阻断已在途入站（G-034）。
+- 投产校验（每条 `dstEid` peer 部署/变更后必做，记录为验收证据）：
+  1. 调用 `peers(dstEid)` 核对远端 uAsset 地址与各链同址预期一致；核对 `endpoint` 地址与部署配置一致
+  2. 核对 DVN quorum 与 `enforcedOptions` 在源/目的链对称配置，`quoteSend` 探测往返
+  3. 调用 `isRateLimited(dstEid)` 确认为 `true` 且 `getAmountCanBeSent` 接近限额，监控 `OutboundRateLimitRemoved` 与新 `peers` 的无限态
+  4. 读取 `nextNonce`/`allowInitializePath` 等路径初始化状态（如启用）
+- 监控告警（链下必配）：
+  1. 暂停期入站告警：`paused()==true` 期间的 `_credit` mint（`Transfer(address(0), to, amount)` 且 `srcEid` 非零来源）与 `totalSupply` 单边增长；告警阈值按 `rateLimiter.limit × peers` 估算在途上限（G-030）
+  2. 跨链突增告警：`totalSupply` 跨链突增、单笔 `amountLD` 接近 `uint64.max × DCR`、单位时间 `_credit` 次数/总量异常
+  3. 配置漂移告警：`PeerSet`/`OutboundRateLimitSet`/`OutboundRateLimitRemoved`/`EnforcedOptionSet` 等事件的未授权变更
+- 应急处置 runbook（G-034 活性豁免的运维收敛，`pause` 为不完全熔断）：
+  1. 定序：先在所有对端链暂停出站（`pause()` 阻断 `send`/`_debit`），再在目标链 `pause()`；仅暂停目标链不能止血，已在途报文仍会 `lzReceive→_credit` 铸造（endpoint 时序决定，非 `block.timestamp`）
+  2. 止血：对受影响 `srcEid` 执行 `setPeer(eid, bytes32(0))` 撤销 peer（`onlyOwner`），阻断该通道后续 `lzReceive` 的 peer 校验；必要时同步调整 DVN/`enforcedOptions` 或暂停 endpoint 通道
+  3. 排空：在途报文上限 = `Σ rateLimiter.limit`（每 peer 独立），需等待或通过 endpoint 侧重放/丢弃策略排空后，再 `unpause()` 恢复
+  4. 禁忌：不可通过给 `_credit` 加 `whenNotPaused` 代码修复——会造成源链已 burn、目标链 revert 的永久丢资产（burn-without-mint），与 PA-1 活性保证冲突；本处置为文档/监控收敛，无代码改动（accepted risk）
+
+## Keeper/Harvest 权限分区与活性布线 (G-037)
+
+`OutrunStakingPositionUpgradeable.sol::keepRedeem` / `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 仅 `OutrunStakingPositionUpgradeable.sol::keeper` 可调用（`keeper()` 比对 `msg.sender`，非 keeper `PermissionDenied`），`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 仅 owner 可调用（`onlyOwner`）。该分区为故意设计（`docs/audits/2026-08-24/04a-guidelines-position-assets.md:85`、`docs/spec/access-control.md`、`docs/spec/position/state-machines.md` §7.2），非缺陷，但需部署布线保证清算与收割活性。
+
+- 信任边界：keeper 为不可信活性角色（通常为 EOA/bot），需预先对 position 合约授权 uAsset 额度以执行 `repay` 销债；owner 为可信多签，控制 `revenuePool`/`minTokenOut`/`setKeeper`/`pause`；二者不可互替，keeper 无法收割，owner 无法直接清算。
+- 布线选项（选一并记录为验收证据）：
+  1. 共控 bot：`OutrunStakingPositionUpgradeable.sol::setKeeper` 设为由 owner 多签共控的 bot 地址，bot 负责 `keepWrapRedeem`/`keepRedeem`，owner 负责 `harvestWrapYield`；`SetKeeper` 事件为审计点。
+  2. owner 自提升清算：需清算时 owner 先 `OutrunStakingPositionUpgradeable.sol::setKeeper(owner)` 将自身设为 keeper，再以 keeper 身份调用 `keep*`，完成后可 `setKeeper` 切回 bot；该路径为单交易可恢复 liveness halt，不属权限提升（owner 已是 `setKeeper` 控制者）。
+  3. 不推荐给 keeper 开放 `harvestWrapYield`：若需 keeper 触发收割，应新增带 `revenuePool`/`minTokenOut` 白名单的包装入口并经 owner 审批，而非直接将 `harvestWrapYield` 改为 `onlyOwnerOrKeeper`（`04a:85` 指出需附加 destination/slippage 控制）。
+- 投产校验：
+  1. `OutrunStakingPositionUpgradeable.sol::keeper()` 读取值与预期 keeper 地址一致，`revenuePool()` 与预期一致
+  2. 以 keeper 身份 `keepWrapRedeem`/`keepRedeem` 可成功（`uAsset` 已 approve），以非 keeper 调用预期 `PermissionDenied`
+  3. 以 owner 身份 `harvestWrapYield(SY,0)` 在有超额时可成功，非 owner 预期 `OwnableUnauthorizedAccount`；无超额时返回 0 不发事件
+  4. `SetKeeper`/`HarvestWrapYield`/`KeepRedeem`/`KeepWrapRedeem` 事件与链上余额核对一致
+- 监控告警：`syWrapStaking - wrapDebtInSY` 超额持续增长而 `harvestWrapYield` 久未触发，或到期仓位 `deadline` 已过而 `keepRedeem` 未触发，均视为布线/活性告警（非资金损失，仅 halt）。
 
 ## 运行时入口
 

@@ -192,6 +192,15 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `OutrunStakingPositionUpgradeable.sol::setKeeper` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 keeper 权限并发出 indexed `SetKeeper(keeper)`。
 - 三个配置事件中 `SetMinStake` 只记录新值，`SetRevenuePool`/`SetKeeper` 为 indexed；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 15 个 manager errors。
 
+### 7.2 Keeper/Owner 操作分区与部署布线 (G-037)
+
+`OutrunStakingPositionUpgradeable.sol::keepRedeem` 与 `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 仅 keeper 可调用（`OutrunStakingPositionUpgradeable.sol::keepRedeem` / `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 以 `keeper()` 比对 `msg.sender`，非 keeper 回退 `PermissionDenied`），`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 仅 owner 可调用（`onlyOwner`）。该分区为故意设计：不可信 keeper 只承担到期清算活性，可信 owner 只承担收益收割与 `revenuePool`/`minTokenOut` 控制，不交叉。
+
+- keeper 无收割权：`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 的 `onlyOwner` 使 keeper 机器人无法提取 `syWrapStaking - wrapDebtInSY` 超额至 `revenuePool`。
+- owner 无清算权：`keep*` 的 `keeper()` 检查使 owner 多签无法直接 `OutrunStakingPositionUpgradeable.sol::keepRedeem` / `::keepWrapRedeem`，除非先 `OutrunStakingPositionUpgradeable.sol::setKeeper` 将自身设为 keeper（`onlyOwner`，`SetKeeper` 可审计）后再以 keeper 身份调用；或将 keeper 设为由 owner 共控的 bot 地址，使两角色共置。
+- 不建议给 keeper 开放 `harvestWrapYield`：`harvestWrapYield` 的 `tokenOut`/`minTokenOut`/`revenuePool` 目标需仅由 owner 控制（`docs/audits/2026-08-24/04a-guidelines-position-assets.md:85`），keeper 收割会引入收益重定向与滑点风险。
+- 活性含义：若 keeper 与 owner 未布线共置，清算与收割各自停滞时不造成资金损失，仅 liveness halt；owner 仍可经 `OutrunStakingPositionUpgradeable.sol::redeem` 自赎个人仓位。部署 runbook 见 `docs/deployment.md` G-037 节。
+
 ## 8. Pause / unpause 的影响 (PA-1)
 
 > 审计 PA-1 暂停矩阵：三 owner 开关任一关闭即冻结 SP 全部用户面；uAsset 暂停为全协议熔断但 `_credit` 仍增供给（单边增长）。本节为执行真值，运维矩阵与告警见 `docs/deployment.md`。

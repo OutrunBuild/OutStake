@@ -20,12 +20,12 @@
 - **syWrapStaking**：wrap 池中的 SY 本金量。
 - **wrapUAssetDebt**：wrap 池的 uAsset 总债务。
 - **drawUAsset**：提取仓位升值部分对应的 uAsset 债务。仅在仓位锁定期内（`block.timestamp < deadline`）可用；到期后 revert `LockTimeExpired`。
-- **keepRedeem**：keeper 代偿已到期的锁仓仓位债务。
-- **keepWrapRedeem**：keeper-only 入口；keeper 烧自己的 uAsset 兑换 wrap 池 SY（仅直付 SY），池子抵押不足时 revert WrapPoolUndercollateralized（全有或全无兑付，不再 pro-rata）。
-- **harvestWrapYield**：提取 wrap 池中超出债务等值 SY 的超额收益至 revenuePool。
+- **keepRedeem**：keeper-only 入口（`OutrunStakingPositionUpgradeable.sol::keepRedeem` 校验 `keeper()`，非 keeper `PermissionDenied`），keeper 代偿已到期的锁仓仓位债务；与 `OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 的 `onlyOwner` 分区为故意设计（G-037）。
+- **keepWrapRedeem**：keeper-only 入口（`OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 校验 `keeper()`，非 keeper `PermissionDenied`）；keeper 烧自己的 uAsset 兑换 wrap 池 SY（仅直付 SY），池子抵押不足时 revert `WrapPoolUndercollateralized`（全有或全无兑付，不再 pro-rata）；与 `OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 的 `onlyOwner` 分区为故意设计（G-037）。
+- **harvestWrapYield**：owner-only 入口（`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` `onlyOwner`），提取 wrap 池中超出债务等值 SY 的超额收益至 `revenuePool`；keeper 无权调用，与 `keepRedeem`/`keepWrapRedeem` 的 `keeper` 分区为故意设计（G-037）。
 - **NATIVE**：address(0) 的别名，用于统一标识 chain native coin（如 ETH、BNB）。
 - **Position Owner**：锁仓仓位的拥有者，拥有 drawUAsset 和 redeem 权限。注意：仓位 owner 和初始 uAsset receiver 可以是不同地址。
-- **Keeper**：由 owner 设置的单一地址，拥有 keepRedeem 与 keepWrapRedeem 权限。
+- **Keeper**：由 owner 经 `OutrunStakingPositionUpgradeable.sol::setKeeper` 设置的单一地址，仅拥有 `OutrunStakingPositionUpgradeable.sol::keepRedeem` 与 `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 权限，无 `OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 权限（该入口为 `onlyOwner`）；与 harvest 的职责分离为故意设计，部署需 keeper/owner 共置布线，见 `docs/spec/access-control.md` 与 `docs/deployment.md` G-037。
 - **Revenue Pool**：接收 wrap 池超额收益的地址。
 - **Minter**：在 uAsset 合约中被 owner 授予 mintingCap 的地址，可在额度内铸造 uAsset。
 - **mintingCap**：minter 的铸造上限。
