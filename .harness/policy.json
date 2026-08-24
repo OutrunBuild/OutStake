@@ -188,7 +188,9 @@
         "test/upgradeable/SYAdaptersUpgradeable.t.sol",
         "test/upgradeable/SYAdaptersFork.t.sol",
         "test/upgradeable/OracleSetterUpgradeable.t.sol",
-        "test/verification/SweepResidual.t.sol"
+        "test/verification/SweepResidual.t.sol",
+        "test/upgradeable/OracleInvariant.t.sol",
+        "test/upgradeable/SYInvariant.t.sol"
       ],
       "rules": [
         {
@@ -304,6 +306,30 @@
         "id": "outstake-router-drift-fix-gap",
         "paths": [
           "test/deploy/OutstakeRouterDriftFix.t.sol"
+        ],
+        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
+        "enforcement": "residual-risk"
+      },
+      {
+        "id": "l2-oracle-backed-init-gap",
+        "paths": [
+          "test/upgradeable/L2OracleBackedInit.t.sol"
+        ],
+        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
+        "enforcement": "residual-risk"
+      },
+      {
+        "id": "oracle-invariant-gap",
+        "paths": [
+          "test/upgradeable/OracleInvariant.t.sol"
+        ],
+        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
+        "enforcement": "residual-risk"
+      },
+      {
+        "id": "sy-invariant-gap",
+        "paths": [
+          "test/upgradeable/SYInvariant.t.sol"
         ],
         "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
         "enforcement": "residual-risk"

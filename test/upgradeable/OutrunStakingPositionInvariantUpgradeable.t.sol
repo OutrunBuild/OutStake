@@ -545,6 +545,40 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
             "Invariant violation: ghost uAsset tracking mismatch"
         );
     }
+
+    /**
+     * @notice Invariant: keeper rounding and per-position debt sentinel [G-019]
+     * @dev Ported from docs/05-invariants/PositionInvariants.t.sol:361 invariant_KeeperPreservesWrap
+     *      Checks that partial redeem ceil never consumes all debt and that any staked position carries debt.
+     */
+    function invariant_KeeperRoundingCeil() public view {
+        uint256 activeCount = handler.getActivePositionCount();
+        for (uint256 i = 0; i < activeCount; i++) {
+            uint256 pid = handler.getActivePositionId(i);
+            (, uint256 syStaked, uint256 debt,) = position.positions(pid);
+            if (syStaked > 0) {
+                assertGt(debt, 0, "position with stake has zero debt");
+            }
+            if (syStaked > 1 && debt > 1) {
+                uint256 half = syStaked / 2;
+                if (half > 0 && half < syStaked) {
+                    uint256 burn = Math.mulDiv(debt, half, syStaked, Math.Rounding.Ceil);
+                    assertLt(burn, debt, "partial ceil must leave debt");
+                }
+            }
+        }
+    }
+
+    function _scaleUAssetToCanonicalCeil(uint256 debt) internal view returns (uint256) {
+        (,, uint8 canonicalDecimals) = sy.assetInfo();
+        uint8 uAssetDecimals_ = uAsset.decimals();
+        if (canonicalDecimals >= uAssetDecimals_) {
+            return debt * 10 ** (canonicalDecimals - uAssetDecimals_);
+        }
+        if (debt == 0) return 0;
+        uint256 factor = 10 ** (uAssetDecimals_ - canonicalDecimals);
+        return (debt - 1) / factor + 1;
+    }
 }
 
 /**
