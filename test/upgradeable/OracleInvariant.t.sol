@@ -232,6 +232,8 @@ contract OracleHandler is Test {
     uint256 public ghostCalls;
 
     constructor() {
+        // Defensive warp for Forge default timestamp=1 so block.timestamp - 7200 never underflows.
+        if (block.timestamp < 7200) vm.warp(7200);
         aggregator = new MockAggregator(8);
         sequencer = new MockSequencer();
         rateProvider = new MockRateProvider();
@@ -324,6 +326,8 @@ contract OracleInvariants is StdInvariant, Test {
     MockPSM public psm;
 
     function setUp() public {
+        // Forge starts at timestamp 1; OracleHandler needs block.timestamp >= 7200 for initial sequencer grace setup.
+        vm.warp(100_000);
         handler = new OracleHandler();
         harness = handler.harness();
         aggregator = handler.aggregator();
@@ -350,6 +354,8 @@ contract OracleInvariants is StdInvariant, Test {
 
     /// @notice Reverts when heartbeat exceeds threshold (staleness > maxStaleness).
     function invariant_RevertIfStale() public {
+        // Ensure band does not mask staleness: set wide band that contains 1e8 (handler may have narrowed it).
+        harness.setBand(5e7, 2e8);
         // push feed into stale region
         uint256 staleAt = block.timestamp - harness.maxStaleness() - 1;
         // keep answer positive and in-band
@@ -362,6 +368,8 @@ contract OracleInvariants is StdInvariant, Test {
 
     /// @notice Reverts while L2 sequencer is down or in grace window.
     function invariant_RevertIfSequencerDown() public {
+        // Ensure band does not mask sequencer check.
+        harness.setBand(5e7, 2e8);
         // feed fresh
         aggregator.setRoundData(1, 1e8, block.timestamp, block.timestamp, 1);
         // sequencer DOWN

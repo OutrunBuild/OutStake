@@ -132,10 +132,13 @@ contract SYAdaptersUpgradeableTest is Test {
         uint256 scaledDelta = aToken.scaledBalanceOf(sy) - scaledBefore;
         vm.stopPrank();
 
-        assertEq(previewShares, 2);
+        // Underlying preview uses floor (calcSharesFromAssetDown) while execution uses half-up rayDiv;
+        // for 3 @ 2e27 the conservative preview is 1, execution 2 (1 wei under-quote, see OutrunAaveV3SYUpgradeable).
+        assertEq(previewShares, 1);
         assertEq(sharesOut, 2);
-        assertEq(sharesOut, previewShares);
-        assertEq(sharesOut, scaledDelta);
+        assertEq(scaledDelta, 2);
+        assertGe(sharesOut, previewShares);
+        assertLe(sharesOut, previewShares + 1);
     }
 
     function testAaveATokenDepositUsesAaveRayDivRounding() external {
@@ -1107,12 +1110,13 @@ contract SYAdaptersUpgradeableTest is Test {
 
         // After the 9950/10000 conservative headroom, the native preview is `raw *9950/10000`
         // where `raw` is the double-floor quote. Execution via DepositAdapter is the single-floor
-        // raw, so actual is ~0.5% above preview. Check the discount identity.
+        // raw, so actual is ~0.5% above preview. Double-floor vs single-floor can diverge by 1 wei
+        // before the 9950 discount, so allow 1 wei tolerance.
         assertGe(actual, preview, "native weETH actual falls below conservative preview");
         // preview should equal raw*9950/10000 and actual should equal raw (within 1 wei of raw)
-        // so preview == actual*9950/10000 within rounding.
-        assertEq(preview, actual * 9950 / 10000, "native weETH preview not discounted by 9950/10000");
-        assertLe(actual, preview * 10000 / 9950 + 1, "native weETH actual exceeds discounted preview bound");
+        // so preview == actual*9950/10000 within 1 wei rounding. Double-floor can add 1 extra wei at dust.
+        assertApproxEqAbs(preview, actual * 9950 / 10000, 1, "native weETH preview not discounted by 9950/10000");
+        assertLe(actual, preview * 10000 / 9950 + 2, "native weETH actual exceeds discounted preview bound");
     }
 
     function testFuzz_L2OracleFamilyRoundtripIsExact(uint128 amountSeed) external {

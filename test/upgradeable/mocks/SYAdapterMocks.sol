@@ -20,14 +20,6 @@ contract MockToken is ERC20 {
     function mint(address to, uint256 amount) public virtual {
         _mint(to, amount);
     }
-
-    /// @notice Minimal IeETH seam for EtherFi preview simulation (shares == supply in mock).
-    /// @dev Returns synthetic 1M shares at genesis so getTotalPooledEther/shareRate stay consistent
-    ///      before any eETH has been minted, matching LiquidityPool's synthetic pooled.
-    function totalShares() external view returns (uint256) {
-        uint256 s = totalSupply();
-        return s == 0 ? 1_000_000 ether : s;
-    }
 }
 
 /// @notice Mock Aave aToken that tracks scaled balances with a configurable transfer index.
@@ -45,18 +37,6 @@ contract MockAToken is MockToken {
 
     function scaledBalanceOf(address user) external view returns (uint256) {
         return scaledBalances[user];
-    }
-
-    function getScaledUserBalanceAndSupply(address user) external view returns (uint256, uint256) {
-        return (scaledBalances[user], scaledSupply);
-    }
-
-    function scaledTotalSupply() external view returns (uint256) {
-        return scaledSupply;
-    }
-
-    function getPreviousIndex(address) external pure returns (uint256) {
-        return 0;
     }
 
     function mintScaled(address to, uint256 amount) external {
@@ -444,19 +424,43 @@ contract MockVault is MockToken, IERC4626 {
     }
 }
 
+/// @notice Mock SSR rate provider (auto-synced mock for PSM3 SSR seam).
+/// @dev Models IRateProviderLike: the L2 sUSDS SY derives exchangeRate as 1e18 * rate / 1e27,
+/// so a 1e18 quote corresponds to the 1e27 default parity rate. This instance is auto-created by MockPSM3.
+contract MockRateProvider {
+    uint256 public rate = 1e27;
+
+    function setRate(uint256 rate_) external {
+        rate = rate_;
+    }
+
+    function getConversionRate() external view returns (uint256) {
+        return rate;
+    }
+}
+
 /// @notice Mock PSM3 that swaps tokens at a configurable rate around one appreciating share token.
 /// @dev `shareToken` is the vault token that appreciates vs the underlying (e.g. sUSDS). Swaps into
 /// the share divide by `rate`; swaps out of the share multiply by `rate`; underlying<->underlying is 1:1.
 /// Also models IPSM3's `rateProvider` seam: the L2 sUSDS SY initializer auto-binds it as the SSR
-/// pricing source for exchangeRate (unset means zero, i.e. no provider configured).
+/// pricing source for exchangeRate. Defaults to a valid provider (fail-closed in prod, but tests need a valid default).
 contract MockPSM3 {
     address public shareToken;
     uint256 public rate = 1e18;
     address public rateProvider;
 
+    constructor() {
+        rateProvider = address(new MockRateProvider());
+    }
+
     function setRate(address shareToken_, uint256 rate_) external {
         shareToken = shareToken_;
         rate = rate_;
+        // Keep SSR in sync with PSM rate so exchangeRate deviation guard does not spuriously trip in SY tests.
+        // Ray = rate * 1e9 (1e18 -> 1e27). Tests that need divergence can call setRateProvider afterwards.
+        if (rateProvider != address(0)) {
+            try MockRateProvider(rateProvider).setRate(rate_ * 1e9) {} catch {}
+        }
     }
 
     function setRateProvider(address rp) external {
@@ -481,21 +485,6 @@ contract MockPSM3 {
 
     function previewSwapExactIn(address tokenIn, address tokenOut, uint256 amountIn) external view returns (uint256) {
         return _convert(tokenIn, tokenOut, amountIn);
-    }
-}
-
-/// @notice Mock SSR rate provider returning a configurable 1e27-scaled (ray) conversion rate.
-/// @dev Models IRateProviderLike: the L2 sUSDS SY derives exchangeRate as 1e18 * rate / 1e27,
-/// so a 1e18 quote corresponds to the 1e27 default parity rate.
-contract MockRateProvider {
-    uint256 public rate = 1e27;
-
-    function setRate(uint256 rate_) external {
-        rate = rate_;
-    }
-
-    function getConversionRate() external view returns (uint256) {
-        return rate;
     }
 }
 

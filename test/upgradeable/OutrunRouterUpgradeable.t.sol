@@ -7,12 +7,13 @@ import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
+import {NativeAmountMismatch} from "../../src/libraries/TokenHelper.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset, RouterMockLauncher} from "./mocks/RouterMocks.sol";
 
 contract OutrunRouterTest is Test {
-    bytes4 internal constant NATIVE_AMOUNT_MISMATCH_SELECTOR = IOutrunRouter.NativeAmountMismatch.selector;
+    bytes4 internal constant NATIVE_AMOUNT_MISMATCH_SELECTOR = NativeAmountMismatch.selector;
     bytes4 internal constant INVALID_MEMEVERSE_LAUNCHER_SELECTOR = IOutrunRouter.InvalidMemeverseLauncher.selector;
     RouterMockERC20 internal underlying;
     RouterMockSY internal sy;
@@ -23,7 +24,7 @@ contract OutrunRouterTest is Test {
 
     address internal owner = address(0xA11CE);
     address internal revenuePool = address(0xFEE);
-    bytes4 internal constant INVALID_PARAM_SELECTOR = bytes4(keccak256("InvalidParam()"));
+    bytes4 internal constant INVALID_PARAM_SELECTOR = IOutrunRouter.InvalidParam.selector;
 
     function setUp() external {
         underlying = new RouterMockERC20("Mock Asset", "mAST");

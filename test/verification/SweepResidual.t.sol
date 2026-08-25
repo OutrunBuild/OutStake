@@ -62,9 +62,25 @@ contract MockPartialAsBnbMinter {
 }
 
 /// @dev Partial mock: PSM3 that only consumes half of tokenIn.
+///      Also exposes IPSM3.rateProvider and IRateProviderLike.getConversionRate so L2 sUSDS SY can initialize
+///      (mirrors MockPSM3 SSR auto-sync; partial consumption remains for sweep residual testing).
 contract MockPartialPSM3 {
     address public shareToken;
     uint256 public rate = 1e18;
+    address public rateProvider;
+
+    constructor() {
+        // Self-provider so getConversionRate is available without an external MockRateProvider.
+        rateProvider = address(this);
+    }
+
+    function getConversionRate() external view returns (uint256) {
+        return rate * 1e9;
+    }
+
+    function setRateProvider(address rp) external {
+        rateProvider = rp;
+    }
 
     function setRate(address shareToken_, uint256 rate_) external {
         shareToken = shareToken_;

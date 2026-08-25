@@ -410,7 +410,7 @@ contract OutrunRouterFuzzTest is Test {
         sy.setDepositRate(2e18);
         assertEq(sy.previewDeposit(address(underlying), amount), amount * 2, "deposit preview should be non-identity");
 
-        uint256 preview = router.previewStakeFromToken(address(position), address(underlying), amount, stakeParam);
+        uint256 preview = router.previewStakeFromToken(address(position), address(underlying), amount);
 
         vm.prank(user);
         (, uint256 actualUAsset) = router.stakeFromToken(address(position), address(underlying), amount, stakeParam);
@@ -426,7 +426,7 @@ contract OutrunRouterFuzzTest is Test {
             lockupDays: 30, minSyOut: 0, minUAssetMinted: 0, owner: user, receiver: address(0)
         });
 
-        uint256 preview = router.previewStakeFromSY(address(position), amount, stakeParam);
+        uint256 preview = router.previewStakeFromSY(address(position), amount);
 
         vm.prank(user);
         (, uint256 actualUAsset) = router.stakeFromSY(address(position), amount, stakeParam);
