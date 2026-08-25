@@ -193,19 +193,19 @@
 
 当前 router 暴露的 preview 入口有：
 
-- `previewStakeFromToken(SP, tokenIn, tokenAmount, stakeParam)`
-- `previewStakeFromSY(...)`
+- `previewStakeFromToken(SP, tokenIn, tokenAmount)`
+- `previewStakeFromSY(SP, amountInSY)`
 - `previewWrapStakeFromToken(SP, tokenIn, tokenAmount)`
 
 router 只暴露上述 3 个交易级 preview；SP 级共有 6 个 preview（`previewStake`、`previewWrapStake`、`previewDrawUAsset`、`previewRedeem`、`previewWrapRedeem`、`previewKeepRedeem`）是完整 quote 族。它们的失败面与 0-vs-revert 语义以 [accounting.md §5](./accounting.md) 和 [§11.1](./accounting.md) 为 canonical；其中 `previewStakeFromToken` / `previewStakeFromSY` 会透传 `SP.previewStake` 的 `MinStakeInsufficient` / `ZeroExchangeRate` / dust-返 0，而 `previewWrapStakeFromToken` 会透传 `SP.previewWrapStake` 的 `ZeroInput` / `ZeroExchangeRate` / `DustRoundedToZero`。
 
 当前实现里，这些 preview 的语义边界很明确：
 
-- `previewStakeFromToken(SP, tokenIn, tokenAmount, stakeParam)` 不接收调用者传入的 `SY`；它先校验已登记的 SP -> SY 配对，再从 `SP.SY()` 派生 canonical `SY`，再做两步静态组合：
+- `previewStakeFromToken(SP, tokenIn, tokenAmount)` 不接收调用者传入的 `SY`；它先校验已登记的 SP -> SY 配对，再从 `SP.SY()` 派生 canonical `SY`，再做两步静态组合：
   - 从 `SP.SY()` 读取 canonical `SY`
   - `SY.previewDeposit(tokenIn, tokenAmount)`
   - `SP.previewStake(amountInSY)`；其语义与执行期一致：先做 `SY -> canonical asset`，再做 `canonical asset -> uAsset`
-- `previewStakeFromSY(...)` 先校验已登记的 SP -> SY 配对，再调用 `SP.previewStake(amountInSY)`；其语义同样是先 `SY -> canonical asset`，再做 `canonical asset -> uAsset`。
+- `previewStakeFromSY(SP, amountInSY)` 先校验已登记的 SP -> SY 配对，再调用 `SP.previewStake(amountInSY)`；其语义同样是先 `SY -> canonical asset`，再做 `canonical asset -> uAsset`。
 - `previewWrapStakeFromToken(SP, tokenIn, tokenAmount)` 不接收调用者传入的 `SY`；它先校验已登记的 SP -> SY 配对，再从 `SP.SY()` 派生 canonical `SY`，再做两步静态组合：
   - 从 `SP.SY()` 读取 canonical `SY`
   - `SY.previewDeposit(tokenIn, tokenAmount)`
@@ -213,7 +213,7 @@ router 只暴露上述 3 个交易级 preview；SP 级共有 6 个 preview（`pr
 
 当前 preview 不是完整成交保护，主要有这些边界：
 
-- `previewStakeFromToken(...)` 和 `previewStakeFromSY(...)` 接收 `stakeParam` 参数，但只使用 `stakeParam.lockupDays` 来消除未使用变量告警；preview 结果不反映：
+- `previewStakeFromToken(...)` 和 `previewStakeFromSY(...)` 不接收 `StakeParam`；preview 结果不反映：
   - `minSyOut`
   - `minUAssetMinted`
   - `owner`

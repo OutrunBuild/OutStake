@@ -50,8 +50,7 @@ interface IStandardizedYield is IERC20Metadata {
 
     /// @dev See `assetInfo()` for how an implementation exposes its canonical asset metadata.
     enum AssetType {
-        TOKEN,
-        LIQUIDITY
+        TOKEN
     }
 
     /**
@@ -167,7 +166,7 @@ interface IStandardizedYield is IERC20Metadata {
     /// @notice Returns information used to interpret the canonical asset.
     /// @dev The canonical asset metadata is for accounting and display boundaries. L2 adapters may report an
     ///     asset that is not deployed on the current chain.
-    /// @return assetType the type of the asset (0 for ERC20 tokens, 1 for AMM liquidity tokens)
+    /// @return assetType the type of the asset (0 for ERC20 tokens)
     /// @return assetAddress the address of the asset
     /// @return assetDecimals the decimals of the asset
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals);

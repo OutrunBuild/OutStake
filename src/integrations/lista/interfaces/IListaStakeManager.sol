@@ -12,16 +12,6 @@ interface IListaStakeManager {
     ///      measured by slisBNB balance difference.
     function deposit() external payable;
 
-    /// @notice Requests an asynchronous withdrawal (7-day unbonding).
-    /// @dev Not used by OutrunSlisBNBSY; withdrawal queuing remains outside the local adapter flow.
-    /// @param amountInSnBnb The slisBNB amount to unstake, in wei.
-    function requestWithdraw(uint256 amountInSnBnb) external;
-
-    /// @notice Claims a completed withdrawal request.
-    /// @dev Not used by OutrunSlisBNBSY; claim timing remains an external protocol concern.
-    /// @param idx The index of the withdrawal request to claim.
-    function claimWithdraw(uint256 idx) external;
-
     /// @notice Quotes the slisBNB output for a given BNB input.
     /// @dev OutrunSlisBNBSY consumes this for native BNB deposit previews.
     ///      OutrunAsBNBSYUpgradeable consumes this as a read-only conversion quote before calling the asBNB minter.
@@ -36,9 +26,4 @@ interface IListaStakeManager {
     /// @param amount The slisBNB amount to convert, in wei.
     /// @return The equivalent BNB amount, in wei.
     function convertSnBnbToBnb(uint256 amount) external view returns (uint256);
-
-    /// @notice Returns the total pooled BNB across all stakers.
-    /// @dev Exposed for integration reads; OutrunSlisBNBSY does not use it for local mint/redeem accounting.
-    /// @return The total pooled BNB, in wei.
-    function getTotalPooledBnb() external view returns (uint256);
 }

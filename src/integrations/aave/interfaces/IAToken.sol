@@ -23,27 +23,4 @@ interface IAToken {
      * @return The scaled balance for `user`.
      */
     function scaledBalanceOf(address user) external view returns (uint256);
-
-    /**
-     * @notice Returns a user's scaled balance together with the scaled total supply.
-     * @dev Not consumed by OutrunAaveV3SY in this repository; retained to mirror the Aave V3 aToken read surface.
-     * @param user The account to query.
-     * @return The user's scaled balance and the current scaled total supply.
-     */
-    function getScaledUserBalanceAndSupply(address user) external view returns (uint256, uint256);
-
-    /**
-     * @notice Returns the total scaled supply of the aToken.
-     * @dev Not consumed by OutrunAaveV3SY in this repository; retained to mirror the Aave V3 aToken read surface.
-     * @return The total scaled token supply.
-     */
-    function scaledTotalSupply() external view returns (uint256);
-
-    /**
-     * @notice Returns the previous liquidity index recorded for a user.
-     * @dev Not consumed by OutrunAaveV3SY in this repository; retained to mirror the Aave V3 aToken read surface.
-     * @param user The account to query.
-     * @return The previously stored index for `user`.
-     */
-    function getPreviousIndex(address user) external view returns (uint256);
 }

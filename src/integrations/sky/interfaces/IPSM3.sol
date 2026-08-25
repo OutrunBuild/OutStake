@@ -29,24 +29,6 @@ interface IPSM3 {
         uint256 referralCode
     ) external returns (uint256 amountOut);
 
-    /// @notice Swaps for an exact amount of `assetOut`, bounded by `maxAmountIn`.
-    /// @dev Exposed for the PSM surface; current local adapters do not rely on this path for SY accounting.
-    /// @param assetIn Address of the ERC-20 asset to swap in.
-    /// @param assetOut Address of the ERC-20 asset to swap out.
-    /// @param amountOut Amount of the asset to receive from the swap.
-    /// @param maxAmountIn Max amount of the asset to use for the swap.
-    /// @param receiver Address of the receiver of the swapped assets.
-    /// @param referralCode Referral code for the swap.
-    /// @return amountIn Resulting amount of the asset swapped in.
-    function swapExactOut(
-        address assetIn,
-        address assetOut,
-        uint256 amountOut,
-        uint256 maxAmountIn,
-        address receiver,
-        uint256 referralCode
-    ) external returns (uint256 amountIn);
-
     /// @notice Quotes `assetOut` for an exact `assetIn` swap.
     /// @dev OutrunL2StakedUsdsSY consumes this for deposit/redemption previews and as the PSM-side
     ///      deviation-guard reference in `exchangeRate()` (rate source is `IRateProviderLike`, not this quote).
@@ -58,18 +40,6 @@ interface IPSM3 {
         external
         view
         returns (uint256 amountOut);
-
-    /// @notice Quotes `assetIn` required for an exact `assetOut` swap.
-    /// @dev Exposed for quoting the PSM exact-output path; current local adapters do not rely on this path for
-    ///      SY accounting.
-    /// @param assetIn Address of the ERC-20 asset to swap in.
-    /// @param assetOut Address of the ERC-20 asset to swap out.
-    /// @param amountOut Amount of the asset to receive from the swap.
-    /// @return amountIn Amount of the asset that is required to receive amountOut.
-    function previewSwapExactOut(address assetIn, address assetOut, uint256 amountOut)
-        external
-        view
-        returns (uint256 amountIn);
 
     /// @notice Returns the PSM3 rate provider (SSR cross-chain mirror, 1e27).
     /// @return The rate provider address (immutable in canonical PSM3).
