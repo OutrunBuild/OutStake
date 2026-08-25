@@ -23,8 +23,7 @@ abstract contract AutoIncrementIdUpgradeable is Initializable {
         }
     }
 
-    /// @dev No initialization state: the counter slot starts at 0 and _nextId() pre-increments,
-    /// so ids begin at 1. Kept as a convention placeholder in the init chain (same shape as
+    /// @dev No initialization state — kept as a convention placeholder in the init chain (same shape as
     /// OpenZeppelin's ContextUpgradeable) so derived contracts can chain it in initialize().
     function __AutoIncrementId_init() internal onlyInitializing {}
 
@@ -36,8 +35,7 @@ abstract contract AutoIncrementIdUpgradeable is Initializable {
 
     /// @notice Increments the counter then returns it, ids start at 1.
     /// @return The newly issued id.
-    /// @dev Increments the counter before returning, so ids start at 1 and are monotonic.
-    /// Uses unchecked arithmetic because overflow of a uint256 counter is practically impossible.
+    /// @dev Uses unchecked arithmetic because overflow of a uint256 counter is practically impossible.
     function _nextId() internal returns (uint256) {
         AutoIncrementIdStorage storage $ = _getAutoIncrementIdStorage();
         unchecked {

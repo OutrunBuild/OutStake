@@ -22,7 +22,7 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @dev Approval refresh threshold.
     /// Some ERC20 tokens store allowances in 96 bits. When the remaining allowance drops below
     /// half of uint96 max, we refresh it back to max.
-    uint256 internal constant LOWER_BOUND_APPROVAL = type(uint96).max / 2; // some tokens use 96 bits for approval
+    uint256 internal constant LOWER_BOUND_APPROVAL = type(uint96).max / 2;
 
     /// @notice Transfers token from user; native via msg.value or ERC20 via transferFrom.
     /// @param token Address of the token to transfer (NATIVE sentinel for ETH/BNB).
@@ -45,7 +45,6 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param from Address to pull tokens from.
     /// @param to Address to transfer tokens to.
     /// @param amount Amount of tokens to transfer.
-    /// @dev Skips the ERC20 call for zero amount transfers.
     function _transferFrom(IERC20 token, address from, address to, uint256 amount) internal {
         if (amount != 0) token.safeTransferFrom(from, to, amount);
     }
@@ -70,8 +69,6 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @notice Returns this contract's native balance for NATIVE, ERC20 balance otherwise.
     /// @param token Address of the token to query (NATIVE sentinel for ETH/BNB).
     /// @return The token balance held by this contract.
-    /// @dev Returns this contract's native balance for the sentinel, otherwise the ERC20 balance.
-    // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
     function _selfBalance(address token) internal view returns (uint256) {
         return (token == NATIVE) ? address(this).balance : IERC20(token).balanceOf(address(this));
     }
@@ -93,7 +90,6 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param to Address to approve as spender.
     /// @dev On each invocation, refreshes an ERC20 allowance to max when it is below `LOWER_BOUND_APPROVAL`;
     ///      does not maintain a persistent max-allowance invariant. Native sentinel is ignored.
-    // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
     function _safeApproveInf(address token, address to) internal {
         if (token == NATIVE) return;
         uint256 currentAllowance = IERC20(token).allowance(address(this), to);

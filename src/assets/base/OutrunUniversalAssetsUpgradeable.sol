@@ -159,7 +159,6 @@ contract OutrunUniversalAssetsUpgradeable
         MintingStatus storage status = _mintingStatus(msg.sender);
         uint256 amountInMinted = status.amountInMinted;
         uint256 mintingCap = status.mintingCap;
-        // Check the minter (msg.sender) hasn't exceeded its cap.
         require(amount <= _remainingMintable(mintingCap, amountInMinted), ReachMintCap());
 
         // Update debt before _mint — keeps C-E-I ordering in case future
@@ -167,7 +166,6 @@ contract OutrunUniversalAssetsUpgradeable
         unchecked {
             status.amountInMinted = amountInMinted + amount;
         }
-        // Mint uAsset tokens to receiver.
         _mint(receiver, amount);
 
         emit MintUAsset(msg.sender, receiver, amount);
@@ -181,7 +179,6 @@ contract OutrunUniversalAssetsUpgradeable
 
         MintingStatus storage status = _mintingStatus(msg.sender);
         uint256 amountInMinted = status.amountInMinted;
-        // Check the minter has enough outstanding debt to cover the repayment.
         require(amountInMinted >= amount, ReachBurnCap());
 
         // Update debt before _burn — keeps C-E-I ordering in case future
@@ -192,7 +189,6 @@ contract OutrunUniversalAssetsUpgradeable
 
         // If repaying another account's balance, check allowance.
         if (account != msg.sender) _spendAllowance(account, msg.sender, amount);
-        // Burn uAsset from the account.
         _burn(account, amount);
 
         emit BurnUAsset(msg.sender, amount);

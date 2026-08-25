@@ -17,8 +17,7 @@ library SYUtils {
     /// @param exchangeRate Canonical asset per SY, scaled by 1e18.
     /// @param syAmount Amount of SY to convert.
     /// @return The equivalent asset amount, rounded down.
-    /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale into uAsset
-    /// decimals.
+    /// @dev This helper does not rescale into uAsset decimals.
     function syToAsset(uint256 exchangeRate, uint256 syAmount) internal pure returns (uint256) {
         return (syAmount * exchangeRate) / ONE;
     }
@@ -27,8 +26,7 @@ library SYUtils {
     /// @param exchangeRate Canonical asset per SY, scaled by 1e18.
     /// @param assetAmount Amount of asset to convert.
     /// @return The equivalent SY amount, rounded down.
-    /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale from uAsset
-    /// decimals.
+    /// @dev This helper does not rescale from uAsset decimals.
     // Rounds down — use when releasing or crediting too much SY would be unsafe.
     function assetToSy(uint256 exchangeRate, uint256 assetAmount) internal pure returns (uint256) {
         return (assetAmount * ONE) / exchangeRate;
@@ -38,11 +36,9 @@ library SYUtils {
     /// @param exchangeRate Canonical asset per SY, scaled by 1e18.
     /// @param assetAmount Amount of asset to convert.
     /// @return The equivalent SY amount, rounded up.
-    /// @dev exchangeRate is canonical asset per SY scaled by 1e18. This helper does not rescale from uAsset
-    /// decimals. Position-only coverage helper — adapters intentionally use AaveAdapterLib half-up/floor for
-    /// previews (quote), not this ceiling; see docs/spec/common-foundations.md § ray-domain rounding comparison.
-    // Rounds up — use when enough SY must remain to cover an asset-denominated debt. Position-only (coverage);
-    // adapters use AaveAdapterLib half-up/floor for previews, not this ceiling.
+    /// @dev This helper does not rescale from uAsset decimals. Position-only coverage helper — adapters
+    ///      intentionally use AaveAdapterLib half-up/floor for previews (quote), not this ceiling; see
+    ///      docs/spec/common-foundations.md § ray-domain rounding comparison.
     // The ceil term (+ exchangeRate - 1) moves the checked-add overflow threshold to assetAmount * ONE >
     // type(uint256).max - exchangeRate,
     // slightly narrower than the floor variant's 2^256 - 1. Real debt and rates stay far below it.

@@ -43,8 +43,7 @@ abstract contract OutrunOFTUpgradeable is
     }
 
     /// @notice Initializes the OFT with ERC20, rate limiter, and OFT core.
-    /// @dev ERC20 `decimals()` derives from the constructor-frozen `localDecimals()` — decimals and OFT local
-    ///      decimals are a single source of truth, so no separate decimals argument is accepted.
+    /// @dev No decimals argument — see `OutrunUniversalAssetsUpgradeable.initialize` for the rationale.
     /// @param name_ Token name
     /// @param symbol_ Token symbol
     /// @param owner_ Initial owner address
@@ -79,8 +78,6 @@ abstract contract OutrunOFTUpgradeable is
     ///      dust-aligned so it is sendable in one message, mirroring quoteOFT via _maxQuoteAmountLD.
     /// @param dstEid Destination endpoint ID
     /// @return currentAmountInFlight Tokens currently in-flight to the destination
-    /// @return amountCanBeSent Rate-limited remaining capacity, bounded by the shared-decimals wire
-    ///         envelope (uint64.max * decimalConversionRate) and dust-aligned
     function getAmountCanBeSent(uint32 dstEid)
         public
         view
@@ -92,9 +89,6 @@ abstract contract OutrunOFTUpgradeable is
         if (rl.window == 0) return (0, _maxOFTAmountLD());
         (currentAmountInFlight, amountCanBeSent) =
             _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
-        // A configured rate limit can exceed the LayerZero uint64 shared-decimals wire envelope
-        // (uint64.max * decimalConversionRate); report the envelope-bounded, DCR-aligned capacity so
-        // the value is sendable in one message, consistent with quoteOFT via _maxQuoteAmountLD.
         uint256 maxAmountLD = _maxOFTAmountLD();
         if (amountCanBeSent > maxAmountLD) amountCanBeSent = maxAmountLD;
         amountCanBeSent = _removeDust(amountCanBeSent);
@@ -170,9 +164,6 @@ abstract contract OutrunOFTUpgradeable is
         // Reject zero/dust outbound sends before they can touch the rate limiter.
         if (amountSentLD == 0) revert AmountTooSmall();
         _outflow(_dstEid, amountSentLD);
-        // Outbound transfer: (1) compute amounts, (2) apply rate limit outflow,
-        // (3) burn tokens from sender. Must respect pause state.
-        // _amountLD means "amount in local decimals".
         // _debitView removes dust on the source chain: amountSentLD == amountReceivedLD ==
         // _removeDust(_amountLD), and that dust-free value is what gets SD-encoded onto the
         // wire. Dust stays in the sender's balance — never burned, never bridged — so the
@@ -180,7 +171,7 @@ abstract contract OutrunOFTUpgradeable is
         _update(_from, address(0), amountSentLD);
     }
 
-    /// @notice Inbound transfer: mints tokens to the receiver, bypassing pause for cross-chain safety.
+    /// @notice Inbound transfer: mints tokens to the receiver.
     /// @dev Uses direct parent _update to bypass pause — cross-chain delivery must not revert during pause.
     /// @param _to Receiver address (sends to 0xdead if address(0))
     /// @param _amountLD Amount to receive in local decimals
@@ -191,9 +182,6 @@ abstract contract OutrunOFTUpgradeable is
         override
         returns (uint256 amountReceivedLD)
     {
-        // Inbound transfer: mints tokens to receiver.
-        // Uses direct parent _update to bypass pause — cross-chain delivery
-        // must not revert during pause, otherwise tokens would be permanently lost.
         // Sends to dead address if receiver is zero. Without the remap, _update(address(0), address(0), ...)
         // would first add then subtract totalSupply, silently destroying the bridged amount, so follow
         // the upstream OFT convention and remap to 0xdead.

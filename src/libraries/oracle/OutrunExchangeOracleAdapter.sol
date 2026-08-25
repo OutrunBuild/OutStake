@@ -10,19 +10,14 @@ import {SYUtils} from "../SYUtils.sol";
 /// Validates that the answer is positive and updated within the configured staleness window.
 contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
     /// @notice The underlying Chainlink-style price feed that provides the raw exchange rate answer.
-    /// @return The address of the Chainlink-style oracle.
     address public immutable oracle;
     /// @notice The underlying oracle's native decimal precision (captured once at construction).
-    /// @return The number of decimals the underlying oracle reports in.
     uint8 public immutable rawDecimals;
     /// @notice Maximum age allowed for the latest oracle answer.
-    /// @return The staleness threshold in seconds.
     uint256 public immutable maxStaleness;
     /// @notice Optional Chainlink L2 Sequencer Uptime Feed. Zero address disables this check.
-    /// @return The sequencer uptime feed address.
     address public immutable sequencerUptimeFeed;
     /// @notice Time to wait after the sequencer comes back up before trusting oracle answers.
-    /// @return The grace period in seconds.
     uint256 public immutable sequencerGracePeriod;
     /// @dev 10^rawDecimals, precomputed at construction so rate reads do a plain multiply + divide.
     uint256 private immutable _rawScale;
