@@ -74,9 +74,7 @@ interface IOutrunRouter {
      * @notice Deposits an input token into a standardized yield contract.
      * @dev Caller-funded path. Always pulls `tokenIn` from `msg.sender` before forwarding the deposit into SY;
      * native deposits are forwarded as `msg.value`; `tokenIn == address(0)` (`NATIVE`) selects the native currency.
-     * Zero floor means no protection: `minSyOut == 0` accepts any positive SY output; non-zero but depressed
-     * output passes silently. SY only reverts on zero output (`SYZeroSharesOut`). Callers must pass a quoted
-     * non-zero floor.
+     * Zero floor disables protection; see `StakeParam`.
      * @param SY Standardized yield contract that receives the deposit.
      * @param tokenIn Token to supply when minting SY (`NATIVE` = address(0) for the native currency).
      * @param receiver Recipient of the minted SY.
@@ -92,8 +90,7 @@ interface IOutrunRouter {
     /**
      * @notice Redeems standardized yield into an output token.
      * @dev Caller-funded path. Requires an owner-registered SY, pulls SY from `msg.sender` into the SY contract and calls redeem with
-     * `burnFromInternalBalance = true`. Zero floor means no protection: `minTokenOut == 0` accepts any
-     * positive token output; SY only enforces `amountTokenOut >= minTokenOut`.
+     * `burnFromInternalBalance = true`. Zero floor disables protection; see `StakeParam`.
      * @dev Deployment precondition: each registered SY must be configured so `SY.trustedRouter() == address(this)`
      * (the SY's owner calls `SY.setTrustedRouter(address(this))` on the SY); otherwise the call reverts with
      * `SYUnauthorizedInternalRedeemer(address(router))` inside `SY.redeem(..., true)`. On router rotation the new
@@ -115,14 +112,13 @@ interface IOutrunRouter {
      * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
      * with `ReachMintCap`/`SYZeroSharesOut`/`InsufficientUAssetMinted`/`DustRoundedToZero` where preview succeeded.
      * Integrators must treat the quote as an estimate, pass `stakeParam.minSyOut`/`minUAssetMinted` as `quote±slippage`,
-     * and handle `ReachMintCap` reverts. `stakeParam` fields do not alter the quote.
+     * and handle `ReachMintCap` reverts. These previews take no `StakeParam`; apply `minSyOut`/`minUAssetMinted` floors at execution.
      * @param SP Stake manager receiving the SY stake.
      * @param tokenIn Token to deposit into SY (`NATIVE` = address(0) for the native currency).
      * @param tokenAmount Amount of `tokenIn` to convert.
-     * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
      * @return UAssetMintable Estimated uAsset minted by the stake flow.
      */
-    function previewStakeFromToken(address SP, address tokenIn, uint256 tokenAmount, StakeParam calldata stakeParam)
+    function previewStakeFromToken(address SP, address tokenIn, uint256 tokenAmount)
         external
         view
         returns (uint256 UAssetMintable);
@@ -132,16 +128,12 @@ interface IOutrunRouter {
      * @dev Requires an owner-registered SP -> SY pair, then reads `SP.previewStake` for a quote-only SY-funded stake.
      * Preview is quote-only and does not reserve uAsset mint cap or slippage floors; execution can revert
      * with `ReachMintCap`/`DustRoundedToZero`/`InsufficientUAssetMinted` where preview succeeded.
-     * Integrators must treat the quote as an estimate and handle `ReachMintCap` reverts. `stakeParam` fields do not alter the quote.
+     * Integrators must treat the quote as an estimate and handle `ReachMintCap` reverts. These previews take no `StakeParam`; apply `minSyOut`/`minUAssetMinted` floors at execution.
      * @param SP Stake manager receiving the SY stake.
      * @param amountInSY Amount of SY to stake.
-     * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
      * @return UAssetMintable Estimated uAsset minted by the stake flow.
      */
-    function previewStakeFromSY(address SP, uint256 amountInSY, StakeParam calldata stakeParam)
-        external
-        view
-        returns (uint256 UAssetMintable);
+    function previewStakeFromSY(address SP, uint256 amountInSY) external view returns (uint256 UAssetMintable);
 
     /**
      * @notice Quotes the uAsset amount minted when wrap-staking from an input token.
@@ -163,8 +155,7 @@ interface IOutrunRouter {
      * @notice Deposits an input token, converts it into SY, and stakes it.
      * @dev Caller-funded path. Requires an owner-registered SP -> SY pair, derives canonical SY from `SP.SY()`, mints SY into the router, creates a locked
      * position for `stakeParam.owner`, and sends uAsset to `stakeParam.receiver` or owner when receiver is zero.
-     * Zero floors mean no protection: `stakeParam.minSyOut == 0` / `stakeParam.minUAssetMinted == 0` accept any
-     * positive output (see StakeParam NatSpec); callers must pass quoted non-zero floors.
+     * Zero floors disable protection; see `StakeParam`.
      * @param SP Stake manager receiving the SY stake.
      * @param tokenIn Token to deposit into SY (`NATIVE` = address(0) for the native currency).
      * @param tokenAmount Amount of `tokenIn` to convert and stake.
@@ -181,7 +172,7 @@ interface IOutrunRouter {
      * @notice Stakes existing SY into the stake manager.
      * @dev Caller-funded path. Requires an owner-registered SP -> SY pair, derives canonical SY from `SP.SY()`, pulls SY from `msg.sender`, creates a locked
      * position for `stakeParam.owner`, and sends uAsset to `stakeParam.receiver` or owner when receiver is zero.
-     * Zero floor means no protection: `stakeParam.minUAssetMinted == 0` accepts any positive output.
+     * Zero floor disables protection; see `StakeParam`.
      * @param SP Stake manager receiving the SY stake.
      * @param amountInSY Amount of SY to stake.
      * @param stakeParam Stake settings including lockup, uAsset slippage floor, owner, and receiver.
@@ -195,8 +186,8 @@ interface IOutrunRouter {
     /**
      * @notice Deposits an input token, converts it into SY, and wrap-stakes it.
      * @dev Caller-funded path. Requires an owner-registered SP -> SY pair, derives canonical SY from `SP.SY()`, mints SY into the router, and enters the
-     * shared wrap pool for `uAssetReceiver`; no locked position id is created. Zero floors mean no protection:
-     * `minSyOut == 0` / `minUAssetMinted == 0` accept any positive output; callers must pass quoted non-zero floors.
+     * shared wrap pool for `uAssetReceiver`; no locked position id is created.
+     * Zero floors disable protection; see `StakeParam`.
      * @param SP Stake manager receiving the wrapped stake.
      * @param tokenIn Token to deposit into SY (`NATIVE` = address(0) for the native currency).
      * @param tokenAmount Amount of `tokenIn` to convert and wrap-stake.
@@ -217,8 +208,8 @@ interface IOutrunRouter {
     /**
      * @notice Wrap-stakes existing SY into uAsset.
      * @dev Caller-funded path. Requires an owner-registered SP -> SY pair, derives canonical SY from `SP.SY()`, pulls SY from `msg.sender`, and enters the
-     * shared wrap pool for `uAssetReceiver`; no locked position id is created. Zero floor means no protection:
-     * `minUAssetMinted == 0` accepts any positive output.
+     * shared wrap pool for `uAssetReceiver`; no locked position id is created.
+     * Zero floor disables protection; see `StakeParam`.
      * @param SP Stake manager receiving the wrapped stake.
      * @param amountInSY Amount of SY to wrap-stake.
      * @param uAssetReceiver Recipient of the minted uAsset.
@@ -232,8 +223,8 @@ interface IOutrunRouter {
     /**
      * @notice Creates a genesis position starting from an input token.
      * @dev Caller-funded path. Requires an owner-registered SP -> SY pair, derives canonical SY from `SP.SY()`, creates a locked position for `genesisUser`,
-     * mints uAsset to the router, then forwards that uAsset into launcher genesis. Zero floors mean no protection:
-     * `minSyOut == 0` / `minUAssetMinted == 0` accept any positive output; callers must pass quoted non-zero floors.
+     * mints uAsset to the router, then forwards that uAsset into launcher genesis.
+     * Zero floors disable protection; see `StakeParam`.
      * @param SP Stake manager receiving the genesis stake.
      * @param tokenIn Token to deposit into SY before staking (`NATIVE` = address(0) for the native currency).
      * @param tokenAmount Amount of `tokenIn` to convert and stake.
@@ -259,8 +250,8 @@ interface IOutrunRouter {
      * @dev Caller-funded path. Requires an owner-registered SP -> SY pair, derives canonical SY from `SP.SY()`, pulls SY from `msg.sender`, creates a locked
      * position for `genesisUser`, mints uAsset to the router, then forwards that uAsset into launcher genesis.
      * `amountInSY` is uint256 (no input-side cap); the launcher genesis amount is uint128-bounded, so when the
-     * stake's minted uAsset exceeds type(uint128).max the call reverts with InvalidParam(). Zero floor means
-     * no protection: `minUAssetMinted == 0` accepts any positive output.
+     * stake's minted uAsset exceeds type(uint128).max the call reverts with InvalidParam().
+     * Zero floor disables protection; see `StakeParam`.
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake for genesis.
      * @param lockupDays Lockup duration forwarded to the stake manager; `0` creates an immediately redeemable position.
@@ -295,7 +286,6 @@ interface IOutrunRouter {
 
     error InvalidParam();
     error InsufficientUAssetMinted(uint256 mintedUAsset, uint256 minMinted);
-    error NativeAmountMismatch();
     error InvalidMemeverseLauncher(address launcher);
     error GenesisUAssetNotConsumed(uint256 residualBalance, uint256 residualAllowance);
     error SweepZeroAddress();

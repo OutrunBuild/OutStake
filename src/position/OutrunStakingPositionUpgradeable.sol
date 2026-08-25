@@ -82,7 +82,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         (,, uint8 canonicalAssetDecimals) = IStandardizedYield(sy_).assetInfo();
         $.SY = sy_;
         $.uAsset = uAsset_;
-        // Conversion math assumes SY assetInfo() and uAsset decimals are immutable after initialization.
         $.canonicalAssetDecimals = canonicalAssetDecimals;
         $.uAssetDecimals = IERC20Metadata(uAsset_).decimals();
         $.minStake = minStake_;
@@ -93,55 +92,46 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     // solhint-disable-next-line unwrapped-modifier-logic
     modifier onlyPositionOwner(uint256 positionId) {
         Position storage position = outrunStakingPositionStorage.positions[positionId];
-        // Only the recorded owner can act on this position.
         if (position.owner == address(0) || position.owner != msg.sender) revert PositionAccessDenied();
         _;
     }
 
     /// @notice Returns the Standardized Yield token address.
-    /// @return SY token address.
     function SY() public view returns (address) {
         return outrunStakingPositionStorage.SY;
     }
 
     /// @notice Returns the minimum SY amount required per stake operation.
-    /// @return Minimum stake amount in SY.
     function minStake() public view returns (uint256) {
         return outrunStakingPositionStorage.minStake;
     }
 
     /// @notice Returns the total SY staked across all positions and the wrap pool.
-    /// @return Total SY staked.
     function syTotalStaking() public view returns (uint256) {
         return outrunStakingPositionStorage.syTotalStaking;
     }
 
     /// @notice Returns the SY amount currently in the shared wrap pool.
-    /// @return SY amount in the wrap pool.
     function syWrapStaking() public view returns (uint256) {
         return outrunStakingPositionStorage.syWrapStaking;
     }
 
     /// @notice Returns the outstanding uAsset debt incurred by the wrap pool.
-    /// @return Wrap pool uAsset debt.
     function wrapUAssetDebt() public view returns (uint256) {
         return outrunStakingPositionStorage.wrapUAssetDebt;
     }
 
     /// @notice Returns the universal asset receipt token address.
-    /// @return uAsset token address.
     function uAsset() public view returns (address) {
         return outrunStakingPositionStorage.uAsset;
     }
 
     /// @notice Returns the revenue pool address that receives harvested yield.
-    /// @return Revenue pool address.
     function revenuePool() public view returns (address) {
         return outrunStakingPositionStorage.revenuePool;
     }
 
     /// @notice Returns the keeper address authorized to trigger `keepRedeem` and `keepWrapRedeem`.
-    /// @return Keeper address.
     function keeper() public view returns (address) {
         return outrunStakingPositionStorage.keeper;
     }
@@ -195,16 +185,11 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Returns 0 if current value has not exceeded previously minted amounts; an exactly-zero
     /// exchange rate instead reverts ZeroExchangeRate at the rate-reading home.
     /// Quote-only: does not check or reserve the uAsset mint cap.
-    /// Reverts LockTimeExpired once block.timestamp >= deadline (mirrors drawUAsset): draw is
-    /// lockup-window-only, so a matured position previews only its redemption paths.
     /// @param positionId The position identifier.
     /// @return UAssetMintable Additional uAsset amount that can be drawn.
     function previewDrawUAsset(uint256 positionId) public view returns (uint256 UAssetMintable) {
         Position storage position = outrunStakingPositionStorage.positions[positionId];
         if (position.owner == address(0)) revert PositionAccessDenied();
-        // From the deadline on, draw is closed and redeem opens: redeem/keepRedeem guard the early side
-        // (< deadline) with LockTimeNotExpired, and this guard covers >= deadline exactly, so a matured
-        // position has only the redeem paths to exit.
         uint128 deadline = position.deadline;
         if (block.timestamp >= deadline) revert LockTimeExpired(deadline);
         address _SY = SY();
@@ -238,26 +223,12 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         amountTokenOut = _previewTokenOut(SY(), tokenOut, syRedeemed);
     }
 
-    /// @notice Previews the SY a keeper would receive from keepWrapRedeem.
-    /// @dev Quote-only. Face value is the SY amount represented by the burned uAsset debt at the current exchange
-    /// rate; the payout rounds down and full-debt coverage rounds up. Undercollateralized: reverts
-    /// WrapPoolUndercollateralized (mirrors keepWrapRedeem).
-    /// @param amountInUAsset uAsset amount the keeper would burn.
-    /// @return amountInSY SY amount the keeper would receive.
+    /// @inheritdoc IOutrunStakeManager
     function previewWrapRedeem(uint256 amountInUAsset) public view returns (uint256 amountInSY) {
         amountInSY = _validateWrapRedeemAmount(amountInUAsset, SY());
     }
 
-    /// @notice Previews the SY split for a keeper redemption of a matured position.
-    /// @dev Quote-only: does not check keeper permission, burn uAsset, or change state. Mirrors keepRedeem's
-    /// keeper/owner SY split and every failure path (position existence, lockup, amount bounds, zero exchange
-    /// rate at the shared rate-reading point, full-position solvency guard, dust, and per-amount defense).
-    /// Dust amounts that would make syRedeemed==0 or keeperPrincipalSY==0 revert DustRoundedToZero —
-    /// such tails cannot be keeper-cleared and must be owner-cleared via redeem(positionId, remainingSY).
-    /// @param positionId The position identifier.
-    /// @param amountInUAsset The uAsset amount the keeper would burn.
-    /// @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
-    /// @return ownerExcessSY Excess SY the position owner would receive.
+    /// @inheritdoc IOutrunStakeManager
     function previewKeepRedeem(uint256 positionId, uint256 amountInUAsset)
         external
         view
@@ -298,7 +269,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         if (positionOwner == address(0) || uAssetReceiver == address(0) || amountInSY == 0) revert ZeroInput();
         address _SY = SY();
         address _uAsset = uAsset();
-        // Step 1: validate minimum stake amount.
         _validateMinStake(amountInSY);
         // Step 2: convert SY principal to uAsset value at the current exchange rate.
         uint256 exchangeRate_ = _currentExchangeRate(_SY);
@@ -333,7 +303,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             deadline: uint128(deadline256)
         });
 
-        // Step 5: mint uAsset to the designated receiver.
         // Minting draws on this contract's own uAsset minter record: it increases this contract's
         // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
         // mintingCap is exhausted.
@@ -358,9 +327,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         if (uAssetReceiver == address(0)) revert ZeroInput();
         Position storage position = outrunStakingPositionStorage.positions[positionId];
 
-        // From the deadline on, draw is closed and redeem opens: redeem/keepRedeem guard the early side
-        // (< deadline) with LockTimeNotExpired, and this guard covers >= deadline exactly, so a matured
-        // position has only the redeem paths to exit.
         uint128 deadline = position.deadline;
         if (block.timestamp >= deadline) revert LockTimeExpired(deadline);
 
@@ -374,9 +340,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         position.UAssetMinted = currentValueInUAsset;
 
         address _uAsset = uAsset();
-        // Minting draws on this contract's own uAsset minter record: it increases this contract's
-        // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
-        // mintingCap is exhausted.
         IUniversalAssets(_uAsset).mint(uAssetReceiver, mintedUAsset);
         emit DrawUAsset(positionId, uAssetReceiver, mintedUAsset);
     }
@@ -417,9 +380,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         }
 
         mintedUAsset = uAssetDebt;
-        // Minting draws on this contract's own uAsset minter record: it increases this contract's
-        // outstanding mint debt (amountInMinted) and reverts with ReachMintCap if its configured
-        // mintingCap is exhausted.
         IUniversalAssets(_uAsset).mint(uAssetReceiver, mintedUAsset);
         emit WrapStake(amountInSY, mintedUAsset, uAssetReceiver);
     }
@@ -469,20 +429,10 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         emit Redeem(positionId, msg.sender, syRedeemed, UAssetBurned, receiver, tokenOut, amountTokenOut);
     }
 
-    /// @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value. Face value is the SY amount
-    /// represented by the burned uAsset debt at the current exchange rate; the payout rounds down and full-debt
-    /// coverage rounds up. Reverts if the pool is undercollateralized.
-    /// @dev Keeper-only path, mirroring keepRedeem's trust model. Replaces the former public wrapRedeem,
-    /// which was removed in favor of this keeper-only all-or-nothing redemption.
-    /// Reverts WrapPoolUndercollateralized on an undercollateralized pool — the keeper is trusted and must not bear a
-    /// loss-making redemption. Consistent with keepRedeem, which also reverts (InsufficientSyCollateral) on an
-    /// undercollateralized position.
-    /// The keeper must first approve this position to spend its uAsset: repay burns the keeper's balance with
+    /// @inheritdoc IOutrunStakeManager
+    /// @dev The keeper must first approve this position to spend its uAsset: repay burns the keeper's balance with
     /// msg.sender = address(this) (the minter whose mint debt decreases), so allowance[keeper][this] must cover
     /// amountInUAsset.
-    /// @param amountInUAsset uAsset amount the keeper burns. Must be > 0 and <= wrapUAssetDebt.
-    /// @param receiver Address receiving the SY.
-    /// @return amountInSY SY amount sent to the receiver.
     function keepWrapRedeem(uint256 amountInUAsset, address receiver)
         external
         nonReentrant
@@ -508,9 +458,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             $.wrapUAssetDebt -= amountInUAsset;
         }
 
-        // Burn keeper-provided uAsset; repay decrements the stake manager's minter debt. msg.sender here is
-        // address(this) (the minter/repay caller) and the burned account is the keeper — so the keeper must first
-        // approve this position to spend its uAsset before calling keepWrapRedeem.
         IUniversalAssets(_uAsset).repay(msg.sender, amountInUAsset);
 
         _transferOut(_SY, receiver, amountInSY);
@@ -518,22 +465,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         emit KeepWrapRedeem(msg.sender, receiver, amountInUAsset, amountInSY);
     }
 
-    /// @notice Keeper burns uAsset to trigger redemption of a matured position.
-    /// Debt-equivalent SY goes to receiver; any excess SY above debt goes back to position owner.
-    /// @dev Reverts with InsufficientSyCollateral if the position's staked SY value is below its debt face
-    /// value (full-position guard) or if the keeper's debt-equivalent share exceeds the proportional SY share.
-    /// Reverts with DustRoundedToZero if amountInUAsset is so small that the proportional SY share
-    /// (syRedeemed) or the keeper principal (keeperPrincipalSY) rounds to zero — keeper tails below
-    /// the floor threshold cannot be cleared via keepRedeem and must be owner-cleared via
-    /// redeem(positionId, remainingSY). The keeper must first approve this position to spend its uAsset:
-    /// repay burns the keeper's balance with msg.sender = address(this) (the minter whose mint debt
-    /// decreases), so allowance[keeper][this] must cover amountInUAsset.
-    /// @param positionId Identifier of the position being redeemed.
-    /// @param amountInUAsset Amount of uAsset the keeper burns.
-    /// @param receiver Address receiving the keeper principal in SY.
-    /// @return UAssetBurned Amount of uAsset burned by the keeper.
-    /// @return keeperPrincipalSY Debt-equivalent SY sent to the keeper receiver.
-    /// @return ownerExcessSY Excess SY sent back to the position owner.
+    /// @inheritdoc IOutrunStakeManager
     function keepRedeem(uint256 positionId, uint256 amountInUAsset, address receiver)
         external
         nonReentrant
@@ -570,9 +502,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         UAssetBurned = amountInUAsset;
         _applyPositionRedeem(positionId, position, syRedeemed, UAssetBurned, syStaked, positionUAssetMinted);
 
-        // Step 3: burn uAsset from the caller (keeper provides uAsset). repay's msg.sender is address(this)
-        // (the minter/repay caller) while the burned account is the keeper — so the keeper must first approve
-        // this position to spend its uAsset before calling keepRedeem.
         IUniversalAssets(_uAsset).repay(msg.sender, UAssetBurned);
         _transferOut(_SY, receiver, keeperPrincipalSY);
         _transferOut(_SY, positionOwner, ownerExcessSY);
@@ -723,8 +652,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         }
 
         uint256 factor = 10 ** (uAssetDecimals - canonicalAssetDecimals);
-        // Ceil rounding: (amount-1)/factor+1. Drift bound: ceil - floor <= 1 canonical unit (< factor);
-        // e.g. cDec=6/uDec=18 f=1e12 => max 1e-6 tokens; amount=1 => ceil=1, drift f-1. Conservative for solvency guards.
         if (rounding == Math.Rounding.Ceil && amount != 0) {
             return (amount - 1) / factor + 1;
         }

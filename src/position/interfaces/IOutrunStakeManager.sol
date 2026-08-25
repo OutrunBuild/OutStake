@@ -146,9 +146,7 @@ interface IOutrunStakeManager {
      * @notice Previews how much uAsset a direct stake would mint.
      * @dev Quote-only. Uses current `SY.exchangeRate()` and the same conversion direction as `stake`, but does
      * not reserve cap, transfer SY, create a position, or apply slippage protection.
-     * Reverts `MinStakeInsufficient` when `amountInSY < minStake()`, and `ZeroExchangeRate` when the rate reads
-     * zero. Returns 0 if the floor conversion rounds the quote to zero (dust); this differs from `stake`, which
-     * reverts `DustRoundedToZero` for the same non-zero dust input.
+     * Reverts `MinStakeInsufficient` when `amountInSY < minStake()`.
      * @param amountInSY Amount of SY to stake.
      * @return UAssetMintable Amount of uAsset expected to be minted; 0 when the floor conversion zeroes it.
      */
@@ -157,9 +155,7 @@ interface IOutrunStakeManager {
     /**
      * @notice Previews how much uAsset a wrap stake would mint.
      * @dev Quote-only. Uses current `SY.exchangeRate()` and the same conversion direction as `wrapStake`, but
-     * does not reserve cap, transfer SY, or update wrap-pool debt. Reverts `ZeroInput` when `amountInSY == 0`,
-     * `ZeroExchangeRate` when the rate reads zero, and `DustRoundedToZero` when the floor conversion rounds the
-     * quote to zero.
+     * does not reserve cap, transfer SY, or update wrap-pool debt. Reverts `ZeroInput` when `amountInSY == 0`.
      * @param amountInSY Amount of SY to add to the wrap pool.
      * @return UAssetMintable Amount of uAsset expected to be minted.
      */
@@ -215,8 +211,6 @@ interface IOutrunStakeManager {
      * permission, burning uAsset, or changing state. Reverts if the position is missing, not matured, the amount
      * is zero or exceeds position debt, the position is undercollateralized, the SY exchange rate reads zero, or
      * the proportional SY rounds to dust or the keeper's debt-equivalent SY rounds to dust.
-     * Dust amounts that would make syRedeemed==0 or keeperPrincipalSY==0 revert DustRoundedToZero —
-     * such tails cannot be keeper-cleared and must be owner-cleared via redeem(positionId, remainingSY).
      * @param positionId Identifier of the position being redeemed.
      * @param amountInUAsset Amount of uAsset the keeper would burn.
      * @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
@@ -306,6 +300,8 @@ interface IOutrunStakeManager {
      * if amountInUAsset is so small that syRedeemed or keeperPrincipalSY rounds to zero — keeper tails
      * below the floor threshold cannot be cleared via keepRedeem and must be owner-cleared via
      * redeem(positionId, remainingSY).
+     * Keeper prerequisite: the keeper must first approve this position contract to spend uAsset for
+     * `amountInUAsset` (repay's msg.sender is the position contract); see `keepWrapRedeem`'s dev note.
      * @param positionId Identifier of the position being redeemed.
      * @param amountInUAsset Amount of uAsset the keeper burns.
      * @param receiver Address receiving the keeper principal in SY.

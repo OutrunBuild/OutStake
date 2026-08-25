@@ -19,7 +19,6 @@ import {IOutrunStakeManager} from "../position/interfaces/IOutrunStakeManager.so
  * uAsset = universal asset (receipt token minted when staking or wrap-staking).
  * Memeverse = the external launch platform used by genesis.
  * A verse is a launcher-managed launch target identified by a launcher-defined `verseId`.
- * `verseId` is opaque to this router: the launcher interprets it, while the router forwards it unchanged and does not validate it.
  */
 contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     // These targets are configured after deployment; owner setters remain live for dynamic addition under Ownable (multisig off-chain).
@@ -58,19 +57,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         emit TrustedSPUpdated(SP, SY);
     }
 
-    /**
-     * @notice Deposits an input token into a standardized yield contract.
-     * @dev Always pulls `tokenIn` from the caller before forwarding the deposit into SY.
-     * Zero floor means no protection: `minSyOut == 0` accepts any positive SY output; non-zero but
-     * depressed output passes silently. SY only reverts on zero output (`SYZeroSharesOut`). Callers
-     * must pass a quoted non-zero floor.
-     * @param SY Standardized yield contract that receives the deposit.
-     * @param tokenIn Token to supply when minting SY.
-     * @param receiver Recipient of the minted SY.
-     * @param amountInput Amount of input token to deposit.
-     * @param minSyOut Minimum acceptable SY output; `0` means no slippage protection.
-     * @return amountInSYOut Amount of SY minted for `receiver`.
-     */
+    /// @inheritdoc IOutrunRouter
     function mintSYFromToken(address SY, address tokenIn, address receiver, uint256 amountInput, uint256 minSyOut)
         external
         payable
@@ -84,11 +71,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @dev Always pulls SY from the caller and burns it from SY internal balance during redemption.
      * Zero floor means no protection: `minTokenOut == 0` accepts any positive token output; SY only
      * enforces `amountTokenOut >= minTokenOut`.
-     * @dev Deployment precondition: each configured SY must have `SY.trustedRouter() == address(this)`
-     *      (the SY's owner calls `SY.setTrustedRouter(address(this))` once per router). Without it every call
-     *      reverts with `SYUnauthorizedInternalRedeemer(address(router))` inside `SY.redeem(..., true)`; on router
-     *      rotation the new router must be set on every SY before its redemption entry is opened, then the old one
-     *      revoked via `SY.setTrustedRouter(address(0))`.
+     * @dev Deployment precondition: see `IOutrunRouter.redeemSyToToken`.
      * @param SY Standardized yield contract being redeemed.
      * @param receiver Recipient of the redeemed token output.
      * @param tokenOut Token requested on redemption.
@@ -130,19 +113,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         amountInSYOut = IStandardizedYield(SY).deposit{value: amountInNative}(receiver, tokenIn, amountInput, minSyOut);
     }
 
-    /**
-     * @notice Quotes the uAsset amount minted when staking from an input token.
-     * @dev Derives canonical SY from `SP.SY()`, then uses the SY deposit preview and stake-manager preview.
-     * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
-     * with `ReachMintCap`/`SYZeroSharesOut`/`InsufficientUAssetMinted`/`DustRoundedToZero` where preview succeeded.
-     * `stakeParam` fields do not alter the quote.
-     * @param SP Stake manager receiving the SY stake.
-     * @param tokenIn Token to deposit into SY.
-     * @param tokenAmount Amount of `tokenIn` to convert.
-     * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
-     * @return UAssetMintable Estimated uAsset minted by the stake flow.
-     */
-    function previewStakeFromToken(address SP, address tokenIn, uint256 tokenAmount, StakeParam calldata stakeParam)
+    /// @inheritdoc IOutrunRouter
+    function previewStakeFromToken(address SP, address tokenIn, uint256 tokenAmount)
         external
         view
         returns (uint256 UAssetMintable)
@@ -150,42 +122,15 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address SY = _trustedSYForSP(SP);
         uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
-        // No-op: references stakeParam to silence the unused-function-parameter compiler warning; the quote does not depend on lockupDays, and the parameter is kept for ABI consistency.
-        stakeParam.lockupDays;
     }
 
-    /**
-     * @notice Quotes the uAsset amount minted when staking existing SY.
-     * @dev Reads the stake-manager preview for an SY-funded stake without changing state.
-     * Preview is quote-only and does not reserve uAsset mint cap or slippage floors; execution can revert
-     * with `ReachMintCap`/`DustRoundedToZero`/`InsufficientUAssetMinted` where preview succeeded.
-     * `stakeParam` fields do not alter the quote.
-     * @param SP Stake manager receiving the SY stake.
-     * @param amountInSY Amount of SY to stake.
-     * @param stakeParam Stake settings accepted for ABI consistency; fields do not alter the quote.
-     * @return UAssetMintable Estimated uAsset minted by the stake flow.
-     */
-    function previewStakeFromSY(address SP, uint256 amountInSY, StakeParam calldata stakeParam)
-        external
-        view
-        returns (uint256 UAssetMintable)
-    {
+    /// @inheritdoc IOutrunRouter
+    function previewStakeFromSY(address SP, uint256 amountInSY) external view returns (uint256 UAssetMintable) {
         _trustedSYForSP(SP);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
-        // No-op: references stakeParam to silence the unused-function-parameter compiler warning; the quote does not depend on lockupDays, and the parameter is kept for ABI consistency.
-        stakeParam.lockupDays;
     }
 
-    /**
-     * @notice Quotes the uAsset amount minted when wrap-staking from an input token.
-     * @dev Derives canonical SY from `SP.SY()`, then combines the SY deposit preview with the wrap preview.
-     * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
-     * with `ReachMintCap`/`SYZeroSharesOut`/`DustRoundedToZero` where preview succeeded.
-     * @param SP Stake manager receiving the wrapped stake.
-     * @param tokenIn Token to deposit into SY.
-     * @param tokenAmount Amount of `tokenIn` to convert.
-     * @return UAssetMintable Estimated uAsset minted by the wrap-stake flow.
-     */
+    /// @inheritdoc IOutrunRouter
     function previewWrapStakeFromToken(address SP, address tokenIn, uint256 tokenAmount)
         external
         view
@@ -235,7 +180,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     {
         address SY = _trustedSYForSP(SP);
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
-        // receiver defaults to owner when not specified (address(0))
         address uAssetReceiver = stakeParam.receiver == address(0) ? stakeParam.owner : stakeParam.receiver;
         (positionId, mintedUAsset) =
             _stakeFromSYBalance(SY, SP, amountInSY, stakeParam.lockupDays, stakeParam.owner, uAssetReceiver);
@@ -281,7 +225,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         public
         returns (uint256 mintedUAsset)
     {
-        // Wrap stake enters the shared pool — no individual position id is created, no lockup applies.
         address SY = _trustedSYForSP(SP);
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
         mintedUAsset = _wrapStakeFromSYBalance(SY, SP, amountInSY, uAssetReceiver, minUAssetMinted);
@@ -354,7 +297,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake for genesis.
      * @param lockupDays Lockup duration forwarded to the stake manager.
-     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
      * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      */
@@ -437,7 +379,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param tokenAmount Amount of `tokenIn` to convert and stake.
      * @param minSyOut Minimum acceptable SY output from the deposit step; `0` means no slippage protection.
      * @param lockupDays Lockup duration forwarded to the stake manager.
-     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
      * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      */
@@ -465,7 +406,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake for genesis.
      * @param lockupDays Lockup duration forwarded to the stake manager.
-     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
      * @param genesisUser User credited for the genesis position.
      * @param minUAssetMinted Minimum acceptable uAsset minted or the call reverts; `0` means no slippage protection.
      */
