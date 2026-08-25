@@ -151,7 +151,7 @@ contract YieldDeployScript is BaseScript {
     }
 
     // -----------------------------------------------------------------------
-    // L2 oracle-backed SY deployment helpers (G-4 hardening)
+    // L2 oracle-backed SY deployment helpers (hardened with deployment-time validation)
     // -----------------------------------------------------------------------
 
     /// @notice Deploys an L2 oracle-backed wstETH SY with deployment-time decimals validation.

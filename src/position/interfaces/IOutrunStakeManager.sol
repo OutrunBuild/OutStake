@@ -53,7 +53,7 @@ interface IOutrunStakeManager {
     error NothingToDraw();
     error PartialRedeemMustLeaveDebt();
     error InsufficientTokenOut(uint256 actual, uint256 minExpected);
-    /// @dev Reverts when cached decimals diverge from live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` during upgrade; indicates SY/uAsset was upgraded to a different decimals domain which would silently mis-scale all sy<->uAsset conversions by 10**delta (I-008).
+    /// @dev Reverts when cached decimals diverge from live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` during upgrade; indicates SY/uAsset was upgraded to a different decimals domain which would silently mis-scale all sy<->uAsset conversions by 10**delta.
     error DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset);
 
     /**
@@ -128,7 +128,7 @@ interface IOutrunStakeManager {
         returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 deadline);
 
     /**
-     * @dev Preview / executor divergence matrix — intentional floor/ceil (G-023):
+     * @dev Preview / executor divergence matrix — intentional floor/ceil:
      * Rounding is correct by design: `_syToAsset` (via `SYUtils.syToAsset`) floors to avoid over-minting;
      * `_assetToSyUp` (via `SYUtils.assetToSyUp` + `_scaleUAssetToCanonicalAsset` ceil `(a-1)/f+1`) ceils to
      * guarantee coverage (`ceil >= floor`; harvest `syWrap - ceil(debt)` may under-harvest dust, never over-harvest).

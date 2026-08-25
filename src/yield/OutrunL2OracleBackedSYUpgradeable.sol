@@ -53,7 +53,7 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     /// (e.g. 18 vs 6) is silently cached by `OutrunStakingPositionUpgradeable.initialize` as
     /// `canonicalAssetDecimals` and systematically mis-scales `wrapUAssetDebt` / `syToAsset` via
     /// `OutrunStakingPositionUpgradeable._scaleUAssetToCanonicalAsset` / `_scaleCanonicalAssetToUAsset`
-    /// by `10**12` (G-011). Validate off-chain against L1 Etherscan / official docs and via
+    /// by `10**12`. Validate off-chain against L1 Etherscan / official docs and via
     /// `L2AssetValidation.validateL2OracleBackedParams` in deployment scripts before broadcasting;
     /// post-deploy the value is immutable (no setter) and requires SY + SP redeployment to fix.
     /// See `docs/deployment.md` L2 checklist and `script/lib/L2AssetValidation.sol`.

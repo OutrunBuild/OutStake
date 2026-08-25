@@ -87,7 +87,7 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         return _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
     }
 
-    /// @notice Returns whether a destination is currently rate-limited (I-009 observability).
+    /// @notice Returns whether a destination is currently rate-limited (observability helper).
     /// @param dstEid Destination endpoint ID
     /// @return True if a rate limit is configured (window != 0), false if unconfigured/deleted (infinite sentinel)
     /// @dev Distinct from `getAmountCanBeSent` sentinel reading: `window == 0` is the intentional infinite sentinel
@@ -118,7 +118,7 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
 
     /// @notice Computes current in-flight and available capacity using linear decay.
     /// @dev Capacity refills proportionally over time: decay = (limit * timeSinceLastUpdate) / window.
-    /// @dev G-030 / LayerZero upstream: integer division discards remainder and lastUpdated is always
+    /// @dev Same as LayerZero upstream: integer division discards remainder and lastUpdated is always
     ///      forwarded to block.timestamp, so refill is stepwise. With tight limit + large window
     ///      (e.g. limit=100, window=86400, decay=0 for 863s) capacity appears frozen. Deployer should
     ///      keep limit >= window (LayerZero devtools advice) to keep per-second refill >= 1; see
@@ -137,7 +137,7 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     {
         // Computes how much capacity has refilled since the last rate limit update.
         // Decay = (limit * timeSinceLastUpdate) / window.
-        // G-030: truncating division discards (limit*time)%window and time remainder via lastUpdated
+        // Truncating division discards (limit*time)%window and time remainder via lastUpdated
         // forwarding; stepwise refill, keep limit >= window to avoid frozen capacity.
         // Current in-flight = max(0, previousInFlight - decay).
         // Available = limit - currentInFlight.

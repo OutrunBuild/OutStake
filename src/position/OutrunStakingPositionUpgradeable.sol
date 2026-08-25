@@ -593,7 +593,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         // Zero rate means the external SY is reporting a broken state; fail closed with a named
         // error here (the single rate-reading home) instead of leaking a division panic or a
         // misleading dust/nothing error into any conversion path.
-        // Exchange-rate band removed (G-020): chain-side guard is only `rate != 0`; drift
+        // Exchange-rate band removed: chain-side guard is only `rate != 0`; drift
         // monitoring is off-chain (`ZeroExchangeRate` / `StaleOracleAnswer` etc.).
         if (rate == 0) revert ZeroExchangeRate();
         return rate;
@@ -821,7 +821,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
         }
     }
 
-    /// @notice UUPS upgrade guard that enforces decimals immutability (I-008).
+    /// @notice UUPS upgrade guard that enforces decimals immutability.
     /// @dev Reverts with `DecimalsMismatch` if live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` diverges from the values cached at `initialize`; such divergence would silently mis-scale every sy<->uAsset conversion by 10**delta and brick debt accounting. The divergence must be resolved by redeploying SY + position rather than upgrading in place (see docs/spec/yield/yield-adapters.md and docs/deployment.md).
     function _authorizeUpgrade(address) internal override onlyOwner {
         OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;

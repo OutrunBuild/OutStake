@@ -25,7 +25,7 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     OutrunL2WrappableWstETHSYStorage private outrunL2WrappableWstETHSYStorage;
 
     /// @notice Initializes the SY adapter with L2 stETH/wstETH wrap capability.
-    /// @dev Same G-011 decimal-mismatch risk as OutrunL2OracleBackedSYUpgradeable.__L2OracleBackedSY_init;
+    /// @dev Same decimal-mismatch risk as OutrunL2OracleBackedSYUpgradeable.__L2OracleBackedSY_init;
     ///      validate via `L2AssetValidation.validateL2WrappableParams` before broadcasting.
     /// @param owner_ The contract owner address.
     /// @param stETH_ Address of the L2 stETH token.

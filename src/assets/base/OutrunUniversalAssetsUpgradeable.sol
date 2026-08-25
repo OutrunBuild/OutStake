@@ -21,9 +21,9 @@ import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
 ///      and `token == NATIVE (address(0))` before `TokenHelper::_transferOut`, and MUST NOT move
 ///      `balanceOf` without updating `amountInMinted` — otherwise it desyncs
 ///      `OutrunUniversalAssetsUpgradeable.sol::checkMintableAmount`/`OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable`
-///      from `totalSupply` and breaks the PA-6 invariant
+///      from `totalSupply` and breaks the cross-ledger invariant
 ///      `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`,
-///      which is not self-healing (unlike `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` over-cap). See G-021.
+///      which is not self-healing (unlike `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` over-cap).
 contract OutrunUniversalAssetsUpgradeable 
     // solhint-disable-next-line gas-small-strings
     layout at erc7201("outrun.storage.OutrunUniversalAssets")
@@ -117,7 +117,7 @@ contract OutrunUniversalAssetsUpgradeable
     ///      (`setMintingCap(SP, 0)` → matured `redeem`/`keepRedeem`/`keepWrapRedeem` burn down → `revokeMinter`):
     ///      the SP side exposes no ledger export/import entrypoint and a full-ledger move cannot fit
     ///      in one transaction, so a live-ledger transfer would leave a non-self-healing desync.
-    ///      @dev PA-6: this is the ONLY operation that can silently break the cross-ledger invariant
+    ///      @dev This is the ONLY operation that can silently break the cross-ledger invariant
     ///      `uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`
     ///      (see `OutrunStakingPositionUpgradeable`). Pre-mainnet the
     ///      `owner` must be a timelock/multisig; every call must be followed by a mirror reconciliation

@@ -106,7 +106,7 @@ abstract contract OutrunOFTUpgradeable is
         // unlimited sentinel; reject it here so configured limits cannot be mistaken for that state.
         if (window == 0) revert InvalidWindowSeconds();
         if (limit == 0) revert InvalidRateLimit();
-        // G-030: decay = limit*elapsed/window is stepwise (integer division discards remainder).
+        // decay = limit*elapsed/window is stepwise (integer division discards remainder).
         // If limit << window, capacity appears frozen for many seconds (e.g. limit=100, window=86400
         // -> decay=0 for 863s). Keep limit >= window per LayerZero devtools advice to guarantee
         // per-second refill >= 1 and avoid liveness/UX freeze. See docs/spec/common-foundations.md.

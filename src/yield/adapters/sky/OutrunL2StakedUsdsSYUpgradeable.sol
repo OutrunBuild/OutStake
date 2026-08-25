@@ -104,7 +104,7 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         if (tokenIn == _yieldBearingToken) {
             amountSharesOut = amountDeposited;
         } else {
-            // Enforce full consumption of the input token to close F6 sweep residual:
+            // Enforce full consumption of the input token (no sweep residual):
             // the PSM3 must pull the entire amountDeposited; any partial fill would
             // leave user funds stranded in SY and sweepable via SYBaseUpgradeable.sol::sweep.
             uint256 balanceBefore = _selfBalance(tokenIn);

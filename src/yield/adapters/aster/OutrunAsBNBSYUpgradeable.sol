@@ -104,7 +104,7 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
             if (amountSharesOut == 0) _revertOnZeroShares();
             // Enforce that the minter fully consumed the input: any partial fill would
             // leave user funds as stranded ERC20 that SYBaseUpgradeable.sol::sweep could
-            // extract (F6 residual). Use balance diff rather than return value, because
+            // extract (residual input). Use balance diff rather than return value, because
             // the external contract could return a non-zero share amount while still
             // retaining part of the input.
             uint256 slisBalanceAfter = _selfBalance(_slisBnb);

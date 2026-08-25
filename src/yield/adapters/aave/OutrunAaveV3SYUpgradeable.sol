@@ -76,7 +76,7 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     }
 
     /// @notice Redeem SY shares to the requested output token.
-    /// @dev F3 (P1) Liquidity dependency: when `tokenOut == underlying`, this path redeems to the underlying asset via `IAaveV3Pool.withdraw`,
+    /// @dev Liquidity dependency: when `tokenOut == underlying`, this path redeems to the underlying asset via `IAaveV3Pool.withdraw`,
     ///      and depends on available liquidity in the Aave reserve; high utilization, reserve pause/freeze, or insufficient liquidity will fail-closed and revert until recovery.
     ///      The `tokenOut == yieldBearingToken()` (aToken) branch is a liquidity-independent escape hatch (`_transferOut`), always available.
     ///      The upper-layer `OutrunStakingPositionUpgradeable.redeem` inherits the same external dependency when `tokenOut==underlying` is requested;
@@ -110,7 +110,7 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// @notice Aave liquidity index / 1e9 = canonical asset per SY.
     /// Aave's liquidity index is ray-scaled (1e27).
     /// Divide by 1e9 to get the standard 1e18-scaled exchange rate.
-    /// @dev Truncation (G-014): RAY->WAD is integer division (floor, remainder <1e9 Ray).
+    /// @dev Truncation: RAY->WAD is integer division (floor, remainder <1e9 Ray).
     ///      i.e. <1 wei per 1e18 unit and relative <1e-18 at index ~1e27. Bias is
     ///      conservative — covering the same uAsset debt needs marginally more SY, never
     ///      less — and negligible. Half-up would need coordinated Position change and is
