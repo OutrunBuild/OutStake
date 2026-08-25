@@ -14,7 +14,7 @@
 - 构造期边界：`OutrunExchangeOracleAdapter.sol::constructor` 拒绝 `_oracle == address(0)`（revert `InvalidOracle`）与 `_maxStaleness == 0`（revert `InvalidStaleness`）；零值不代表关闭新鲜度检查——零窗口下任何 `updatedAt < block.timestamp` 的异步 feed 均判 stale，等同永久不可用，故 fail-fast 于构造期；`InvalidOracle`/`InvalidStaleness` 属构造期错误，不属 `IExchangeRateOracle.sol` 声明的 5 个具名运行期错误之列（与 `Panic(0x11)` 同一分隔）
 - `OutrunL2WrappableWstETHSYUpgradeable` 是 Optimism-specific wrappable L2 wstETH variant，不属于 oracle-backed variant；当前实现没有 `exchangeRateOracle` storage / getter / setter，`exchangeRate()` 返回 `IL2StETH.getTokensByShares(1 ether)`
 - L2 sequencer 校验语义（仅当构造期配置了非零 `sequencerUptimeFeed` 才启用）：① Chainlink uptime feed 编码方向与直觉相反——`answer == 0` 表示 sequencer 在线，非 0 表示宕机（revert `SequencerDown`）；② 恢复后须经过 `sequencerGracePeriod` 宽限期才采信 answer（revert `SequencerGracePeriodNotOver`）；③ `startedAt == 0`（恢复从未记录）与 `startedAt > block.timestamp`（feed 时钟超前）两类不可信状态与宽限期未过共用同一错误名，简化实现下部署排错无法仅凭错误名区分根因（如需区分可拆分错误）。校验逻辑实现于 `OutrunExchangeOracleAdapter.sol::_validateSequencer`。
-- Position 侧速率读取（G-1/G-2 消费端）：`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 为全链路唯一速率读取点，仅校验 `rate != 0`（`ZeroExchangeRate`），不设本地带宽；适配器层保 `maxStaleness`/`sequencer` 新鲜度/可用性，链上带宽监控由链下完成。`docs/deployment.md` 与 `docs/spec/position/state-machines.md` 为双端文档锚点。
+- Position 侧速率读取（消费端）：`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 为全链路唯一速率读取点，仅校验 `rate != 0`（`ZeroExchangeRate`），不设本地带宽；适配器层保 `maxStaleness`/`sequencer` 新鲜度/可用性，链上带宽监控由链下完成。`docs/deployment.md` 与 `docs/spec/position/state-machines.md` 为双端文档锚点。
 
 ## 当前 product integration surface
 

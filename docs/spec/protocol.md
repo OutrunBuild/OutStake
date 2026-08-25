@@ -14,7 +14,7 @@
 
 当前资产层以 `OutrunUniversalAssetsUpgradeable` 为中心，并通过 `OutrunOFTUpgradeable` 提供跨链扩展。
 `OutrunOFTUpgradeable` 的 pause 阻断本地用户主动发起的 ERC20 路径与 pause 之后新发起的 outbound send，但 inbound `_credit` 为不阻塞已在跨链流程中的代币而不受 `whenNotPaused` 阻断；完整执行边界以 `docs/spec/common-foundations.md`「Pause 与跨链 OFT 执行边界」为准。
-`uAsset` 的 minter 债务账本与流通供应分离：`revokeMinter(minter)` 只把该 minter 的 `mintingCap` 置零以禁止未来 mint，不清除既有 `amountInMinted`，未偿债务仍需后续 repay。`OutrunUniversalAssetsUpgradeable` 当前无 `sweep` 为有意设计（G-021），未来若新增 `sweep` 必须 `onlyOwner nonReentrant` 经 timelock/multisig 且阻断 `address(this)`/`SY`/`NATIVE`，否则脱钩 PA-6。
+`uAsset` 的 minter 债务账本与流通供应分离：`revokeMinter(minter)` 只把该 minter 的 `mintingCap` 置零以禁止未来 mint，不清除既有 `amountInMinted`，未偿债务仍需后续 repay。`OutrunUniversalAssetsUpgradeable` 当前无 `sweep` 为有意设计，未来若新增 `sweep` 必须 `onlyOwner nonReentrant` 经 timelock/multisig 且阻断 `address(this)`/`SY`/`NATIVE`，否则脱钩跨账本不变量。
 OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收款人重映射为 `0xdead` 的设计语义以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
 `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定为修复无仓位/wrap 债支撑的错账、活 SP 退役走清盘路径）以 `docs/spec/common-foundations.md`「基础规则」为准。
 
@@ -50,10 +50,10 @@ position minter 对账式（`mintingStatusTable(address(position)).amountInMinte
 - `OutrunStakedUSDeSYUpgradeable` 只输出 `sUSDe`
 - router 不承担独立资金池
 
-## 暂停与滑点下界（S-002）
+## 暂停与滑点下界
 
-`whenNotPaused` 三级熔断与 `preview`/`minSyOut`/`minTokenOut`/`minUAssetMinted` 滑点下界已在执行层完整实现（`OutrunStakingPositionUpgradeable.sol:295,354,394,442,489,537` `OutrunUniversalAssetsUpgradeable.sol:140,163` `SYBaseUpgradeable.sol:129,162`），本概览仅作指针：暂停矩阵与三级影响见 `docs/spec/router/router-and-user-flows.md` §8/§10 与 `docs/spec/position/state-machines.md` §8，PA-1 执行真值与 `_credit` 豁免见 `docs/spec/common-foundations.md`；`preview` 与零下界=无保护语义见 `docs/spec/router/router-and-user-flows.md` §8（`min==0` 即无滑点保护，调用方须基于 `previewDeposit`/`previewRedeem` 计算非零下界）。
-## 跨链可用性与限流（S-003）
+`whenNotPaused` 三级熔断与 `preview`/`minSyOut`/`minTokenOut`/`minUAssetMinted` 滑点下界已在执行层完整实现（`OutrunStakingPositionUpgradeable.sol:295,354,394,442,489,537` `OutrunUniversalAssetsUpgradeable.sol:140,163` `SYBaseUpgradeable.sol:129,162`），本概览仅作指针：暂停矩阵与三级影响见 `docs/spec/router/router-and-user-flows.md` §8/§10 与 `docs/spec/position/state-machines.md` §8，暂停矩阵执行真值与 `_credit` 豁免见 `docs/spec/common-foundations.md`；`preview` 与零下界=无保护语义见 `docs/spec/router/router-and-user-flows.md` §8（`min==0` 即无滑点保护，调用方须基于 `previewDeposit`/`previewRedeem` 计算非零下界）。
+## 跨链可用性与限流
 
 `OutrunOFTUpgradeable.sol::_debit` 出站前经 `OutrunRateLimiterUpgradeable.sol::_outflow` 校验 per-eid outbound rate limit，peer 未设时经 `OAppCore.sol::_getPeerOrRevert` revert `NoPeer`；本概览仅作指针：限流与 peer/DVN 语义见 `docs/spec/common-foundations.md`「OFT 与 rate limiter」、换算与校验见同文件「OFT 换算参数与发送/部署校验语义」，部署与监控见 `docs/deployment.md`「跨链信任根投产校验与应急处置」与「跨链限流（OFT Outbound Rate Limit）高危参数校验清单」；`quoteOFT().maxAmountLD`/`getAmountCanBeSent`/`isRateLimited` 为预览与可观测性入口，`RateLimitExceeded`/零 peer 需告警（fail-closed，无资金损失）。
 

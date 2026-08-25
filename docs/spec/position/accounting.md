@@ -30,7 +30,7 @@
 - `repay(account, amount)` 减少调用者（`msg.sender`，即 minter）自己的 `amountInMinted`；`account` 是被 burn 的地址，必须持有足够的 `uAsset`。若 `account != msg.sender`，则还必须先授权 `msg.sender` 消耗对应 `uAsset`。
 - `revokeMinter(minter)` 只把 cap 设为 0 以禁止后续 mint，不会自动清空历史已铸债务；既有 `amountInMinted` 保留到后续 repay。
 - `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定）以 `docs/spec/common-foundations.md`「基础规则」为准。
-- accounting 视角补充：`transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务，不更新 position/wrap 记录；仅限修复无仓位/wrap 债支撑的错账（SP 侧无账本导出/导入入口，活账本迁移不可执行），活 SP 退役走清盘路径（见 `docs/deployment.md` PA-6）。
+- accounting 视角补充：`transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务，不更新 position/wrap 记录；仅限修复无仓位/wrap 债支撑的错账（SP 侧无账本导出/导入入口，活账本迁移不可执行），活 SP 退役走清盘路径（见 `docs/spec/position/state-machines.md` §8.6）。
 - OFT 跨链铸烧豁免（outbound `_debit`/inbound `_credit` 不触碰 minter 债务台账、`_credit` 零地址重映射 `0xdead`）以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
 
 因此，`uAsset` 当前不是”全局总债务池”，而是”按 minter 独立记账的铸造额度和未偿债务”；owner 只能迁移这笔 minter 维度债务归属，不能消灭债务或改变总供应，也不能仅靠 `uAsset` 调账就让 position/wrap 账本自动一致。
@@ -271,7 +271,7 @@ rounding matrix：
 - 锚定测试：`test/upgradeable/OutrunStakingPositionInvariantUpgradeable.t.sol::invariant_uAssetSupplyConsistency` 逐活动仓位累加 `Position.UAssetMinted` 并加 `wrapUAssetDebt()`，断言其等于 `mintingStatusTable(address(position)).amountInMinted`
 - 口径边界：对账必须读 per-minter 的 `amountInMinted`（`mintingStatusTable`），不读 `totalSupply()`——`totalSupply` 会被其它 minter 的铸造以及 OFT 跨链铸烧影响，且该 invariant 的 fuzz handler 在赎回时会向 actor/keeper 直接 mint uAsset 补足余额而污染总供应；per-minter 的 `amountInMinted` 只记录 position 自己的净铸造额；OFT 跨链 `OutrunOFTUpgradeable.sol::_debit` / `::_credit` 只移动流通供应、不触碰 minter 债务台账（见 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」），故跨链 supply movement 不参与该式
 - position minter wiring：position 合约经部署脚本 `script/deploy/OutstakeScript.s.sol` 的 `setMintingCap(spAddress, SP_DEFAULT_MINTING_CAP)` 注册为 uAsset minter 并配置 mintingCap；升级 / 迁移不得在不改该注册的情况下单独变更 position 侧台账
-- `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 以该 minter（position）为 from/to 时，`uAsset` 只迁移 minter 级债务、不自动同步 position/wrap 台账（见 §2 与 `docs/spec/common-foundations.md`「基础规则」）：仅限修复无仓位/wrap 债支撑的错账；对有真实仓位/池支撑的债务调用即打破本恒等式，且 SP 侧无账本导出/导入入口、无法原子或分批搬迁（分批产生非自愈中间态偏离），活 SP 退役走清盘路径（`setMintingCap(SP,0)` → 存量经 `redeem`/`keepRedeem`/`keepWrapRedeem` 烧尽 → `revokeMinter`，见 `docs/deployment.md` PA-6）
+- `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 以该 minter（position）为 from/to 时，`uAsset` 只迁移 minter 级债务、不自动同步 position/wrap 台账（见 §2 与 `docs/spec/common-foundations.md`「基础规则」）：仅限修复无仓位/wrap 债支撑的错账；对有真实仓位/池支撑的债务调用即打破本恒等式，且 SP 侧无账本导出/导入入口、无法原子或分批搬迁（分批产生非自愈中间态偏离），活 SP 退役走清盘路径（`setMintingCap(SP,0)` → 存量经 `redeem`/`keepRedeem`/`keepWrapRedeem` 烧尽 → `revokeMinter`，见 `docs/spec/position/state-machines.md` §8.6）
 - 修账验收步骤：修账前记录恒等式偏离方向与量 → 执行 `transferMinterDebt` 归位 → 修账后逐项核对 `positions(id)` 的 `UAssetMinted`、`wrapUAssetDebt()` 与 position minter 的 `amountInMinted`（经 `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable` 直读），本式重新成立即通过；恒等式仍不成立即验收失败，必须先排查 wiring 再放行
 
 ## 11. Position manager 错误与事件真源

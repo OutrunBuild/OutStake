@@ -147,7 +147,7 @@
 - router 在 stake 后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 - router 校验 `mintedUAsset <= type(uint128).max`。
 - 之后 router 授权 `memeverseLauncher`，再调用 `memeverseLauncher.genesis(verseId, uint128(mintedUAsset), genesisUser)`。
-- 之后 router 做严格后置校验（`G-039`）：`genesis(...)` 返回后读取 `IERC20(uAsset).balanceOf(address(this))` 与 `IERC20(uAsset).allowance(address(this), launcher)`，任一非零即回退 `GenesisUAssetNotConsumed(residualBalance, residualAllowance)`；要求 launcher 在同一交易内 `transferFrom` 消费全部 `mintedUAsset`（`balance==0 && allowance==0`，遗留 1 wei 即回退），避免无救援路径的残留余额/授权。旧版 spec 误写为“不会检查、依赖 launcher 实现”，现已修正——代码自 `daf879c` 起即为 fail-closed 断言。
+- 之后 router 做严格后置校验：`genesis(...)` 返回后读取 `IERC20(uAsset).balanceOf(address(this))` 与 `IERC20(uAsset).allowance(address(this), launcher)`，任一非零即回退 `GenesisUAssetNotConsumed(residualBalance, residualAllowance)`；要求 launcher 在同一交易内 `transferFrom` 消费全部 `mintedUAsset`（`balance==0 && allowance==0`，遗留 1 wei 即回退），避免无救援路径的残留余额/授权。旧版 spec 误写为“不会检查、依赖 launcher 实现”，现已修正——代码自 `daf879c` 起即为 fail-closed 断言。
 
 ### 7.2 genesisBySY
 
@@ -155,7 +155,7 @@
 - 后续和 `genesisByToken(...)` 一样，仍然调用 `SP.stake(...)` 创建 locked position。
 - router 在 stake 后校验 `mintedUAsset >= minUAssetMinted`；不足时整笔交易回退并报 `InsufficientUAssetMinted(...)`。
 - 最终也是由 launcher 拉走本次 stake 产出的 `uAsset`。
-- 最终同样受与 `genesisByToken` 相同的严格后置校验覆盖：`genesis(...)` 返回后 `balance==0 && allowance==0` 否则 `GenesisUAssetNotConsumed`（`G-039`），精确消费由代码断言保证而非仅依赖 launcher 实现；旧版“不会额外断言”已过时。
+- 最终同样受与 `genesisByToken` 相同的严格后置校验覆盖：`genesis(...)` 返回后 `balance==0 && allowance==0` 否则 `GenesisUAssetNotConsumed`，精确消费由代码断言保证而非仅依赖 launcher 实现；旧版“不会额外断言”已过时。
 
 ### 7.3 当前实现可确认的 genesis 语义
 
@@ -169,7 +169,7 @@
 - `OutrunRouter` 的 constructor 与 `setMemeverseLauncher(...)` 会在配置期 fail fast，拒绝 `address(0)` 和 `code.length == 0` 的 launcher 地址。
 - `OutrunRouter.sol::setMemeverseLauncher` 成功轮换时发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件已落地（`IOutrunRouter.sol` 声明、`OutrunRouter.sol::_setMemeverseLauncher` emit）。部署验收时注意 constructor 部署期同样经 `_setMemeverseLauncher` 首发 `SetMemeverseLauncher(address(0), launcher)`（`oldLauncher` 为零初值），并核对 `OutrunRouter.sol::memeverseLauncher` 读取值。
 - genesis 流程可把 `memeverseLauncher` 已通过配置期 code-size 校验视为前置条件。
-- router 对 launcher 的运行期信任边界已从“地址存在代码即信任”升级为可验证断言：`genesis(...)` 返回后必须 `balance==0 && allowance==0`，否则 `GenesisUAssetNotConsumed` 整笔回退（`OutrunRouter.sol:403-407`，`G-039`）；配置期 code-size 校验仍为前置条件，运行期再以同一交易内后置检查兜底。
+- router 对 launcher 的运行期信任边界已从“地址存在代码即信任”升级为可验证断言：`genesis(...)` 返回后必须 `balance==0 && allowance==0`，否则 `GenesisUAssetNotConsumed` 整笔回退（`OutrunRouter.sol:403-407`）；配置期 code-size 校验仍为前置条件，运行期再以同一交易内后置检查兜底。
 - 该后置检查属于运行期可观测性/健壮性加固（`daf879c` 引入），不改变 launcher 内部仍是外部信任边界这一语义，但将“完全消费”从信任假设升级为强制断言。
 
 ### 7.5 target registry 与撤销
@@ -186,7 +186,7 @@
 - `IOutrunRouter.sol::InvalidMemeverseLauncher` 是该公共 error 的 canonical 声明来源，`OutrunRouter.sol` 通过继承暴露相同 selector/revert payload；使用 Solidity 类型化 selector 的集成代码从 `OutrunRouter.InvalidMemeverseLauncher.selector` 迁移到 `IOutrunRouter.InvalidMemeverseLauncher.selector`，仅发生源码命名空间迁移，链上 ABI/runtime 保持。
 - `InsufficientUAssetMinted(...)` 由 `OutrunRouter.sol::_assertMinUAssetMinted` 在实际 `mintedUAsset < minUAssetMinted` 时触发。locked stake/genesis 在 `OutrunRouter.sol::_stakeFromSYBalance` 返回后检查，wrap stake 在 `OutrunRouter.sol::_wrapStakeFromSYBalance` 完成 `SP.wrapStake(...)` 后检查；检查失败会回退整笔调用。
 - `SweepZeroAddress()` / `SweepZeroAmount()` 由 `OutrunRouter.sol::sweep` 在 `to == address(0)` / `amount == 0` 时触发，避免静默无操作；`Sweep(address indexed token,address indexed to,uint256 amount)` 事件记录回收。`sweep` 可转出路由器当前持有的任意 ERC20/native（含瞬态 SY/uAsset），无 per-token blocklist 为有意——路由器无背书资产，外置 SY 的 `yieldBearingToken` / `address(this)` blocklist（`SYBaseUpgradeable.sol::sweep`）不适用；瞬态风险仅限单笔交易内余额且受 `onlyOwner` + `nonReentrant`（`ReentrancyGuardTransient`）保护，未授权调用方 DENIED，持续 live（`Ownable` 产品外 multisig 治理，产品合约内不设 `TimelockController`）。
-- `GenesisUAssetNotConsumed(uint256 residualBalance, uint256 residualAllowance)` 由 `OutrunRouter.sol::_genesisFromSYBalance` 在 `IMemeverseLauncher.genesis` 返回后触发：`residualBalance = IERC20(uAsset).balanceOf(address(this))`、`residualAllowance = IERC20(uAsset).allowance(address(this), launcher)` 任一非零即回退（`G-039` 严格 `==0`，1 wei 残留即回退），覆盖 `genesisByToken`/`genesisBySY` 两入口；`mintedUAsset` 已在 `uint128` 边界内，此检查在同一 `nonReentrant` 交易内原子执行，launcher 无法跨块延迟消费。旧版“不额外断言”已修正。
+- `GenesisUAssetNotConsumed(uint256 residualBalance, uint256 residualAllowance)` 由 `OutrunRouter.sol::_genesisFromSYBalance` 在 `IMemeverseLauncher.genesis` 返回后触发：`residualBalance = IERC20(uAsset).balanceOf(address(this))`、`residualAllowance = IERC20(uAsset).allowance(address(this), launcher)` 任一非零即回退（严格 `==0`，1 wei 残留即回退），覆盖 `genesisByToken`/`genesisBySY` 两入口；`mintedUAsset` 已在 `uint128` 边界内，此检查在同一 `nonReentrant` 交易内原子执行，launcher 无法跨块延迟消费。旧版“不额外断言”已修正。
 - 下游 `SY` 的 `deposit(...)` / `redeem(...)`、`SP` 的 `SY()` / `stake(...)` / `wrapStake(...)` 以及 launcher 的 `genesis(...)` 若自身回退，router 不捕获、不改写错误数据，原始 revert 透传给上层；router 自身的白名单、金额、精确 approve、最小铸造量、`uint128` 边界与上述 `GenesisUAssetNotConsumed` 后置检查可能在相应下游调用前/后回退。
 
 ## 8. preview 语义与 slippage 边界
@@ -224,7 +224,7 @@ router 只暴露上述 3 个交易级 preview；SP 级共有 6 个 preview（`pr
   - locked stake、wrap stake 与 genesis 的 SY -> uAsset 阶段使用 `minUAssetMinted`。
   - `redeemSyToToken(...)` 的赎回阶段使用 `minTokenOut`。
   - `preview` 与执行期都以 mixed-decimals 可支持为目标，不把 `SY` canonical asset decimals 与 `uAsset` decimals 不同视为禁止配置；差异由归一化换算吸收。
-- **零下限 = 无滑点保护（委托式设计，GO-1 / 04a G-3 衔接）**：`minSyOut == 0` / `minTokenOut == 0` / `minUAssetMinted == 0` 时 router 层无任何强制，零值静默透传给 `SYBaseUpgradeable.sol::deposit`/`::redeem`（`IStandardizedYield.sol` L60-62 文档明示 `SYZeroSharesOut` 仅当 `minSharesOut` 为零时可观察到）与 `OutrunRouter.sol::_assertMinUAssetMinted`，链上唯一兜底是零输出守卫——`amountSharesOut == 0` 才 revert；非零而被压低至任意小值的输出在零下限下静默通过。`OutrunL2StakedUsdsSYUpgradeable.sol` 等经 `IPSM3.sol:swapExactIn(...,0,...)` 的路径（`minAmountOut == 0`）叠加时，全链路滑点防线仅剩调用方/前端纪律。**集成要求**：调用方必须基于 `previewDeposit`/`previewRedeem`/`previewStake`/`previewWrapStake` 的链上 quote 计算非零下限（quote ± slippage），SDK/前端默认禁止零下限并监控三明治/池失衡口径；`0` 仅在显式接受无保护语义时使用。
+- **零下限 = 无滑点保护（委托式设计）**：`minSyOut == 0` / `minTokenOut == 0` / `minUAssetMinted == 0` 时 router 层无任何强制，零值静默透传给 `SYBaseUpgradeable.sol::deposit`/`::redeem`（`IStandardizedYield.sol` L60-62 文档明示 `SYZeroSharesOut` 仅当 `minSharesOut` 为零时可观察到）与 `OutrunRouter.sol::_assertMinUAssetMinted`，链上唯一兜底是零输出守卫——`amountSharesOut == 0` 才 revert；非零而被压低至任意小值的输出在零下限下静默通过。`OutrunL2StakedUsdsSYUpgradeable.sol` 等经 `IPSM3.sol:swapExactIn(...,0,...)` 的路径（`minAmountOut == 0`）叠加时，全链路滑点防线仅剩调用方/前端纪律。**集成要求**：调用方必须基于 `previewDeposit`/`previewRedeem`/`previewStake`/`previewWrapStake` 的链上 quote 计算非零下限（quote ± slippage），SDK/前端默认禁止零下限并监控三明治/池失衡口径；`0` 仅在显式接受无保护语义时使用。
 
 ## 9. 当前实现提醒
 

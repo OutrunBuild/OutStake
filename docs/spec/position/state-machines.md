@@ -192,18 +192,18 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `OutrunStakingPositionUpgradeable.sol::setKeeper` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 keeper 权限并发出 indexed `SetKeeper(keeper)`。
 - 三个配置事件中 `SetMinStake` 只记录新值，`SetRevenuePool`/`SetKeeper` 为 indexed；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 15 个 manager errors。
 
-### 7.2 Keeper/Owner 操作分区与部署布线 (G-037)
+### 7.2 Keeper/Owner 操作分区与部署布线
 
 `OutrunStakingPositionUpgradeable.sol::keepRedeem` 与 `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 仅 keeper 可调用（`OutrunStakingPositionUpgradeable.sol::keepRedeem` / `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 以 `keeper()` 比对 `msg.sender`，非 keeper 回退 `PermissionDenied`），`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 仅 owner 可调用（`onlyOwner`）。该分区为故意设计：不可信 keeper 只承担到期清算活性，可信 owner 只承担收益收割与 `revenuePool`/`minTokenOut` 控制，不交叉。
 
 - keeper 无收割权：`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 的 `onlyOwner` 使 keeper 机器人无法提取 `syWrapStaking - wrapDebtInSY` 超额至 `revenuePool`。
 - owner 无清算权：`keep*` 的 `keeper()` 检查使 owner 多签无法直接 `OutrunStakingPositionUpgradeable.sol::keepRedeem` / `::keepWrapRedeem`，除非先 `OutrunStakingPositionUpgradeable.sol::setKeeper` 将自身设为 keeper（`onlyOwner`，`SetKeeper` 可审计）后再以 keeper 身份调用；或将 keeper 设为由 owner 共控的 bot 地址，使两角色共置。
-- 不建议给 keeper 开放 `harvestWrapYield`：`harvestWrapYield` 的 `tokenOut`/`minTokenOut`/`revenuePool` 目标需仅由 owner 控制（`docs/audits/2026-08-24/04a-guidelines-position-assets.md:85`），keeper 收割会引入收益重定向与滑点风险。
-- 活性含义：若 keeper 与 owner 未布线共置，清算与收割各自停滞时不造成资金损失，仅 liveness halt；owner 仍可经 `OutrunStakingPositionUpgradeable.sol::redeem` 自赎个人仓位。部署 runbook 见 `docs/deployment.md` G-037 节。
+- 不建议给 keeper 开放 `harvestWrapYield`：`harvestWrapYield` 的 `tokenOut`/`minTokenOut`/`revenuePool` 目标需仅由 owner 控制，keeper 收割会引入收益重定向与滑点风险。
+- 活性含义：若 keeper 与 owner 未布线共置，清算与收割各自停滞时不造成资金损失，仅 liveness halt；owner 仍可经 `OutrunStakingPositionUpgradeable.sol::redeem` 自赎个人仓位。部署 runbook 见 `docs/deployment.md`「Keeper/Harvest 权限分区与活性布线」节。
 
-## 8. Pause / unpause 的影响 (PA-1)
+## 8. Pause / unpause 的影响
 
-> 审计 PA-1 暂停矩阵：三 owner 开关任一关闭即冻结 SP 全部用户面；uAsset 暂停为全协议熔断但 `_credit` 仍增供给（单边增长）。本节为执行真值，运维矩阵与告警见 `docs/deployment.md`。
+> 暂停矩阵：三 owner 开关任一关闭即冻结 SP 全部用户面；uAsset 暂停为全协议熔断但 `_credit` 仍增供给（单边增长）。本节为执行真值，运维矩阵与告警见 `docs/deployment.md`。
 
 当前仓库存在三类 pause 语义：
 
@@ -238,13 +238,13 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `stake` / `drawUAsset` / `wrapStake`（经 `uAsset.mint`）
 - `redeem` / `keepRedeem` / `keepWrapRedeem`（经 `uAsset.repay`）
 
-G-018 协同约束：`uAsset` 单独暂停会在 `Position` 未暂停、仓位已到期时仍阻断 `redeem`/`keep*`（`OutrunUniversalAssetsUpgradeable.sol:163 repay whenNotPaused`）；存在待赎回仓位时禁止单独 `uAsset.pause()`，需同步 `position.pause()` 或改用 `setMintingCap`/`revokeMinter` 限 `mint`。
+协同约束：`uAsset` 单独暂停会在 `Position` 未暂停、仓位已到期时仍阻断 `redeem`/`keep*`（`OutrunUniversalAssetsUpgradeable.sol:163 repay whenNotPaused`）；存在待赎回仓位时禁止单独 `uAsset.pause()`，需同步 `position.pause()` 或改用 `setMintingCap`/`revokeMinter` 限 `mint`。
 
 `harvestWrapYield` 不调用 uAsset 的 mint / repay，不受该级 pause 阻断（仅受 8.1 与 8.2 两级影响）；对应的 preview / view 函数同样不受该级 pause 影响。
 
 因此，在当前实现里，用户流程既可能被 position 级 pause 阻断，也可能被底层 `SY` token pause 阻断，还可能被 uAsset 级 pause 阻断。
 
-### 8.4 暂停矩阵（PA-1 执行真值）
+### 8.4 暂停矩阵（执行真值）
 
 | 暂停方 | 触发 | SP 用户面影响 | uAsset 面 | SY 面 | 恢复 | 备注 |
 |---|---|---|---|---|---:|---|
@@ -252,14 +252,14 @@ G-018 协同约束：`uAsset` 单独暂停会在 `Position` 未暂停、仓位�
 | SY `pause()` | `sy.pause()` | `stake`/`wrapStake` 经 `SY` transfer 间接 `EnforcedPause`；`redeem`/`keep*` 的 SY 转出亦受阻 | 无直接影响 | `deposit`/`redeem` `EnforcedPause` | `unpause()` | `drawUAsset` 仅读 `exchangeRate` + `uAsset.mint`，未到期且有额度时仍可运行 |
 | uAsset `pause()` | `uAsset.pause()` | `stake`/`drawUAsset`/`wrapStake`(`mint`)、`redeem`/`keep*`(`repay`)、`transfer`/`_debit` 全部 `EnforcedPause` → 全协议熔断 | `mint`/`repay`/`transfer`/`_debit` `EnforcedPause`；`approve` 不受影响 (OZ 标准)；`_credit` 显式绕过 `whenNotPaused` 仍铸币 | 无直接影响 | `unpause()`；恢复后 `repay` 立即恢复 | 暂停期供给单边增长需告警，见 `docs/deployment.md` |
 
-- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol:185-194` 直调 `OutrunERC20Upgradeable._update`，符合 “桥接入账不可丢资产” 实践；暂停期 `totalSupply` 仍增，见 `PositionPauseMatrix.t.sol` 回归。`repay` 不豁免：`OutrunUniversalAssetsUpgradeable.sol:163 repay whenNotPaused` 会使已到期仓位 `redeem`/`keep*` 随 uAsset 暂停而 `EnforcedPause`（G-018）。
+- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol:185-194` 直调 `OutrunERC20Upgradeable._update`，符合 “桥接入账不可丢资产” 实践；暂停期 `totalSupply` 仍增，见 `PositionPauseMatrix.t.sol` 回归。`repay` 不豁免：`OutrunUniversalAssetsUpgradeable.sol:163 repay whenNotPaused` 会使已到期仓位 `redeem`/`keep*` 随 uAsset 暂停而 `EnforcedPause`。
 - 限流器与暂停为两级出站熔断：`setOutboundRateLimit` 的 `limit==0` 已被 `InvalidRateLimit` 拒绝，不再用作单链冻结。
-- 运维（G-018）：三 `owner` 主网前收敛为 timelock/multisig，暂停时长设告警 (`<24h`，`_credit` 单边增长需监控)；当存在待赎回仓位时禁止单独 `uAsset.pause()`，需 `SP+uAsset` 同步暂停或改用 `setMintingCap(0)`/`revokeMinter`，见 `docs/deployment.md` 协同暂停约束。
+- 运维：三 `owner` 主网前收敛为 timelock/multisig，暂停时长设告警 (`<24h`，`_credit` 单边增长需监控)；当存在待赎回仓位时禁止单独 `uAsset.pause()`，需 `SP+uAsset` 同步暂停或改用 `setMintingCap(0)`/`revokeMinter`，见 `docs/deployment.md` 协同暂停约束。
 
-### 8.5 Wrap 池欠担保语义（PA-2）
+### 8.5 Wrap 池欠担保语义
 
 共享 wrap 池 `keepWrapRedeem` 为 keeper-only 全有或全无语义：`_assetToSyUp(wrapUAssetDebt, rate) > syWrapStaking` 时 `WrapPoolUndercollateralized`，任何 `amountInUAsset>0` 均 revert，池内 `wrapUAssetDebt`/`syWrapStaking` 不变；汇率回升后同笔兑付恢复。`testFuzz_WrapPoolUndercollateralizedThenRecovers` 锁定该语义。
 
-### 8.6 跨账本不变量与治理（PA-6）
+### 8.6 跨账本不变量与治理
 
 `uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt` 仅由代码路径隐式维持，无链上强制；唯一可打破的是 `uAsset.transferMinterDebt`。主网前 `uAsset`/`SP` `owner` 收敛为 timelock/multisig；`transferMinterDebt` 仅限修复无仓位/wrap 债支撑的错账，活 SP 退役走清盘路径（`setMintingCap`(SP,0) → 存量烧尽 → `revokeMinter`），禁用于活账本迁移；`setMinStake` 可即时 DoS 新 `stake`，变更走公示。对账见 `OutrunStakingPositionInvariantUpgradeable.t.sol:invariant_uAssetSupplyConsistency`。

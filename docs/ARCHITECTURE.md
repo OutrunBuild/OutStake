@@ -50,7 +50,7 @@
 - `src/router/interfaces/IMemeverseLauncher.sol`
 - 把 token <-> SY <-> staking position/uAsset 组合为单次入口，并承载 memeverseLauncher genesis 集成。
 - `OutrunRouter` 不进入 upgradeable product surface；仍保持非 upgradeable、可重部署 helper，并通过参数或配置调用 proxy-backed uAsset / SY / position。
-- F-091 target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。主网发布前完成清单验收并冻结/移除临时 setter。
+- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。主网发布前完成清单验收并冻结/移除临时 setter。
 
 ### 1.5 集成与 Oracle 层
 
