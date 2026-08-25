@@ -141,7 +141,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(MockPositionUUPSV2(address(position)).version(), 2);
     }
 
-    /// @notice G-022: frozen decimals are ERC-7201 storage, not immutables — upgrade must not
+    /// @notice Frozen decimals are ERC-7201 storage, not immutables — upgrade must not
     /// misread canonicalAssetDecimals/uAssetDecimals. Pin slot0 packing and scaling across upgrade.
     function testDecimalsAreImmutableAcrossUpgrade() external {
         _deployPositionStack();
@@ -167,7 +167,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         position.upgradeToAndCall(address(v2), "");
 
         uint256 wordAfter = uint256(vm.load(address(position), baseSlot));
-        assertEq(wordAfter, wordBefore, "G-022: slot0 packing must survive upgrade");
+        assertEq(wordAfter, wordBefore, "slot0 packing must survive upgrade");
         assertEq(
             MockPositionUUPSV2(address(position)).canonicalAssetDecimals(),
             canonicalBefore,
@@ -183,7 +183,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         }
         assertEq(expectedAfter, previewBefore, "scaling derived from frozen decimals must match preview before upgrade");
 
-        // G-020 deprecated slots removed pre-deployment; positions mapping now at slot8
+        // Deprecated band slots were removed pre-deployment; positions mapping now at slot8
         assertEq(
             uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8))),
             0,
@@ -192,7 +192,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9))), 0, "slot9 stays empty");
     }
 
-    /// @notice G-022 cross-decimals: 6-dec canonical vs 18-dec uAsset (1e12 scale) must stay 1e12 after upgrade.
+    /// @notice Cross-decimals: 6-dec canonical vs 18-dec uAsset (1e12 scale) must stay 1e12 after upgrade.
     function testMixedDecimalsUpgradePreservesScaling() external {
         _setupMixedDecimalsPosition();
         uint256 previewBefore = mixedPosition.previewStake(1e6);
@@ -206,7 +206,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         mixedPosition.upgradeToAndCall(address(v2), "");
 
         uint256 wordAfter = uint256(vm.load(address(mixedPosition), baseSlot));
-        assertEq(wordAfter, wordBefore, "G-022: cross-decimals slot0 must survive upgrade");
+        assertEq(wordAfter, wordBefore, "cross-decimals slot0 must survive upgrade");
         assertEq(MockPositionUUPSV2(address(mixedPosition)).canonicalAssetDecimals(), 6, "canonical 6 frozen");
         assertEq(MockPositionUUPSV2(address(mixedPosition)).uAssetDecimals(), 18, "uAsset 18 frozen");
         // mock does not expose previewStake; verify the 1e12 scale is preserved via decimals
@@ -217,7 +217,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(expectedAfter, 1e18, "cross-decimals scaling preserved after upgrade");
     }
 
-    /// @notice Helper for G-022 slot derivation (same as OutrunStakingPositionStorageLayoutTest).
+    /// @notice Helper for ERC-7201 slot derivation (same as OutrunStakingPositionStorageLayoutTest).
     function _erc7201(string memory id) internal pure returns (bytes32) {
         return keccak256(abi.encode(uint256(keccak256(bytes(id))) - 1)) & ~bytes32(uint256(0xff));
     }
@@ -1049,7 +1049,7 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
     }
 }
 
-// PA-1 pause matrix regression (04a)
+// Pause matrix regression
 contract PositionPauseMatrixTest is PositionStackTestBase {
     bytes4 internal constant ENFORCED_PAUSE = PausableUpgradeable.EnforcedPause.selector;
 

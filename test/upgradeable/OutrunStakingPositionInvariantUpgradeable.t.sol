@@ -292,7 +292,7 @@ contract PositionHandler is Test {
         sy.setExchangeRate(newRate);
     }
 
-    /// @notice Monotone-only rate entrypoint for the coverage invariant runs [POS-1c].
+    /// @notice Monotone-only rate entrypoint for the coverage invariant runs.
     /// Unlike changeExchangeRate (bidirectional by design — existing invariants depend on rate
     /// drops), bumpExchangeRate only ever increases the rate, so wrap-pool coverage stays provable.
     function bumpExchangeRate(uint256 deltaSeed) external {
@@ -547,9 +547,8 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
     }
 
     /**
-     * @notice Invariant: keeper rounding and per-position debt sentinel [G-019]
-     * @dev Ported from docs/05-invariants/PositionInvariants.t.sol:361 invariant_KeeperPreservesWrap
-     *      Checks that partial redeem ceil never consumes all debt and that any staked position carries debt.
+     * @notice Invariant: keeper rounding and per-position debt sentinel
+     * @dev Checks that partial redeem ceil never consumes all debt and that any staked position carries debt.
      */
     function invariant_KeeperRoundingCeil() public view {
         uint256 activeCount = handler.getActivePositionCount();
@@ -583,7 +582,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
 /**
  * @title Cross-decimals invariant tests for OutrunStakingPosition
- * @notice Re-runs the core position invariants under non-default decimal configurations [POS-1a/1c]:
+ * @notice Re-runs the core position invariants under non-default decimal configurations:
  *         the position freezes canonicalAssetDecimals and uAssetDecimals at initialization, so these
  *         runs verify that the uAsset<->canonical-asset rescaling never breaks the ledger identities.
  * @dev The fuzzed entrypoint set deliberately excludes changeExchangeRate: it is bidirectional, and a
@@ -667,7 +666,7 @@ abstract contract OutrunStakingPositionCrossDecimalsInvariantTest is StdInvarian
     }
 
     /**
-     * @notice Invariant: uAsset supply accounting consistency [POS-1a]
+     * @notice Invariant: uAsset supply accounting consistency
      * @dev Total uAsset minted equals sum of position debt + wrap debt. Both sides of the identity
      *      live in the uAsset domain, so it must hold under any decimal configuration; this run
      *      verifies that the cross-domain rescaling never corrupts it.
@@ -698,8 +697,8 @@ abstract contract OutrunStakingPositionCrossDecimalsInvariantTest is StdInvarian
     }
 
     /**
-     * @notice Invariant: wrap pool stays covered under monotone rates [POS-1c]
-     * @dev Conservation argument (executable form of 04a §1.3): wrapStake adds ceil-scaled debt against
+     * @notice Invariant: wrap pool stays covered under monotone rates
+     * @dev Conservation argument: wrapStake adds ceil-scaled debt against
      *      exact SY principal, harvestWrapYield only removes SY above the debt ceiling, and
      *      keepWrapRedeem enforces the coverage guard while paying out floor-converted SY. Together
      *      with monotone rates these three paths preserve:

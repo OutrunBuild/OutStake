@@ -869,10 +869,10 @@ contract SYAdaptersUpgradeableTest is Test {
     }
 
     // ---------------------------------------------------------------------------
-    // Rounding-direction property tests (docs/audits/2026-08-19/04a-guidelines-yield-libraries.md §4)
+    // Rounding-direction property tests
     //
-    // P1 roundtrip bounded loss: deposit then immediately redeem the same token and assert the
-    // output stays within the adapter's rounding quanta of the input. P2 preview bounds actual:
+    // Roundtrip bounded loss: deposit then immediately redeem the same token and assert the
+    // output stays within the adapter's rounding quanta of the input. Preview bounds actual:
     // on the chained-floor native paths, assert the executed deposit output stays within one
     // quantum of the preview quote. Rates/indices are bounded to [1x, 2x) — the realistic
     // appreciation band. Amount lower bounds sit at or above each path's dust threshold

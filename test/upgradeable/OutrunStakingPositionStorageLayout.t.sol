@@ -23,7 +23,7 @@ contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
     /// @notice Pins the full ERC-7201 layout: frozen decimals must survive upgrades,
     /// so field order, width, and count are frozen. Any reorder/insertion would misread
     /// canonicalAssetDecimals/uAssetDecimals and silently mis-scale by 1e12.
-    /// Pre-deployment cleanup: deprecated G-020 band slots (min/maxExchangeRate) removed,
+    /// Pre-deployment cleanup: deprecated band slots (min/maxExchangeRate) removed,
     /// mapping `positions` now sits at slot8.
     function test_StorageLayoutIsPinnedWithBoundsAndMapping() external {
         _deployPositionStack();
@@ -75,7 +75,7 @@ contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
         assertEq(uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 9))), 0, "slot9 must stay empty");
     }
 
-    /// @notice Positions mapping slot is pinned at slot8 after G-020 cleanup; survives upgrade unchanged.
+    /// @notice Positions mapping slot is pinned at slot8 after the cleanup; survives upgrade unchanged.
     function test_PositionsMappingSlotPinnedAfterCleanup() external {
         _deployPositionStack();
         bytes32 baseSlot = _erc7201("outrun.storage.OutrunStakingPosition");

@@ -172,7 +172,7 @@ contract OutstakeScriptMockSYDeployTest is Test {
     }
 
     // 4_294_998_633 = 2^32 + 31337: a uint32-truncated comparison would match allowlist entry 0
-    // and pass the gate, so this locks the full-width chainid comparison (SECR-001).
+    // and pass the gate, so this locks the full-width chainid comparison.
     function test_RevertWhen_ChainIdTruncatesIntoAllowlist() external {
         vm.chainId(4_294_998_633);
 

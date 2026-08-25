@@ -25,7 +25,7 @@ contract L2ValidationHarness {
     }
 }
 
-/// @title L2OracleBackedInitTest — G-011 regression
+/// @title L2OracleBackedInitTest — decimals mis-scale regression
 /// @notice Validates that L2 oracle-backed SY `underlyingAssetOnEthDecimals` must be cross-checked
 /// off-chain against L1 truth before broadcast. L2 cannot call `IERC20Metadata.decimals()` on L1 without
 /// a bridge, so a typo (e.g. 18 vs 6) is silently cached by `OutrunStakingPositionUpgradeable.initialize`
@@ -122,7 +122,7 @@ contract L2OracleBackedInitTest is Test {
     }
 
     function test_MisScale_Is1e12_For6vs18() external {
-        // Directly proves the G-011 math: syToAsset / wrap debt scales by 10**|delta|
+        // Directly proves the mis-scale math: syToAsset / wrap debt scales by 10**|delta|
         OutrunL2StakedTokenSYUpgradeable sy6 = OutrunL2StakedTokenSYUpgradeable(
             payable(ProxyTestHelper.deploy(
                     address(new OutrunL2StakedTokenSYUpgradeable()),

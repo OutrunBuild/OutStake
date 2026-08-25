@@ -233,7 +233,7 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(inFlight, 25e18);
     }
 
-    /// @dev RV-017 regression: an owner-lowered limit below in-flight must survive a full window.
+    /// @dev Regression: an owner-lowered limit below in-flight must survive a full window.
     ///      The full-window early return is only valid when amountInFlight <= limit; in the over-cap
     ///      state the residual max(amountInFlight - limit, 0) must persist and decay at the new rate
     ///      (decay = limit * elapsed / window) instead of being zeroed. With limit 40e18/1d, a 25e18
@@ -305,7 +305,7 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(canBeSent, 40e18);
     }
 
-    /// @dev RV-002 regression: a configured per-destination limit above the LayerZero uint64
+    /// @dev Regression: a configured per-destination limit above the LayerZero uint64
     ///      shared-decimals wire envelope must report the envelope-capped capacity
     ///      (uint64.max * decimalConversionRate) rather than the raw configured limit, which
     ///      could not be SD-encoded in a single send (AmountSDOverflowed on _toSD).
@@ -331,7 +331,7 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(canBeSent, 40e18);
     }
 
-    /// @dev RV-002 consistency: with a limit above the envelope, quoteOFT's maxAmountLD and
+    /// @dev Consistency check: with a limit above the envelope, quoteOFT's maxAmountLD and
     ///      getAmountCanBeSent's amountCanBeSent must both report the envelope-bounded capacity.
     function testQuoteOFTMatchesGetterWhenLimitAboveEnvelope() external {
         vm.prank(owner);
@@ -414,14 +414,14 @@ contract OutrunOFTUpgradeableTest is Test {
         });
     }
 
-    /// @dev F-001 regression: zero-amount outbound sends are rejected by _debit before _outflow.
+    /// @dev Regression: zero-amount outbound sends are rejected by _debit before _outflow.
     function testDebitRejectsZeroAmount() external {
         vm.expectRevert(OutrunOFTUpgradeable.AmountTooSmall.selector);
         oft.exposedDebit(user, 0, 0, DST_EID);
         assertEq(oft.outflowCalls(), 0);
     }
 
-    /// @dev F-001 regression: sub-DCR dust that round-trips to zero is also rejected.
+    /// @dev Regression: sub-DCR dust that round-trips to zero is also rejected.
     function testDebitRejectsDustAmount() external {
         uint256 dust = oft.decimalConversionRate() - 1;
         vm.expectRevert(OutrunOFTUpgradeable.AmountTooSmall.selector);
@@ -429,13 +429,13 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(oft.outflowCalls(), 0);
     }
 
-    /// @dev F-001 regression: quoteOFT signals dust as unsendable via minAmountLD.
+    /// @dev Regression: quoteOFT signals dust as unsendable via minAmountLD.
     function testQuoteOFTMinAmountSignalsDustRejection() external {
         (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
         assertEq(oftLimit.minAmountLD, oft.decimalConversionRate());
     }
 
-    /// @dev F-001 regression: a rejected dust send must not refresh rl.lastUpdated or rate-limiter state.
+    /// @dev Regression: a rejected dust send must not refresh rl.lastUpdated or rate-limiter state.
     function testDustDebitDoesNotRefreshRateLimitState() external {
         vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
@@ -525,8 +525,7 @@ contract OutrunRateLimiterBaseTest is Test {
 
 /// @title Rate limiter replenish property tests
 /// @notice Stateless fuzz tests pinning OutrunRateLimiterUpgradeable's linear-decay replenish
-///     math and over-cap residual healing against the reference model of
-///     docs/audits/2026-08-19/05-invariants.md §3 (properties RL-2 and RL-3).
+///     math and over-cap residual healing against a reference model.
 contract OutrunRateLimiterReplenishPropertyTest is Test {
     OutrunRateLimiterHarness internal limiter;
 
@@ -536,7 +535,7 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
         limiter = new OutrunRateLimiterHarness();
     }
 
-    /// @dev [RL-2a] The decay after an outflow must match the reference model exactly:
+    /// @dev The decay after an outflow must match the reference model exactly:
     ///      decay = floor(limit * dt / window), clamped by the stored amount, so
     ///      inFlight == fill - min(fill, decay) and canBeSent == limit - inFlight.
     function testFuzz_DecayFormulaExact(uint192 limit, uint64 window, uint256 fillSeed, uint256 dt) external {
@@ -554,11 +553,11 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
         // Reference model: decay floors, and the stored amount clamps it from above.
         uint256 decay = Math.mulDiv(uint256(limit), dt, window);
         uint256 expectedInFlight = fill - Math.min(fill, decay);
-        assertEq(inFlight, expectedInFlight, "[RL-2a] decayed in-flight must match the reference model");
-        assertEq(canBeSent, uint256(limit) - expectedInFlight, "[RL-2a] capacity must equal limit minus in-flight");
+        assertEq(inFlight, expectedInFlight, "decayed in-flight must match the reference model");
+        assertEq(canBeSent, uint256(limit) - expectedInFlight, "capacity must equal limit minus in-flight");
     }
 
-    /// @dev [RL-2c] The in-flight amount must reach zero exactly at the recovery point
+    /// @dev The in-flight amount must reach zero exactly at the recovery point
     ///      recovery = ceilDiv(fill * window / limit): one time unit before it the residual is
     ///      still positive, at it the bucket is fully replenished.
     function testFuzz_RecoveryPointExact(uint192 limit, uint64 window, uint256 fillSeed) external {
@@ -574,16 +573,16 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
         // One unit before the recovery point the decay has not fully consumed the fill yet.
         vm.warp(block.timestamp + recovery - 1);
         (uint256 inFlight,) = limiter.getAmountCanBeSent(DST_EID);
-        assertGt(inFlight, 0, "[RL-2c] in-flight must still be positive one unit before the recovery point");
+        assertGt(inFlight, 0, "in-flight must still be positive one unit before the recovery point");
 
         // At the recovery point the bucket is empty and the full limit is sendable again.
         vm.warp(block.timestamp + 1);
         (uint256 recoveredInFlight, uint256 canBeSent) = limiter.getAmountCanBeSent(DST_EID);
-        assertEq(recoveredInFlight, 0, "[RL-2c] in-flight must be zero at the recovery point");
-        assertEq(canBeSent, uint256(limit), "[RL-2c] capacity must be fully replenished at the recovery point");
+        assertEq(recoveredInFlight, 0, "in-flight must be zero at the recovery point");
+        assertEq(canBeSent, uint256(limit), "capacity must be fully replenished at the recovery point");
     }
 
-    /// @dev [RL-2a extreme parameters] With the storage-ceiling limit fully consumed, the decay
+    /// @dev Extreme parameters: With the storage-ceiling limit fully consumed, the decay
     ///      product limit * dt must not overflow or panic ((2^192 - 1) * (2^64 - 1) < 2^256) and
     ///      capacity conservation inFlight + canBeSent == limit must still hold.
     function testFuzz_ReplenishAtExtremeParameters(uint64 window, uint256 dt) external {
@@ -597,13 +596,11 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
 
         (uint256 inFlight, uint256 canBeSent) = limiter.getAmountCanBeSent(DST_EID);
         assertEq(
-            inFlight + canBeSent,
-            uint256(limit),
-            "[RL-2a] extreme parameters: in-flight plus capacity must equal the limit"
+            inFlight + canBeSent, uint256(limit), "extreme parameters: in-flight plus capacity must equal the limit"
         );
     }
 
-    /// @dev [RL-3b, RV-017 exact boundary] After the limit is lowered below the stored in-flight
+    /// @dev After the limit is lowered below the stored in-flight
     ///      amount, the over-cap residual must heal exactly at
     ///      recovery = ceilDiv(fill * window / newLimit): capacity is fully blocked right after
     ///      the reconfig, the residual is not fully decayed one unit before recovery, and is
@@ -626,20 +623,20 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
         // in-flight is carried over unchanged into the new (lower) limit regime.
         _configure(newLimit, window);
         (uint256 inFlight, uint256 canBeSent) = limiter.getAmountCanBeSent(DST_EID);
-        assertEq(inFlight, fill, "[RL-3b] reconfig must carry the stored in-flight over unchanged");
-        assertEq(canBeSent, 0, "[RL-3b] over-cap residual must fully block capacity right after the reconfig");
+        assertEq(inFlight, fill, "reconfig must carry the stored in-flight over unchanged");
+        assertEq(canBeSent, 0, "over-cap residual must fully block capacity right after the reconfig");
 
         uint256 recovery = Math.ceilDiv(fill * window, uint256(newLimit));
 
         vm.warp(block.timestamp + recovery - 1);
         (inFlight, canBeSent) = limiter.getAmountCanBeSent(DST_EID);
-        assertGt(inFlight, 0, "[RL-3b] residual must not be fully decayed one unit before the recovery point");
-        assertLt(canBeSent, uint256(newLimit), "[RL-3b] capacity must not be fully restored before the recovery point");
+        assertGt(inFlight, 0, "residual must not be fully decayed one unit before the recovery point");
+        assertLt(canBeSent, uint256(newLimit), "capacity must not be fully restored before the recovery point");
 
         vm.warp(block.timestamp + 1);
         (inFlight, canBeSent) = limiter.getAmountCanBeSent(DST_EID);
-        assertEq(inFlight, 0, "[RL-3b] residual must be fully decayed at the recovery point");
-        assertEq(canBeSent, uint256(newLimit), "[RL-3b] capacity must equal the new limit at the recovery point");
+        assertEq(inFlight, 0, "residual must be fully decayed at the recovery point");
+        assertEq(canBeSent, uint256(newLimit), "capacity must equal the new limit at the recovery point");
     }
 
     /// @dev Configures the rate limit for DST_EID with a single entry.
@@ -654,7 +651,7 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
 /// @title Invariant test handler for the rate limiter
 /// @notice Drives OutrunRateLimiterHarness with bounded random sequences of sends, warps and
 ///     reconfigs while maintaining a handler-side reference model of the limiter state for the
-///     invariant assertions (docs/audits/2026-08-19/05-invariants.md §3, properties RL-1 and RL-3).
+///     invariant assertions.
 contract RateLimiterSequenceHandler is Test {
     /// @dev The accounting baseline of an epoch: the settled stored amount and the (limit,
     ///      window) pair in force from the epoch's start (reconfig or deployment) onwards.
@@ -681,7 +678,7 @@ contract RateLimiterSequenceHandler is Test {
     /// @dev Handler-side reference model, computed ONLY from handler arithmetic (full-precision
     ///      mulDiv + its own event tracking). Never read back from the contract: any contract-side
     ///      stored inflation, half-update on revert, or settlement divergence diverges from the
-    ///      model and fails the hard invariants below [RL-1c/RL-1d/RL-3c enforcement].
+    ///      model and fails the hard invariants below.
     uint256 public modelStored;
     uint64 public modelLastTs;
     uint192 public modelLimit; // current-epoch limit
@@ -728,12 +725,12 @@ contract RateLimiterSequenceHandler is Test {
             modelLastTs = uint64(block.timestamp);
             ghostSentSinceEpoch += amount;
         } catch (bytes memory reason) {
-            // [RL-1c] Rejected sends must leave state untouched. NO model advance and NO in-handler
+            // Rejected sends must leave state untouched. NO model advance and NO in-handler
             // assert (fail_on_revert=false makes it soft): the hard check is
             // invariant_contractStateMatchesModel, which compares the untouched contract slot
             // against the unmoved model. RateLimitExceeded is the ONLY legal revert reason — any
             // other (including a Panic) is recorded here and hard-failed by
-            // invariant_noUnexpectedRevert (review LR-007).
+            // invariant_noUnexpectedRevert.
             // Truncating to the first 4 bytes is the point: revert-selector extraction.
             // forge-lint: disable-next-line(unsafe-typecast)
             if (bytes4(reason) != OutrunRateLimiterUpgradeable.RateLimitExceeded.selector) {
@@ -756,7 +753,7 @@ contract RateLimiterSequenceHandler is Test {
         uint64 newWindow = uint64(bound(windowSeed, 1, 10 * 365 days));
 
         // Settle the model at the OLD parameters first, mirroring _setRateLimits' old-param
-        // checkpoint, then switch the epoch [RL-3c: the settle is computed by handler math; any
+        // checkpoint, then switch the epoch (the settle is computed by handler math; any
         // contract-side inflation diverges and fails invariant_contractStateMatchesModel].
         modelStored = _modelDecay(modelStored, block.timestamp - modelLastTs);
         modelLastTs = uint64(block.timestamp);
@@ -786,8 +783,7 @@ contract RateLimiterSequenceHandler is Test {
 
 /// @title Rate limiter sequence invariant tests
 /// @notice Handler-based invariant tests asserting OutrunRateLimiterUpgradeable's properties
-///     over arbitrary sequences of sends, warps and reconfigs
-///     (docs/audits/2026-08-19/05-invariants.md §3, properties RL-1 and RL-3).
+///     over arbitrary sequences of sends, warps and reconfigs.
 contract OutrunRateLimiterSequenceInvariantTest is StdInvariant, Test {
     RateLimiterSequenceHandler internal handler;
 
@@ -798,11 +794,11 @@ contract OutrunRateLimiterSequenceInvariantTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @dev [RL-1d] The contract's reported in-flight amount must equal the reference model's
+    /// @dev The contract's reported in-flight amount must equal the reference model's
     ///      value: decay the handler-side model's stored amount from its anchor timestamp at the
     ///      current-epoch (limit, window). The model anchor is no longer taken from a contract
     ///      snapshot — the stored-accumulation side and the decay-arithmetic side are now both
-    ///      hard-checked (review LR-004).
+    ///      hard-checked.
     function invariant_modelEquivalence() public view {
         uint256 stored = handler.modelStored();
         uint256 lastTs = handler.modelLastTs();
@@ -811,10 +807,10 @@ contract OutrunRateLimiterSequenceInvariantTest is StdInvariant, Test {
 
         uint256 expected = stored - Math.min(stored, Math.mulDiv(limit, block.timestamp - lastTs, window));
         (uint256 viewInFlight,) = handler.limiter().getAmountCanBeSent(DST_EID);
-        assertEq(viewInFlight, expected, "[RL-1d] contract in-flight must match the handler-side reference model");
+        assertEq(viewInFlight, expected, "contract in-flight must match the handler-side reference model");
     }
 
-    /// @dev [RL-1a] Remaining capacity plus in-flight must equal the limit, clamped on the
+    /// @dev Remaining capacity plus in-flight must equal the limit, clamped on the
     ///      in-flight side. The naive form inFlight + canBeSent == limit does NOT hold in the
     ///      over-cap residual state: an owner lowering the limit below the stored in-flight
     ///      leaves inFlight > limit with canBeSent == 0, so the assertable form is
@@ -826,11 +822,11 @@ contract OutrunRateLimiterSequenceInvariantTest is StdInvariant, Test {
         assertEq(
             canBeSent,
             uint256(rl.limit) - Math.min(viewInFlight, uint256(rl.limit)),
-            "[RL-1a] capacity must equal limit minus the clamped in-flight amount"
+            "capacity must equal limit minus the clamped in-flight amount"
         );
     }
 
-    /// @dev [RL-1b, epoch form] Within the current epoch the total sent amount is bounded by
+    /// @dev Within the current epoch the total sent amount is bounded by
     ///      the replenished capacity: sent <= stored_n - stored_0 + mulDiv(L, now - t0, W).
     ///      Rationale: stored_n = stored_0 + sent - sum(decay settles), the settle intervals
     ///      partition [t0, last write] within the epoch, and floor subadditivity gives
@@ -842,28 +838,28 @@ contract OutrunRateLimiterSequenceInvariantTest is StdInvariant, Test {
         assertLe(
             handler.ghostSentSinceEpoch(),
             handler.modelStored() + replenished - baseline.stored,
-            "[RL-1b] epoch throughput must be bounded by the replenished capacity"
+            "epoch throughput must be bounded by the replenished capacity"
         );
     }
 
-    /// @dev [RL-1c/RL-3c hard enforcement] The stored slot and its timestamp are written only at
+    /// @dev The stored slot and its timestamp are written only at
     ///      the same moments the model is; pointwise equality of both means any mis-accounted
     ///      accepted send, half-update on a rejected send, or old-parameter settlement drift or
     ///      inflation at a reconfig fails hard here. The (limit, window) slots are pinned too, so a
     ///      reconfig writing wrong parameters cannot escape through a momentarily-zero stock or a
-    ///      zero elapsed time (review LR-006). This is NOT a tautology: the model is
+    ///      zero elapsed time. This is NOT a tautology: the model is
     ///      maintained entirely by handler arithmetic and never reads back from the contract.
     function invariant_contractStateMatchesModel() public view {
         OutrunRateLimiterUpgradeable.RateLimit memory rl = handler.limiter().rateLimits(DST_EID);
-        assertEq(rl.amountInFlight, handler.modelStored(), "[RL-3c] stored slot must equal the model (no inflation)");
-        assertEq(rl.lastUpdated, handler.modelLastTs(), "[RL-1c] lastUpdated must equal the model (no half-updates)");
-        assertEq(rl.limit, handler.modelLimit(), "[RL-3c] limit slot must equal the model");
-        assertEq(rl.window, handler.modelWindow(), "[RL-3c] window slot must equal the model");
+        assertEq(rl.amountInFlight, handler.modelStored(), "stored slot must equal the model (no inflation)");
+        assertEq(rl.lastUpdated, handler.modelLastTs(), "lastUpdated must equal the model (no half-updates)");
+        assertEq(rl.limit, handler.modelLimit(), "limit slot must equal the model");
+        assertEq(rl.window, handler.modelWindow(), "window slot must equal the model");
     }
 
-    /// @dev [RL-1c] The ONLY legal revert reason for an outflow is RateLimitExceeded; anything
+    /// @dev The ONLY legal revert reason for an outflow is RateLimitExceeded; anything
     ///      else (an arithmetic Panic included) was recorded by the handler and fails hard here.
     function invariant_noUnexpectedRevert() public view {
-        assertFalse(handler.ghostUnexpectedRevertSeen(), "[RL-1c] outflow reverted with an unexpected reason");
+        assertFalse(handler.ghostUnexpectedRevertSeen(), "outflow reverted with an unexpected reason");
     }
 }

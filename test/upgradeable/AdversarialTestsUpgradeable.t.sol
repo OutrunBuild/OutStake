@@ -834,7 +834,7 @@ contract AdversarialTests is Test {
 
     /**
      * @notice Access check precedes zero-address validation on drawUAsset and redeem
-     * @dev Regression for the F-37 guard merge: the onlyPositionOwner modifier runs
+     * @dev Regression for the guard merge: the onlyPositionOwner modifier runs
      *      before the function-body ZeroInput checks, so a non-owner calling with a
      *      zero recipient/receiver reverts with PositionAccessDenied, not ZeroInput.
      */

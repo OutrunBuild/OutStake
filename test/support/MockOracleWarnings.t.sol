@@ -210,11 +210,10 @@ contract MockOracleWarningsTest is Test {
 
 /// @title Property tests for OutrunExchangeOracleAdapter validation and normalization
 /// @notice Stateless fuzz properties pinning the adapter's documented behavior: the staleness
-///     boundary from both sides (OR-1), the cross-decimals normalization identity (SY-4a),
-///     two-instance agreement on the same physical price (OR-3a), the sequencer guard running
-///     before every main-feed check (OR-3d), and the revert-or-valid dichotomy under which no bad
-///     value ever escapes (OR-4). Property numbering follows the oracle invariants design
-///     (docs/audits/2026-08-19/05-invariants.md §4).
+///     boundary from both sides, the cross-decimals normalization identity,
+///     two-instance agreement on the same physical price, the sequencer guard running
+///     before every main-feed check, and the revert-or-valid dichotomy under which no bad
+///     value ever escapes.
 contract OracleAdapterPropertyTest is Test {
     bytes4 internal constant STALE_ORACLE_ANSWER_SELECTOR = bytes4(keccak256("StaleOracleAnswer()"));
     bytes4 internal constant SEQUENCER_DOWN_SELECTOR = bytes4(keccak256("SequencerDown()"));
@@ -225,7 +224,7 @@ contract OracleAdapterPropertyTest is Test {
     // arithmetic Panic that downstream callers cannot distinguish from a bug.
     bytes4 internal constant PANIC_SELECTOR = bytes4(0x4e487b71);
 
-    /// @notice [OR-1] The staleness window is a two-sided boundary: an answer aged exactly
+    /// @notice The staleness window is a two-sided boundary: an answer aged exactly
     ///     `maxStaleness` is still accepted (the source uses a strict `>`), while one second older
     ///     reverts with StaleOracleAnswer.
     function testFuzz_StalenessBoundaryTwoSided(uint48 maxStaleness, uint256 caseSeed) external {
@@ -255,7 +254,7 @@ contract OracleAdapterPropertyTest is Test {
         }
     }
 
-    /// @notice [SY-4a] Normalization is an identity: for every decimal count the returned rate is
+    /// @notice Normalization is an identity: for every decimal count the returned rate is
     ///     exactly mulDiv(raw, 1e18, 10**decimals), and the floor-truncation gap stays below one
     ///     raw quantum (10**decimals). ZeroNormalizedRate fires only when decimals > 18 and the
     ///     raw answer is below 10**(decimals − 18) — the truncation-then-reject path.
@@ -286,7 +285,7 @@ contract OracleAdapterPropertyTest is Test {
         }
     }
 
-    /// @notice [OR-3a] Two adapters over feeds with different decimals agree exactly when the
+    /// @notice Two adapters over feeds with different decimals agree exactly when the
     ///     physical price is integrally representable in both domains: rawA = price·10^dA and
     ///     rawB = price·10^dB both normalize back to price·1e18 with zero floor loss.
     function testFuzz_TwoAdaptersAgreeOnSamePhysicalPrice(uint8 dA, uint8 dB, uint256 price) external {
@@ -313,7 +312,7 @@ contract OracleAdapterPropertyTest is Test {
         assertEq(rateA, p * 1e18);
     }
 
-    /// @notice [OR-3d] The sequencer guard runs before every main-feed check: with the sequencer
+    /// @notice The sequencer guard runs before every main-feed check: with the sequencer
     ///     unhealthy (down, still in grace, recovery never recorded, or startedAt in the future),
     ///     getExchangeRate reverts with the sequencer's own named error even when the main feed is
     ///     simultaneously stale or zero — a main-feed error surfacing instead would mean the two
@@ -360,7 +359,7 @@ contract OracleAdapterPropertyTest is Test {
         }
     }
 
-    /// @notice [OR-4] Over the full input-combination space the adapter is revert-or-valid: it
+    /// @notice Over the full input-combination space the adapter is revert-or-valid: it
     ///     either reverts with a named error (never a Panic) or returns exactly
     ///     mulDiv(rawAnswer, 1e18, 10**decimals) — never zero, never an unnormalized value, never
     ///     a silent success on a bad input.
@@ -414,7 +413,7 @@ contract OracleAdapterPropertyTest is Test {
         }
     }
 
-    /// @notice [OR-4 extreme magnitude] An answer of int256.max overflows the checked
+    /// @notice Extreme magnitude: An answer of int256.max overflows the checked
     ///     normalization multiply: the adapter must revert — here with the arithmetic Panic —
     ///     rather than silently return a wrapped-around rate. Realistic feed domains (≤ 18
     ///     decimals, values < 2^90) are covered by the fuzz property above; this example pins

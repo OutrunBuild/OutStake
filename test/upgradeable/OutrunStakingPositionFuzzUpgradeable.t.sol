@@ -830,7 +830,7 @@ contract OutrunStakingPositionFuzzTest is Test {
     }
 
     // ============================================
-    // 15. PA-2 wrap pool undercollateralized -> recover state machine (genuinely worth covering)
+    // 15. Wrap pool undercollateralized -> recover state machine (genuinely worth covering)
     // ============================================
 
     function testFuzz_WrapPoolUndercollateralizedThenRecovers(
@@ -872,7 +872,7 @@ contract OutrunStakingPositionFuzzTest is Test {
     }
 
     // ============================================
-    // 16. PA-3 bandwidth guard — REMOVED per G-020 deletion path
+    // 16. Bandwidth guard — removed with the deprecated exchange-rate band
     // ============================================
     // `setExchangeRateBounds` / `ExchangeRateOutOfBounds` band removed: chain-side guard is now
     // only `ZeroExchangeRate` with off-chain `StaleOracleAnswer` / `ZeroExchangeRate` monitoring.
@@ -881,10 +881,9 @@ contract OutrunStakingPositionFuzzTest is Test {
 
 /**
  * @title Stateless property tests for OutrunStakingPosition
- * @notice Boundary-exact and access-control properties from the position design review
- *         (docs/audits/2026-08-19/05-invariants.md §5): position and wrap-pool solvency boundaries
- *         [POS-2], the uAsset mint-cap ledger [POS-1b], keeper allowance accounting [POS-3],
- *         deadline and position-id edges [POS-4], and the exchange-rate bandwidth guard [OR-2b].
+ * @notice Boundary-exact and access-control properties: position and wrap-pool solvency boundaries
+ *        , the uAsset mint-cap ledger, keeper allowance accounting,
+ *         deadline and position-id edges, and the exchange-rate bandwidth guard.
  * @dev Each test derives its expectations from formulas that are independent of the contract's own
  *      preview paths, so a shared bug cannot mask itself.
  */
@@ -951,7 +950,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 1. Position solvency boundary [POS-2a/2b]
+    // 1. Position solvency boundary
     // ============================================
 
     function testFuzz_KeeperSolvencyBoundaryExact(uint256 amountSeed, uint256 rateSeed) public {
@@ -969,8 +968,8 @@ contract OutrunStakingPositionPropertyTest is Test {
         // Exact solvency boundary: assetToSyUp(debt, r) <= syStaked holds iff r >= ceilDiv(debt*1e18, syStaked).
         uint256 rPass = Math.ceilDiv(debt * 1e18, syStaked);
 
-        // PART A [POS-2a]: at rPass a full-debt keepRedeem passes; the keeper/owner split conserves
-        // the whole staked SY (a full burn redeems syRedeemed == syStaked) [POS-2b].
+        // PART A: at rPass a full-debt keepRedeem passes; the keeper/owner split conserves
+        // the whole staked SY (a full burn redeems syRedeemed == syStaked).
         sy.setExchangeRate(rPass);
         (,,, uint128 deadline) = position.positions(positionId);
         vm.warp(deadline + 1);
@@ -986,7 +985,7 @@ contract OutrunStakingPositionPropertyTest is Test {
         assertLe(keeperPrincipalSY, syStaked, "keeper share cannot exceed staked SY");
         assertEq(sy.balanceOf(keeper) - keeperSYBefore, keeperPrincipalSY, "keeper SY balance delta mismatch");
 
-        // PART B [POS-2a]: at rPass - 1 the same-shaped position is rejected by the solvency guard.
+        // PART B: at rPass - 1 the same-shaped position is rejected by the solvency guard.
         sy.setExchangeRate(rate); // restore the original rate so the second stake reproduces the debt
         vm.prank(owner);
         (uint256 positionId2, uint256 debt2) = position.stake(amount, 30, owner, owner);
@@ -1001,7 +1000,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 2. Wrap pool solvency boundary [POS-2a wrap / POS-2c]
+    // 2. Wrap pool solvency boundary
     // ============================================
 
     function testFuzz_WrapPoolSolvencyBoundaryExact(uint256 amountSeed, uint256 rateSeed) public {
@@ -1014,8 +1013,8 @@ contract OutrunStakingPositionPropertyTest is Test {
         uint256 debt = position.wrapStake(amount, owner);
         uint256 rPass = Math.ceilDiv(debt * 1e18, amount);
 
-        // PART A [POS-2a wrap]: at rPass a half-debt redemption succeeds and leaves the pool covered
-        // for its remaining debt [POS-2c].
+        // PART A: at rPass a half-debt redemption succeeds and leaves the pool covered
+        // for its remaining debt.
         sy.setExchangeRate(rPass);
         uAsset.mint(keeper, debt);
         uint256 half = debt / 2; // >= 1 because debt >= 2
@@ -1025,7 +1024,7 @@ contract OutrunStakingPositionPropertyTest is Test {
 
         assertLe(SYUtils.assetToSyUp(rPass, debt - half), position.syWrapStaking(), "post-redemption coverage");
 
-        // PART B [POS-2a wrap / POS-2c]: exact boundary of the CURRENT pool state. rPass2 is derived
+        // PART B: exact boundary of the CURRENT pool state. rPass2 is derived
         // from the combined (debt, SY) pair after both wrap stakes: the PART A floor payout leaves
         // residual coverage in the pool, so the marginal (debt2, amount) pair alone does not
         // determine the pool-wide boundary. At rPass2 - 1 the redemption must revert atomically.
@@ -1055,7 +1054,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 3. Mint cap boundary [POS-1b]
+    // 3. Mint cap boundary
     // ============================================
 
     function testFuzz_MintCapBoundaryReachedExactly(uint256 amountSeed, uint256 extraSeed) public {
@@ -1088,7 +1087,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 4. Keeper allowance accounting [POS-3a/3b]
+    // 4. Keeper allowance accounting
     // ============================================
 
     function testFuzz_KeeperAllowanceTracksBurnsExactly(uint256 allowanceSeed, uint256 burn1Seed) public {
@@ -1109,7 +1108,7 @@ contract OutrunStakingPositionPropertyTest is Test {
         vm.prank(keeper);
         uAsset.approve(address(position), allowance);
 
-        // [POS-3a] each burn decrements the allowance by exactly the burned amount (OZ semantics).
+        // Each burn decrements the allowance by exactly the burned amount (OZ semantics).
         vm.prank(keeper);
         (uint256 burned1,,) = position.keepRedeem(positionId, burn1, keeper);
         assertEq(burned1, burn1, "first burn amount mismatch");
@@ -1121,7 +1120,7 @@ contract OutrunStakingPositionPropertyTest is Test {
         assertEq(burned2, burn2, "second burn amount mismatch");
         assertEq(uAsset.allowance(keeper, address(position)), allowance - debt, "allowance after full burn");
 
-        // [POS-3b] atomicity: a revert inside repay must leave the new position, the keeper balance,
+        // Atomicity: a revert inside repay must leave the new position, the keeper balance,
         // and the allowance untouched.
         vm.prank(owner);
         (uint256 positionId2, uint256 debt2) = position.stake(amount, 30, owner, owner);
@@ -1153,7 +1152,7 @@ contract OutrunStakingPositionPropertyTest is Test {
         assertEq(uAsset.balanceOf(keeper), keeperBalanceBefore, "revert must not change keeper balance");
         assertEq(uAsset.allowance(keeper, address(position)), allowance - debt, "revert must not change allowance");
 
-        // [POS-3b max exemption] an infinite approval is never decremented by burns.
+        // Max exemption: an infinite approval is never decremented by burns.
         vm.prank(owner);
         (uint256 positionId3, uint256 debt3) = position.stake(amount, 30, owner, owner);
         (,,, uint128 deadline3) = position.positions(positionId3);
@@ -1168,7 +1167,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 5. Deadline uint128 boundary [POS-4b]
+    // 5. Deadline uint128 boundary
     // ============================================
 
     function testFuzz_DeadlineUint128Boundary(uint256 tsSeed) public {
@@ -1191,7 +1190,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 6. Deleted position id is not reusable [POS-4c]
+    // 6. Deleted position id is not reusable
     // ============================================
 
     function testFuzz_ReusedPositionIdIsRejected(uint256 amountSeed) public {
@@ -1223,7 +1222,7 @@ contract OutrunStakingPositionPropertyTest is Test {
     }
 
     // ============================================
-    // 7. previewRedeem mirrors the SY adapter [POS-4a]
+    // 7. previewRedeem mirrors the SY adapter
     // ============================================
 
     function testFuzz_PreviewRedeemMirrorsSYForNonSyTokenOut(uint256 amountSeed, uint256 rateSeed) public {

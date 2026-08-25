@@ -171,7 +171,7 @@ contract OracleSourceSwapHandler is Test {
     }
 }
 
-/// @title Invariant test: the SY exchange rate always mirrors the current oracle source [OR-3b]
+/// @title Invariant test: the SY exchange rate always mirrors the current oracle source
 /// @notice After any sequence of source swaps the SY must report exactly what its currently
 ///     configured oracle reports — no caching, no blending, no stale value from a previous
 ///     source. The reverting oracle participates in the sequence, so propagation (the SY

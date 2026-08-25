@@ -103,12 +103,12 @@ contract MockPositionUUPSV2 is UUPSUpgradeable {
         return _getStorage().SY;
     }
 
-    /// @notice Returns frozen canonical asset decimals (G-022 immutability check).
+    /// @notice Returns frozen canonical asset decimals (immutability check).
     function canonicalAssetDecimals() public view returns (uint8) {
         return _getStorage().canonicalAssetDecimals;
     }
 
-    /// @notice Returns frozen uAsset decimals (G-022 immutability check).
+    /// @notice Returns frozen uAsset decimals (immutability check).
     function uAssetDecimals() public view returns (uint8) {
         return _getStorage().uAssetDecimals;
     }

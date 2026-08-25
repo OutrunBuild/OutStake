@@ -562,7 +562,7 @@ contract SYAdaptersBaseForkTest is Test {
         assertEq(skyL2Sy.usdc(), BASE_USDC);
         assertEq(skyL2Sy.usds(), BASE_USDS);
         assertEq(skyL2Sy.psm3(), BASE_PSM3);
-        // Post G-007: exchangeRate is SSR-derived (1e18 * getConversionRate() / 1e27) from the PSM3's
+        // exchangeRate is SSR-derived (1e18 * getConversionRate() / 1e27) from the PSM3's
         // live rate provider, not the PSM quote; the deviation guard enforces the 100 bps band at runtime.
         address rp = IPSM3(BASE_PSM3).rateProvider();
         uint256 ssr = 1e18 * IRateProviderLike(rp).getConversionRate() / 1e27;

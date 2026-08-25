@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-// @notice Ported from docs/audits/2026-08-24/05-invariants/OracleInvariants.t.sol — non-redundant oracle fuzz invariants (stale/sequencer/band/deviation) not covered by test/upgradeable/OracleSetterUpgradeable.t.sol
+// @notice Non-redundant oracle fuzz invariants (stale/sequencer/band/deviation) not covered by test/upgradeable/OracleSetterUpgradeable.t.sol
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";

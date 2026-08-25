@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// @notice Ported from docs/audits/2026-08-24/05-invariants/SYInvariant.t.sol — non-redundant SY invariants (PreviewBounded/DepositRedeemConservation) not covered by SYAdaptersUpgradeable.t.sol; ExchangeRateMonotonic is redundant and omitted from gate but kept here for completeness
+// @notice Non-redundant SY invariants (PreviewBounded/DepositRedeemConservation) not covered by SYAdaptersUpgradeable.t.sol; ExchangeRateMonotonic is redundant and omitted from gate but kept here for completeness
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
@@ -417,8 +417,7 @@ abstract contract SYInvHandler is Test {
 
 /// @title SYInvariant — Foundry invariant skeleton for SY adapters
 /// @notice Covers deposit/redeem conservation, exchange-rate monotonicity, and
-///         preview-vs-execution bounds. Each invariant references the
-///         corresponding section in docs/audits/2026-08-24/05-invariants.md.
+///         preview-vs-execution bounds.
 ///         Mocks for PSM3, asBnbMinter, and sUSDe vault expose controllable
 ///         rate/pause so the fuzzer can drive realistic state transitions.
 contract SYInvariant is StdInvariant, SYInvHandler {
