@@ -6,6 +6,7 @@ import {IListaStakeManager} from "../../../integrations/lista/interfaces/IListaS
 import {IYieldProxy} from "../../../integrations/aster/interfaces/IYieldProxy.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 
 /// @title Outrun Aster asBNB SY adapter
 /// @notice SY adapter for Aster asBNB (BSC). The yield-bearing token is asBNB. Deposit paths: (a) native BNB →
@@ -63,25 +64,21 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     }
 
     /// @notice Returns the AsBnbMinter contract address.
-    /// @return The AsBnbMinter address.
     function asBnbMinter() public view returns (address) {
         return outrunAsBNBSYStorage.asBnbMinter;
     }
 
     /// @notice Returns the slisBNB token address.
-    /// @return The slisBNB token address.
     function slisBnb() public view returns (address) {
         return outrunAsBNBSYStorage.slisBnb;
     }
 
     /// @notice Returns the YieldProxy contract address.
-    /// @return The YieldProxy address.
     function yieldProxy() public view returns (address) {
         return outrunAsBNBSYStorage.yieldProxy;
     }
 
     /// @notice Returns the Lista StakeManager contract address.
-    /// @return The StakeManager address.
     function stakeManager() public view returns (address) {
         return outrunAsBNBSYStorage.stakeManager;
     }
@@ -172,36 +169,27 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         return amountSharesToRedeem;
     }
 
-    /// @notice Returns all tokens accepted for deposit: native BNB, slisBNB, and asBNB.
-    /// @return res Array of accepted deposit token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(NATIVE, slisBnb(), yieldBearingToken());
     }
 
-    /// @notice Returns all tokens accepted for redemption: asBNB only.
-    /// @return res Array of accepted redemption token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken());
     }
 
-    /// @notice Checks whether the token is accepted for deposit (native BNB, slisBNB, or asBNB).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid deposit token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == NATIVE || token == slisBnb() || token == yieldBearingToken();
     }
 
-    /// @notice Checks whether the token is accepted for redemption (asBNB only).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid redemption token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == yieldBearingToken();
     }
 
-    /// @notice Returns asset metadata: canonical asset is native BNB (NATIVE = address(0) sentinel).
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress NATIVE sentinel (address(0)) — canonical asset is native BNB
-    /// @return assetDecimals always 18
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, NATIVE, 18);
     }

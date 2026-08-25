@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 
 /// @title Outrun Sky sUSDS SY adapter
@@ -31,7 +32,6 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     }
 
     /// @notice Returns the USDS token address.
-    /// @return The USDS address.
     function usds() public view returns (address) {
         return outrunStakedUsdsSYStorage.usds;
     }
@@ -67,8 +67,6 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     /// @notice Returns the current exchange rate: USDS per 1 sUSDS, scaled by 1e18.
     /// @return res The ERC4626 convertToAssets(1 ether) rate, which grows as Sky savings yield accrues.
     function exchangeRate() public view override returns (uint256 res) {
-        // ERC4626 convertToAssets(1 ether) returns how much USDS 1 sUSDS is worth.
-        // The rate grows from 1.0 as Sky protocol yield is added to the savings rate.
         return IERC4626(yieldBearingToken()).convertToAssets(1 ether);
     }
 
@@ -93,36 +91,27 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return amountSharesToRedeem;
     }
 
-    /// @notice Returns all tokens accepted for deposit: sUSDS and USDS.
-    /// @return res Array of accepted deposit token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken(), usds());
     }
 
-    /// @notice Returns all tokens accepted for redemption: sUSDS and USDS.
-    /// @return res Array of accepted redemption token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken(), usds());
     }
 
-    /// @notice Checks whether the token is accepted for deposit (sUSDS or USDS).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid deposit token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == yieldBearingToken() || token == usds();
     }
 
-    /// @notice Checks whether the token is accepted for redemption (sUSDS or USDS).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid redemption token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == yieldBearingToken() || token == usds();
     }
 
-    /// @notice Returns asset metadata: canonical asset is USDS, the constructor-injected underlying asset.
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress address of the USDS token
-    /// @return assetDecimals always 18
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, usds(), 18);
     }

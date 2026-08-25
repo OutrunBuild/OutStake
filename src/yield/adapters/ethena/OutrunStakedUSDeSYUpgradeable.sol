@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 
 /// @title Outrun Ethena sUSDe SY adapter
@@ -28,7 +29,6 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
     }
 
     /// @notice Returns the address of the USDe stablecoin.
-    /// @return The USDe token address.
     function usde() public view returns (address) {
         return outrunStakedUSDeSYStorage.usde;
     }
@@ -59,7 +59,6 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return amountSharesToRedeem;
     }
 
-    // This rate grows as protocol yield is added to the vault.
     /// @notice Returns the USDe amount for 1 sUSDe using ERC4626 convertToAssets.
     /// @return res The amount of USDe equivalent to 1 sUSDe (scaled by 1e18).
     function exchangeRate() public view override returns (uint256 res) {
@@ -90,36 +89,27 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         return amountSharesToRedeem;
     }
 
-    /// @notice Returns the list of accepted input tokens.
-    /// @return res Array containing sUSDe and USDe addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken(), usde());
     }
 
-    /// @notice Returns the list of accepted output tokens.
-    /// @return res Array containing only sUSDe.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken());
     }
 
-    /// @notice Checks whether a token is accepted as input.
-    /// @param token The token address to check.
-    /// @return True if the token is sUSDe or USDe.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == yieldBearingToken() || token == usde();
     }
 
-    /// @notice Checks whether a token is accepted as output.
-    /// @param token The token address to check.
-    /// @return True if the token is sUSDe.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == yieldBearingToken();
     }
 
-    /// @notice Returns the asset type and details this SY represents.
-    /// @return assetType Always TOKEN.
-    /// @return assetAddress The USDe token address.
-    /// @return assetDecimals Always 18.
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, usde(), 18);
     }

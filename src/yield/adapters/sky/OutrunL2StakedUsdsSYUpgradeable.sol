@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {IPSM3} from "../../../integrations/sky/interfaces/IPSM3.sol";
 import {IRateProviderLike} from "../../../integrations/sky/interfaces/IRateProviderLike.sol";
@@ -48,28 +49,24 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     }
 
     /// @notice Returns the USDC token address (stablecoin input on L2).
-    /// @return The USDC address.
     function usdc() public view returns (address) {
         // Stablecoin input (USDC on L2)
         return outrunL2StakedUsdsSYStorage.usdc;
     }
 
     /// @notice Returns the USDS token address (Sky's native stablecoin on L2).
-    /// @return The USDS address.
     function usds() public view returns (address) {
         // Sky's native stablecoin (also on L2 via bridge)
         return outrunL2StakedUsdsSYStorage.usds;
     }
 
     /// @notice Returns the PSM3 (Peg Stability Module) contract address.
-    /// @return The PSM3 address.
     function psm3() public view returns (address) {
         // Peg Stability Module that handles swaps between USDC, USDS, and sUSDS
         return outrunL2StakedUsdsSYStorage.psm3;
     }
 
     /// @notice Returns the independent SSR RateProvider (1e27) used for exchangeRate.
-    /// @return The rate provider address.
     function rateProvider() public view returns (address) {
         return outrunL2StakedUsdsSYStorage.rateProvider;
     }
@@ -177,36 +174,27 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         return IPSM3(psm3()).previewSwapExactIn(yieldBearingToken(), tokenOut, amountSharesToRedeem);
     }
 
-    /// @notice Returns all tokens accepted for deposit: USDC, USDS, and sUSDS.
-    /// @return res Array of accepted deposit token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(usdc(), usds(), yieldBearingToken());
     }
 
-    /// @notice Returns all tokens accepted for redemption: USDC, USDS, and sUSDS.
-    /// @return res Array of accepted redemption token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(usdc(), usds(), yieldBearingToken());
     }
 
-    /// @notice Checks whether the token is accepted for deposit (USDC, USDS, or sUSDS).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid deposit token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == usdc() || token == usds() || token == yieldBearingToken();
     }
 
-    /// @notice Checks whether the token is accepted for redemption (USDC, USDS, or sUSDS).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid redemption token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == usdc() || token == usds() || token == yieldBearingToken();
     }
 
-    /// @notice Returns asset metadata: canonical asset is USDS, the constructor-injected underlying asset.
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress address of the USDS token
-    /// @return assetDecimals always 18
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, usds(), 18);
     }

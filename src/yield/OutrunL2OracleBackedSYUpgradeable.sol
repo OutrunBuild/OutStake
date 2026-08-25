@@ -63,7 +63,7 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     /// @param token_ The yield-bearing token on L2 (IS the SY — no wrapping needed).
     /// @param exchangeRateOracle_ Oracle that reports the canonical-asset-per-SY exchange rate.
     /// @param underlyingAssetOnEthAddr_ Address of the underlying asset on Ethereum mainnet.
-    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet (must match L1 truth; see @dev).
+    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet (must match L1 truth; see dev note).
     function __L2OracleBackedSY_init(
         string memory name_,
         string memory symbol_,

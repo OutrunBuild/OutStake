@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {IL2StETH} from "../../../integrations/lido/interfaces/IL2StETH.sol";
 
@@ -24,15 +25,13 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     OutrunL2WrappableWstETHSYStorage private outrunL2WrappableWstETHSYStorage;
 
     /// @notice Initializes the SY adapter with L2 stETH/wstETH wrap capability.
-    /// @dev `underlyingAssetOnEthDecimals_` is L1 canonical-asset decimals and cannot be verified on-chain on L2.
-    /// A misconfiguration is silently cached by `OutrunStakingPositionUpgradeable.initialize` and mis-scales
-    /// `wrapUAssetDebt` by `10**|delta|` (e.g. 18 vs 6 => 1e12, G-011). Validate off-chain against L1 truth and via
-    /// `L2AssetValidation.validateL2WrappableParams` before broadcasting; see `docs/deployment.md` L2 checklist.
+    /// @dev Same G-011 decimal-mismatch risk as OutrunL2OracleBackedSYUpgradeable.__L2OracleBackedSY_init;
+    ///      validate via `L2AssetValidation.validateL2WrappableParams` before broadcasting.
     /// @param owner_ The contract owner address.
     /// @param stETH_ Address of the L2 stETH token.
     /// @param wstETH_ Address of the wstETH yield-bearing token.
     /// @param underlyingAssetOnEthAddr_ Address of the underlying asset on Ethereum mainnet (for cross-chain accounting).
-    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet (must match L1 truth; see @dev).
+    /// @param underlyingAssetOnEthDecimals_ Decimals of the underlying asset on Ethereum mainnet (must match L1 truth; see dev note).
     function initialize(
         address owner_,
         address stETH_,
@@ -50,7 +49,6 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     }
 
     /// @notice Returns the address of the L2 stETH token.
-    /// @return The L2 stETH token address.
     function stETH() public view returns (address) {
         return outrunL2WrappableWstETHSYStorage.stETH;
     }
@@ -117,36 +115,27 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
         return amountSharesToRedeem;
     }
 
-    /// @notice Returns the list of accepted input tokens.
-    /// @return res Array containing stETH and wstETH addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(stETH(), yieldBearingToken());
     }
 
-    /// @notice Returns the list of accepted output tokens.
-    /// @return res Array containing stETH and wstETH addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(stETH(), yieldBearingToken());
     }
 
-    /// @notice Checks whether a token is accepted as input.
-    /// @param token The token address to check.
-    /// @return True if the token is stETH or wstETH.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == stETH() || token == yieldBearingToken();
     }
 
-    /// @notice Checks whether a token is accepted as output.
-    /// @param token The token address to check.
-    /// @return True if the token is stETH or wstETH.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == stETH() || token == yieldBearingToken();
     }
 
-    /// @notice Returns the asset type and details of the underlying Ethereum mainnet asset this SY represents.
-    /// @return assetType Always TOKEN.
-    /// @return assetAddress The underlying asset address on Ethereum mainnet.
-    /// @return assetDecimals The decimals of the underlying asset on Ethereum mainnet.
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (
             AssetType.TOKEN,

@@ -8,6 +8,7 @@ import {IAaveV3Pool} from "../../../integrations/aave/interfaces/IAaveV3Pool.sol
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {AaveAdapterLib} from "../../../libraries/AaveAdapterLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 
 /// @title Outrun Aave V3 SY adapter
 /// @notice SY adapter for Aave V3. The yield-bearing token is the aToken (e.g., aUSDC). Deposit paths:
@@ -42,13 +43,11 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     }
 
     /// @notice The underlying asset that this SY represents (e.g., USDC for aUSDC)
-    /// @return address of the underlying ERC20 token
     function underlying() public view returns (address) {
         return outrunAaveV3SYStorage.underlying;
     }
 
     /// @notice The Aave V3 pool used for supply/withdraw operations
-    /// @return address of the Aave V3 pool contract
     function aavePool() public view returns (address) {
         return outrunAaveV3SYStorage.aavePool;
     }
@@ -160,36 +159,27 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
         return IAaveV3Pool(_pool).getReserveNormalizedIncome(_underlying);
     }
 
-    /// @notice Returns the list of tokens accepted for deposit.
-    /// @return res array containing the underlying asset and the yield-bearing aToken
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(underlying(), yieldBearingToken());
     }
 
-    /// @notice Returns the list of tokens accepted for redemption.
-    /// @return res array containing the underlying asset and the yield-bearing aToken
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(underlying(), yieldBearingToken());
     }
 
-    /// @notice Checks whether a given token is a valid input for deposit.
-    /// @param token address of the token to check
-    /// @return true if token is the underlying asset or the yield-bearing aToken
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == underlying() || token == yieldBearingToken();
     }
 
-    /// @notice Checks whether a given token is a valid output for redemption.
-    /// @param token address of the token to check
-    /// @return true if token is the underlying asset or the yield-bearing aToken
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == underlying() || token == yieldBearingToken();
     }
 
-    /// @notice Returns asset metadata: type, address, and decimals of the underlying token.
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress address of the underlying asset
-    /// @return assetDecimals decimals of the underlying asset
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         address _underlying = underlying();
         return (AssetType.TOKEN, _underlying, IERC20Metadata(_underlying).decimals());

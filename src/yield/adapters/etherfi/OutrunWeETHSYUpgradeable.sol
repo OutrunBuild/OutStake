@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {IWeETH} from "../../../integrations/etherfi/interfaces/IWeETH.sol";
 import {ILiquidityPool} from "../../../integrations/etherfi/interfaces/ILiquidityPool.sol";
@@ -40,19 +41,16 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
     }
 
     /// @notice The EtherFi eETH token address
-    /// @return address of the eETH ERC20 token
     function eETH() public view returns (address) {
         return outrunWeETHSYStorage.eETH;
     }
 
     /// @notice EtherFi DepositAdapter for ETH to weETH conversion
-    /// @return address of the DepositAdapter contract
     function depositAdapter() public view returns (address) {
         return outrunWeETHSYStorage.depositAdapter;
     }
 
     /// @notice EtherFi LiquidityPool used for exchange rate queries
-    /// @return address of the LiquidityPool contract
     function liquidityPool() public view returns (address) {
         return outrunWeETHSYStorage.liquidityPool;
     }
@@ -119,9 +117,7 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
             // First compute how much eETH the ETH buys, then how much weETH that eETH represents.
             // This quote chain approximates the live _deposit route (DepositAdapter.depositETHForWeETH) and may
             // deviate slightly by rounding (observed within 1 wei on the pinned fork).
-            // Apply 50 bps conservative headroom so a verbatim `previewDeposit` as `minSharesOut`
-            // cannot revert on 0-1 wei floor rounding or inter-block rate drift. The 9950/10000
-            // bound is generic across adapters and dominates the bounded error.
+            // Same 50 bps conservative-headroom rationale as OutrunAsBNBSYUpgradeable._previewDeposit.
             uint256 eETHAmount =
                 ILiquidityPool(_pool).amountForShare(ILiquidityPool(_pool).sharesForAmount(amountTokenToDeposit));
             uint256 raw = ILiquidityPool(_pool).sharesForAmount(eETHAmount);
@@ -156,36 +152,27 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         }
     }
 
-    /// @notice Returns the list of tokens accepted for deposit.
-    /// @return res array containing NATIVE, eETH, and weETH
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(NATIVE, eETH(), yieldBearingToken());
     }
 
-    /// @notice Returns the list of tokens accepted for redemption.
-    /// @return res array containing eETH and weETH
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(eETH(), yieldBearingToken());
     }
 
-    /// @notice Checks whether a given token is a valid input for deposit.
-    /// @param token address of the token to check
-    /// @return true if token is NATIVE, eETH, or weETH
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == NATIVE || token == eETH() || token == yieldBearingToken();
     }
 
-    /// @notice Checks whether a given token is a valid output for redemption.
-    /// @param token address of the token to check
-    /// @return true if token is eETH or weETH
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == eETH() || token == yieldBearingToken();
     }
 
-    /// @notice Returns asset metadata: canonical asset is native ETH (NATIVE = address(0) sentinel).
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress NATIVE sentinel (address(0)) — canonical asset is native ETH
-    /// @return assetDecimals always 18
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, NATIVE, 18);
     }

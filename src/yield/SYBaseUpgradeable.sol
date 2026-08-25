@@ -116,12 +116,7 @@ abstract contract SYBaseUpgradeable is
         return _getSYBaseStorage().trustedRouter;
     }
 
-    /// @notice Deposits an input token and mints SY shares to the receiver.
-    /// @param receiver Address that receives the minted SY shares.
-    /// @param tokenIn The token being deposited.
-    /// @param amountTokenToDeposit Amount of tokenIn to deposit.
-    /// @param minSharesOut Minimum SY shares the caller expects to receive (slippage protection).
-    /// @return amountSharesOut Number of SY shares minted to the receiver.
+    /// @inheritdoc IStandardizedYield
     function deposit(address receiver, address tokenIn, uint256 amountTokenToDeposit, uint256 minSharesOut)
         external
         payable
@@ -145,14 +140,7 @@ abstract contract SYBaseUpgradeable is
         emit Deposit(msg.sender, receiver, tokenIn, amountTokenToDeposit, amountSharesOut);
     }
 
-    /// @notice Burns SY shares and delivers the output token to the receiver.
-    /// @param receiver Address that receives the output token.
-    /// @param amountSharesToRedeem Number of SY shares to burn.
-    /// @param tokenOut The token the caller wants to receive.
-    /// @param minTokenOut Minimum output tokens expected (slippage protection).
-    /// @param burnFromInternalBalance If true, burns shares from this contract's balance
-    /// (used after the router transfers SY here). If false, burns from msg.sender directly.
-    /// @return amountTokenOut Amount of tokenOut sent to the receiver.
+    /// @inheritdoc IStandardizedYield
     function redeem(
         address receiver,
         uint256 amountSharesToRedeem,
@@ -249,9 +237,7 @@ abstract contract SYBaseUpgradeable is
     }
 
     /// @notice Adapter-specific preview of a deposit — returns expected SY shares without state changes.
-    /// @param tokenIn The token to simulate depositing.
-    /// @param amountTokenToDeposit Amount of tokenIn to simulate.
-    /// @return amountSharesOut Expected SY shares.
+    ///      Signature and outputs mirror `previewDeposit`.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit)
         internal
         view
@@ -259,9 +245,7 @@ abstract contract SYBaseUpgradeable is
         returns (uint256 amountSharesOut);
 
     /// @notice Adapter-specific preview of a redemption — returns expected output tokens without state changes.
-    /// @param tokenOut The token to simulate receiving.
-    /// @param amountSharesToRedeem Number of SY shares to simulate redeeming.
-    /// @return amountTokenOut Expected output tokens.
+    ///      Signature and outputs mirror `previewRedeem`.
     function _previewRedeem(address tokenOut, uint256 amountSharesToRedeem)
         internal
         view
@@ -278,12 +262,10 @@ abstract contract SYBaseUpgradeable is
 
     /// @notice Checks whether the given token is accepted for deposit.
     /// @param token The token address to check.
-    /// @return True if the token is a valid deposit token.
     function isValidTokenIn(address token) public view virtual returns (bool);
 
     /// @notice Checks whether the given token is accepted for redemption.
     /// @param token The token address to check.
-    /// @return True if the token is a valid redemption token.
     function isValidTokenOut(address token) public view virtual returns (bool);
 
     function _authorizeUpgrade(address) internal override onlyOwner {}

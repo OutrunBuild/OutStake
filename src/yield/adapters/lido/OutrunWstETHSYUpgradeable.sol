@@ -8,6 +8,7 @@ import {IStETH} from "../../../integrations/lido/interfaces/IStETH.sol";
 import {IWstETH} from "../../../integrations/lido/interfaces/IWstETH.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 
 /// @title Outrun Lido wstETH SY adapter
 /// @notice SY adapter for Lido wstETH on Ethereum mainnet. The yield-bearing token is wstETH (wrapped stETH).
@@ -22,6 +23,8 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
     }
     OutrunWstETHSYStorage private outrunWstETHSYStorage;
 
+    error WstETHStakeFailed();
+
     /// @notice Initializes the SY adapter for Lido wstETH.
     /// @param owner_ The contract owner address.
     /// @param stETH_ Address of the Lido stETH token.
@@ -34,7 +37,6 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
     }
 
     /// @notice Returns the Lido stETH token address.
-    /// @return The stETH address.
     function stETH() public view returns (address) {
         return outrunWstETHSYStorage.stETH;
     }
@@ -49,7 +51,7 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             // getPooledEthByShares->wrap round-trip that lost 1-2 wei.
             uint256 before = IERC20(_yieldBearingToken).balanceOf(address(this));
             (bool success,) = _yieldBearingToken.call{value: amountDeposited}("");
-            require(success, "WstETH stake failed");
+            if (!success) revert WstETHStakeFailed();
             amountSharesOut = IERC20(_yieldBearingToken).balanceOf(address(this)) - before;
         } else if (tokenIn == _stETH) {
             // Wrap existing stETH into wstETH at current rate.
@@ -81,9 +83,6 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
     /// @notice Returns the current exchange rate: stETH per 1 wstETH, scaled by 1e18.
     /// @return res wstETH.stEthPerToken(), which grows as Lido validators earn staking rewards.
     function exchangeRate() public view override returns (uint256 res) {
-        // stEthPerToken() returns how much stETH (which is ETH-equivalent)
-        // one wstETH is worth. This is the exchange rate that grows
-        // as Lido validators earn staking rewards.
         return IWstETH(yieldBearingToken()).stEthPerToken();
     }
 
@@ -101,11 +100,8 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             // Native deposits now stake via WstETH.receive() which is also a single
             // getSharesByPooledEth (WstETH.receive -> stETH.submit -> _mint), so the raw quote
             // matches the executed _deposit exactly at the same block (both single floor).
-            // Apply 50 bps conservative headroom only to NATIVE so a verbatim `previewDeposit`
-            // as `minSharesOut` cannot revert on 1-3 wei floor rounding or inter-block rate drift.
-            // The 9950/10000 bound is generic across adapters and dominates the bounded error while
-            // keeping the preview usable for slippage checks. stETH preview stays exact at the
-            // same block because wrap == getSharesByPooledEth.
+            // Same 50 bps conservative-headroom rationale as OutrunAsBNBSYUpgradeable._previewDeposit,
+            // applied to NATIVE only. stETH preview stays exact at the same block because wrap == getSharesByPooledEth.
             uint256 raw = IStETH(_stETH).getSharesByPooledEth(amountTokenToDeposit);
             if (tokenIn == NATIVE && raw != 0) raw = raw * 9950 / 10000;
             amountSharesOut = raw;
@@ -127,36 +123,27 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
         else amountTokenOut = amountSharesToRedeem;
     }
 
-    /// @notice Returns all tokens accepted for deposit: wstETH, native ETH, and stETH.
-    /// @return res Array of accepted deposit token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken(), NATIVE, stETH());
     }
 
-    /// @notice Returns all tokens accepted for redemption: wstETH and stETH.
-    /// @return res Array of accepted redemption token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken(), stETH());
     }
 
-    /// @notice Checks whether the token is accepted for deposit (wstETH, native ETH, or stETH).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid deposit token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == yieldBearingToken() || token == NATIVE || token == stETH();
     }
 
-    /// @notice Checks whether the token is accepted for redemption (wstETH or stETH).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid redemption token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == yieldBearingToken() || token == stETH();
     }
 
-    /// @notice Returns asset metadata: canonical asset is stETH, the constructor-injected underlying asset.
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress address of the stETH token
-    /// @return assetDecimals decimals of stETH
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, stETH(), IERC20Metadata(stETH()).decimals());
     }

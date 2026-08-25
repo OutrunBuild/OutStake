@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import {IListaStakeManager} from "../../../integrations/lista/interfaces/IListaStakeManager.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";
 import {SYBaseUpgradeable} from "../../SYBaseUpgradeable.sol";
+import {IStandardizedYield} from "../../interfaces/IStandardizedYield.sol";
 
 /// @title Outrun Lista slisBNB SY adapter
 /// @notice SY adapter for Lista slisBNB (BSC). The yield-bearing token is slisBNB. Deposit path: native BNB →
@@ -33,7 +34,6 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
     }
 
     /// @notice Returns the Lista StakeManager contract address.
-    /// @return The StakeManager address.
     function stakeManager() public view returns (address) {
         return outrunSlisBNBSYStorage.stakeManager;
     }
@@ -67,7 +67,6 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
         _transferOut(tokenOut, receiver, amountTokenOut);
     }
 
-    // convertSnBnbToBnb(1 ether) returns how much BNB 1 slisBNB is worth, scaled by 1e18.
     /// @notice Returns the current exchange rate: BNB per 1 slisBNB, scaled by 1e18.
     /// @return res StakeManager.convertSnBnbToBnb(1 ether), which grows as Lista staking yield accrues.
     function exchangeRate() public view override returns (uint256 res) {
@@ -83,11 +82,9 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
     ///      `ListaStakeManager.sol:195,890` has no deposit fee — `synFee` is charged only on `compoundRewards`
     ///      profit. Inter-block `totalPooledBnb` growth can make next-block execution < prior preview
     ///      (quote-only cost per EIP-4626).
-    ///      Apply 50 bps conservative headroom so a verbatim `previewDeposit` as `minSharesOut`
-    ///      cannot revert on ≤1 wei floor rounding or inter-block drift. The 9950/10000 bound is
-    ///      generic across adapters and dominates the bounded error. The fixed `-1 wei` trick is
-    ///      intentionally not used: it neither covers inter-block drift nor satisfies EIP-4626
-    ///      `preview <= execution` as-close-as-possible — bps does.
+    ///      Same 50 bps conservative-headroom rationale as OutrunAsBNBSYUpgradeable._previewDeposit.
+    ///      The fixed `-1 wei` trick is intentionally not used: it neither covers inter-block drift
+    ///      nor satisfies EIP-4626 `preview <= execution` as-close-as-possible — bps does.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         if (tokenIn == NATIVE) {
             uint256 raw = IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
@@ -101,36 +98,27 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
         return amountSharesToRedeem;
     }
 
-    /// @notice Returns all tokens accepted for deposit: native BNB and slisBNB.
-    /// @return res Array of accepted deposit token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensIn() public view override returns (address[] memory res) {
         return ArrayLib.create(NATIVE, yieldBearingToken());
     }
 
-    /// @notice Returns all tokens accepted for redemption: slisBNB only.
-    /// @return res Array of accepted redemption token addresses.
+    /// @inheritdoc IStandardizedYield
     function getTokensOut() public view override returns (address[] memory res) {
         return ArrayLib.create(yieldBearingToken());
     }
 
-    /// @notice Checks whether the token is accepted for deposit (native BNB or slisBNB).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid deposit token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenIn(address token) public view override returns (bool) {
         return token == NATIVE || token == yieldBearingToken();
     }
 
-    /// @notice Checks whether the token is accepted for redemption (slisBNB only).
-    /// @param token The token address to check.
-    /// @return True if the token is a valid redemption token.
+    /// @inheritdoc IStandardizedYield
     function isValidTokenOut(address token) public view override returns (bool) {
         return token == yieldBearingToken();
     }
 
-    /// @notice Returns asset metadata: canonical asset is native BNB (NATIVE = address(0) sentinel).
-    /// @return assetType always TOKEN for this adapter
-    /// @return assetAddress NATIVE sentinel (address(0)) — canonical asset is native BNB
-    /// @return assetDecimals always 18
+    /// @inheritdoc IStandardizedYield
     function assetInfo() external pure returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
         return (AssetType.TOKEN, NATIVE, 18);
     }
