@@ -183,8 +183,8 @@ contract OutstakeScript is BaseScript {
     }
 
     function _deployUAsset(uint256 nonce, string memory symbol, string memory assetWord) internal {
-        // Load the 14 cross-chain endpoint/EID envs only here, where the uAsset cross-chain deploy
-        // actually consumes them; Router-only runs must never read these envs.
+        // Load the 3 testnets' cross-chain endpoint/EID envs only here, where the uAsset
+        // cross-chain deploy actually consumes them; Router-only runs must never read these envs.
         _chainsInit();
         uint32[] memory omnichainIds = _sharedOmnichainIds();
 
