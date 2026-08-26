@@ -52,7 +52,7 @@ position minter 对账式（`mintingStatusTable(address(position)).amountInMinte
 
 ## 暂停与滑点下界
 
-`whenNotPaused` 三级熔断与 `preview`/`minSyOut`/`minTokenOut`/`minUAssetMinted` 滑点下界已在执行层完整实现（`OutrunStakingPositionUpgradeable.sol:295,354,394,442,489,537` `OutrunUniversalAssetsUpgradeable.sol:140,163` `SYBaseUpgradeable.sol:129,162`），本概览仅作指针：暂停矩阵与三级影响见 `docs/spec/router/router-and-user-flows.md` §8/§10 与 `docs/spec/position/state-machines.md` §8，暂停矩阵执行真值与 `_credit` 豁免见 `docs/spec/common-foundations.md`；`preview` 与零下界=无保护语义见 `docs/spec/router/router-and-user-flows.md` §8（`min==0` 即无滑点保护，调用方须基于 `previewDeposit`/`previewRedeem` 计算非零下界）。
+`whenNotPaused` 三级熔断与 `preview`/`minSyOut`/`minTokenOut`/`minUAssetMinted` 滑点下界已在执行层完整实现（`OutrunStakingPositionUpgradeable.sol::stake`/`::wrapStake`/`::redeem`/`::keepWrapRedeem`/`::keepRedeem`/`::harvestWrapYield`、`OutrunUniversalAssetsUpgradeable.sol::mint`/`::repay`、`SYBaseUpgradeable.sol::deposit`/`::redeem`），本概览仅作指针：暂停矩阵与三级影响见 `docs/spec/router/router-and-user-flows.md` §8/§10 与 `docs/spec/position/state-machines.md` §8，暂停矩阵执行真值与 `_credit` 豁免见 `docs/spec/common-foundations.md`；`preview` 与零下界=无保护语义见 `docs/spec/router/router-and-user-flows.md` §8（`min==0` 即无滑点保护，调用方须基于 `previewDeposit`/`previewRedeem` 计算非零下界）。
 ## 跨链可用性与限流
 
 `OutrunOFTUpgradeable.sol::_debit` 出站前经 `OutrunRateLimiterUpgradeable.sol::_outflow` 校验 per-eid outbound rate limit，peer 未设时经 `OAppCore.sol::_getPeerOrRevert` revert `NoPeer`；本概览仅作指针：限流与 peer/DVN 语义见 `docs/spec/common-foundations.md`「OFT 与 rate limiter」、换算与校验见同文件「OFT 换算参数与发送/部署校验语义」，部署与监控见 `docs/deployment.md`「跨链信任根投产校验与应急处置」与「跨链限流（OFT Outbound Rate Limit）高危参数校验清单」；`quoteOFT().maxAmountLD`/`getAmountCanBeSent`/`isRateLimited` 为预览与可观测性入口，`RateLimitExceeded`/零 peer 需告警（fail-closed，无资金损失）。

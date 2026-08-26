@@ -238,7 +238,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `stake` / `drawUAsset` / `wrapStake`（经 `uAsset.mint`）
 - `redeem` / `keepRedeem` / `keepWrapRedeem`（经 `uAsset.repay`）
 
-协同约束：`uAsset` 单独暂停会在 `Position` 未暂停、仓位已到期时仍阻断 `redeem`/`keep*`（`OutrunUniversalAssetsUpgradeable.sol:163 repay whenNotPaused`）；存在待赎回仓位时禁止单独 `uAsset.pause()`，需同步 `position.pause()` 或改用 `setMintingCap`/`revokeMinter` 限 `mint`。
+协同约束：`uAsset` 单独暂停会在 `Position` 未暂停、仓位已到期时仍阻断 `redeem`/`keep*`（`OutrunUniversalAssetsUpgradeable.sol::repay` 的 `whenNotPaused`）；存在待赎回仓位时禁止单独 `uAsset.pause()`，需同步 `position.pause()` 或改用 `setMintingCap`/`revokeMinter` 限 `mint`。
 
 `harvestWrapYield` 不调用 uAsset 的 mint / repay，不受该级 pause 阻断（仅受 8.1 与 8.2 两级影响）；对应的 preview / view 函数同样不受该级 pause 影响。
 
@@ -252,7 +252,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 | SY `pause()` | `sy.pause()` | `stake`/`wrapStake` 经 `SY` transfer 间接 `EnforcedPause`；`redeem`/`keep*` 的 SY 转出亦受阻 | 无直接影响 | `deposit`/`redeem` `EnforcedPause` | `unpause()` | `drawUAsset` 仅读 `exchangeRate` + `uAsset.mint`，未到期且有额度时仍可运行 |
 | uAsset `pause()` | `uAsset.pause()` | `stake`/`drawUAsset`/`wrapStake`(`mint`)、`redeem`/`keep*`(`repay`)、`transfer`/`_debit` 全部 `EnforcedPause` → 全协议熔断 | `mint`/`repay`/`transfer`/`_debit` `EnforcedPause`；`approve` 不受影响 (OZ 标准)；`_credit` 显式绕过 `whenNotPaused` 仍铸币 | 无直接影响 | `unpause()`；恢复后 `repay` 立即恢复 | 暂停期供给单边增长需告警，见 `docs/deployment.md` |
 
-- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol:185-194` 直调 `OutrunERC20Upgradeable._update`，符合 “桥接入账不可丢资产” 实践；暂停期 `totalSupply` 仍增，见 `PositionPauseMatrix.t.sol` 回归。`repay` 不豁免：`OutrunUniversalAssetsUpgradeable.sol:163 repay whenNotPaused` 会使已到期仓位 `redeem`/`keep*` 随 uAsset 暂停而 `EnforcedPause`。
+- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol::_credit` 直调 `OutrunERC20Upgradeable._update`，符合 “桥接入账不可丢资产” 实践；暂停期 `totalSupply` 仍增，见 `PositionPauseMatrix.t.sol` 回归。`repay` 不豁免：`OutrunUniversalAssetsUpgradeable.sol::repay` 的 `whenNotPaused` 会使已到期仓位 `redeem`/`keep*` 随 uAsset 暂停而 `EnforcedPause`。
 - 限流器与暂停为两级出站熔断：`setOutboundRateLimit` 的 `limit==0` 已被 `InvalidRateLimit` 拒绝，不再用作单链冻结。
 - 运维：三 `owner` 主网前收敛为 timelock/multisig，暂停时长设告警 (`<24h`，`_credit` 单边增长需监控)；当存在待赎回仓位时禁止单独 `uAsset.pause()`，需 `SP+uAsset` 同步暂停或改用 `setMintingCap(0)`/`revokeMinter`，见 `docs/deployment.md` 协同暂停约束。
 

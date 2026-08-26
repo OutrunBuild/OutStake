@@ -56,7 +56,7 @@
 
 ## 跨链限流（OFT Outbound Rate Limit）高危参数校验清单
 
-`OutrunOFTUpgradeable.sol::setOutboundRateLimit` 的 `limit` 为 LD（local decimals）单位，与 `OutrunOFTUpgradeable.sol::_debit` 的 `amountSentLD` 同单位（`OutrunRateLimiterUpgradeable.sol:10-14`）。18-dec 部署下 `DCR = 1e12`，1 token = 1e18 LD = 1e6 SD，`1e12`（1 SD 单位 = dust 阈值）若被当作 LD 传入则任何真实出站立即 `RateLimitExceeded`，静默 fail-closed 停摆（与 oracle 换址误配同方向的静默停摆类高危）。NatSpec 已在 `OutrunOFTUpgradeable.sol:103-108` 明示 `Do NOT pass SD — 1e12 equals only 1 dust unit`，本清单为运维二次确认。
+`OutrunOFTUpgradeable.sol::setOutboundRateLimit` 的 `limit` 为 LD（local decimals）单位，与 `OutrunOFTUpgradeable.sol::_debit` 的 `amountSentLD` 同单位（`OutrunRateLimiterUpgradeable.sol` 的 `RateLimit` struct 单位注释）。18-dec 部署下 `DCR = 1e12`，1 token = 1e18 LD = 1e6 SD，`1e12`（1 SD 单位 = dust 阈值）若被当作 LD 传入则任何真实出站立即 `RateLimitExceeded`，静默 fail-closed 停摆（与 oracle 换址误配同方向的静默停摆类高危）。NatSpec 已在 `OutrunOFTUpgradeable.sol::setOutboundRateLimit` 明示 `Do NOT pass SD — 1e12 equals only 1 dust unit`，本清单为运维二次确认。
 
 - 高危定级：纳入 ops 高危参数变更清单，变更需双人复核
 - 单位校验（变更前）：
@@ -68,7 +68,7 @@
   2. 核对 `OutboundRateLimitSet(dstEid, limit, window)` 事件参数与 `rateLimits(dstEid).limit/window` 读取值一致
   3. 执行 `quoteOFT(SendParam)` 抽检 `maxAmountLD` 受限于新限额且 `minAmountLD == decimalConversionRate`
 - 失败特征：误配为 SD 量级时 `getAmountCanBeSent` 返回 dust 级、`quoteOFT.maxAmountLD == 0` 或 `1e12`，出站即 `RateLimitExceeded`；与在途超限不同，dust 限额不随衰减自愈，需重配正限额或 `removeOutboundRateLimit` 恢复
-- 暂停误用警告：`removeOutboundRateLimit` 会 `delete` 整条 `RateLimit` 记录（`amountInFlight/lastUpdated/limit/window` 一并清零），重设 `setOutboundRateLimit` 后从零会计、满额开始，不保留衰减后残留；不可当作“暂停限流但保留会计”的开关。需保留会计的暂停应直接重配（`setOutboundRateLimit` 会先以 `amount==0` checkpoint 结算，见 `OutrunRateLimiterUpgradeable.sol::_setRateLimits`）或使用 `pause` 熔断；删除后应监控 `OutboundRateLimitRemoved` 与 `isRateLimited(dstEid)==false` 的无限态，重设后复核 `isRateLimited==true` 且 `getAmountCanBeSent` 接近新限额（见 `docs/spec/common-foundations.md## OFT 与 rate limiter` 与 `OutrunRateLimiterUpgradeable.sol:200-201`）
+- 暂停误用警告：`removeOutboundRateLimit` 会 `delete` 整条 `RateLimit` 记录（`amountInFlight/lastUpdated/limit/window` 一并清零），重设 `setOutboundRateLimit` 后从零会计、满额开始，不保留衰减后残留；不可当作“暂停限流但保留会计”的开关。需保留会计的暂停应直接重配（`setOutboundRateLimit` 会先以 `amount==0` checkpoint 结算，见 `OutrunRateLimiterUpgradeable.sol::_setRateLimits`）或使用 `pause` 熔断；删除后应监控 `OutboundRateLimitRemoved` 与 `isRateLimited(dstEid)==false` 的无限态，重设后复核 `isRateLimited==true` 且 `getAmountCanBeSent` 接近新限额（见 `docs/spec/common-foundations.md## OFT 与 rate limiter` 与 `OutrunRateLimiterUpgradeable.sol::_deleteRateLimit` 的 NatSpec）
 
 ## 跨链信任根投产校验与应急处置
 
