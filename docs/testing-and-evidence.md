@@ -14,7 +14,7 @@
 
 `test/support/` 保留 library 与 token helper 测试证据及 Faucet 等 helper 合约；mock 与 harness 位于 `test/support/mocks/`。
 
-`test/{assets,integration,position,router,security,yield}/` 当前不承载 `.sol` 测试文件；相关证据已迁移到 `test/upgradeable/` 或 `test/deploy/`。
+`test/{assets,integration,position,router,security,yield}/` 当前不承载 `.sol` 测试文件。
 
 ## 直接证据
 
@@ -46,6 +46,6 @@
 - 外部协议真实结算、价格更新、队列、权限和可用性仍属于外部依赖。
 - 当前测试更偏向统一 proxy-backed 回归，而非每个 adapter 的独立专项集。
 - Target registry 的部署验收还需记录完整 target 清单、`TrustedSYUpdated` / `TrustedSPUpdated` 事件、`trustedSY` / `trustedSYForSP` 读取值，以及撤销后用户余额和 allowance 未变化；当前单元测试证明本地拒绝时序，不证明某条链上实例已经完成 registry wiring 或主网 setter freeze。
-- Launcher 轮换属于待完成的 release/deployment acceptance：代码落地后应记录 `OutrunRouter.sol::memeverseLauncher` 的旧、新值，并确认成功调用 `OutrunRouter.sol::setMemeverseLauncher` 发出的 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；当前没有本地运行证据。
-- 主网 release evidence 需额外确认 pre-mainnet `OutrunRouter.sol::setTrustedSY`、`OutrunRouter.sol::setTrustedSP` 与 `OutrunRouter.sol::setMemeverseLauncher` owner surface 已按发布决策冻结或移除，不能把当前分支的部署期 setter 暴露当作主网完成证据。
+- Launcher 轮换属于待完成的 release/deployment acceptance：应记录 `OutrunRouter.sol::memeverseLauncher` 的旧、新值，并确认成功调用 `OutrunRouter.sol::setMemeverseLauncher` 发出的 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件已实现并有本地单元测试覆盖，部署验收证据待补。
+- 主网 release evidence 需额外确认 registry 首批清单、`TrustedSYUpdated`/`TrustedSPUpdated`/`SetMemeverseLauncher` 事件与对应 getter 读取值已完成验收；registry 为持续 live 能力（见 `docs/spec/protocol.md`「router」），不存在冻结/移除 setter 的发布步骤，不能把当前分支的部署期 setter 暴露当作主网完成证据。
 - `npm run test:fork` 当前运行 `SYAdaptersFork.t.sol` 的 pinned fork coverage：Ethereum mainnet block `25_108_887`、BSC mainnet block `98_653_065`、Optimism mainnet block `151_675_883` 与 Base mainnet block `46_080_598`。只有测试显式固定 block number 并记录可复现 trace 后，运行结果才可作为 pinned-block evidence；当前仓内 fork 环境变量名是 `ETHEREUM_MAINNET_RPC`、`BSC_MAINNET_RPC`、`OPTIMISM_MAINNET_RPC` 和 `BASE_MAINNET_RPC`，不得改写为 `MAINNET_RPC_URL`、`BSC_RPC_URL` 或其他别名。

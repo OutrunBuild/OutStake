@@ -11,7 +11,7 @@
 - `src/assets/omnichain/OutrunRateLimiterUpgradeable.sol`（共享 OFT outbound rate-limit 抽象基类）
 - `src/assets/interfaces/IUniversalAssets.sol`
 - uAsset 统一债务与流通资产层，维护按 minter 维度的 mint cap / 已铸造债务 / mint / repay 路径，并继承 ERC20 / pause / OFT 跨链铸烧能力。
-- 当前 state-bearing uAsset 使用 `Upgradeable` 后缀变体并通过 `ERC1967Proxy` + UUPS 部署；旧非 upgradeable 合约已退出当前产品真源。
+- state-bearing uAsset 使用 `Upgradeable` 后缀变体并通过 `ERC1967Proxy` + UUPS 部署。
 - `OutrunUniversalAssetsUpgradeable` 直接继承 `UUPSUpgradeable`；其自定义 `OutrunOFTUpgradeable` 基于 LayerZero 官方 `OFTCoreUpgradeable` / `OAppUpgradeable` 路径，保留自定义 ERC20 metadata/decimals，不在需要自定义 metadata/decimals 时继承默认 `OFTUpgradeable`。
 
 ### 1.2 仓位层
@@ -50,7 +50,7 @@
 - `src/router/interfaces/IMemeverseLauncher.sol`
 - 把 token <-> SY <-> staking position/uAsset 组合为单次入口，并承载 memeverseLauncher genesis 集成。
 - `OutrunRouter` 不进入 upgradeable product surface；仍保持非 upgradeable、可重部署 helper，并通过参数或配置调用 proxy-backed uAsset / SY / position。
-- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。主网发布前完成清单验收并冻结/移除临时 setter。
+- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。registry 为 owner 持续 live 能力，不随主网上线冻结移除（见 `docs/spec/protocol.md`「router」）。
 
 ### 1.5 集成与 Oracle 层
 
@@ -67,7 +67,7 @@
 - `src/integrations/lista/interfaces/IListaStakeManager.sol`
 - `src/integrations/sky/interfaces/IPSM3.sol`
 - `src/libraries/oracle/OutrunExchangeOracleAdapter.sol`
-- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 做精度归一化前校验 raw answer 正性、新鲜度（含 feed 时钟超前的未来时间戳 fail-closed）与可选 sequencer，并在归一化后校验结果非零。
+- 外部协议最小 interface 与 adapter 调用封装；oracle adapter 的校验语义与错误面以 `docs/spec/yield/oracles-and-integrations.md` 为准。
 - `OutrunExchangeOracleAdapter` 不部署在 proxy 后；需要更换 oracle normalization 规则时部署新 adapter，再由 oracle-backed SY proxy 的 owner 更新 `exchangeRateOracle`。
 - 后续执行 adapter / integration 相关任务时，以 `find src -type f` 得到的当前文件树和 `.harness/policy.json` 分类为准；本文件提供架构背景，不覆盖实际文件存在性与 harness surface 分类。
 
@@ -89,11 +89,9 @@
 - proxy-backed：`OutrunUniversalAssetsUpgradeable`、`OutrunStakingPositionUpgradeable`、全部 SY adapter upgradeable variants。
 - non-upgradeable / redeployable：`OutrunRouter`、`OutrunExchangeOracleAdapter`、interfaces、pure libraries、外部协议 interface。
 - deployment flow：部署 implementation，编码 initializer calldata，部署 `ERC1967Proxy(implementation, initData)`，把 proxy address 作为产品地址写入后续 wiring。
-- owner：单一 protocol owner 为 multisig（部署期 owner 约束按脚本区分：`OutstakeScript.s.sol` 系强制 `OWNER` 等于广播者 EOA、部署完成后 `transferOwnership` 转交 multisig；`YieldDeployScript.s.sol` 系无此 `OWNER == 广播者` 约束、`OWNER` 可直接设为终态 multisig；详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
+- owner：单一 protocol owner 为 multisig（部署期 owner 取值约束见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
 - upgrade authority：每个 UUPS product 的 `_authorizeUpgrade(address)` 由 `onlyOwner` 保护，只暴露 UUPS base 的 `upgradeToAndCall`。
 - initializer boundary：构造参数迁移到 `initialize(...)` / `__..._init(...)`，implementation constructor 禁用 initializers。LayerZero endpoint 与 local decimals 是 `OutrunOFTUpgradeable` 继承官方 upgradeable OFT/OApp 路径所需的 implementation-level constructor 参数，每个 endpoint / local-decimal 配置部署一个 implementation。
-- legacy boundary：旧非 upgradeable SY 合约、测试与部署 helper 已退出当前产品真源；当前清理任务会删除对应源码与测试表面。
-
 ## 2. 关键资金流
 
 ### 2.1 Token / Native -> SY
@@ -263,6 +261,8 @@ Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut
 
 ### 3.3 资金流方向
 
+本节为 §2 各资金流的图示化对照，语义以 §2 为准。
+
 方向标注: `token/token → SY` 表示资金从调用者流入 SY。
 
 ```
@@ -321,7 +321,7 @@ Harvest:
 ### 3.4 设计约束
 
 - Router **不承担**独立资金池角色，所有资金来自调用者（caller-funded pull 模式）。
-- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`。主网冻结后不接受运行期 target 新增、替换或撤销。
+- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`。
 - 用户也**可直接调用** `SYBaseUpgradeable.sol::deposit`/`redeem` 与 Position.stake/wrapStake，无需经过 Router；直兑 `redeem(..., false)` 从调用者余额烧份额。`redeem(..., true)` 只对每个 SY 实例 owner 配置的 trusted router caller 开放；wrap 池赎回为 keeper-only `keepWrapRedeem`，不经 Router。
 - uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造。
 - Position 合约本身必须先在 uAsset 上被授予 mintingCap，才能继续铸造。
@@ -359,14 +359,10 @@ Harvest:
 3. Implementation Evidence 层（规则落地证据）
    - `src/**`
    - `test/**`
-4. Topic Guides 层（设计稿与计划工件，不是当前规则真源）
-   - `docs/superpowers/specs/*`
-   - `docs/superpowers/plans/*`
 
 冲突处理顺序：
 
 - 当前规则判断以 Product Truth 层为准，并用 Implementation Evidence 层核验。
-- Topic Guides 层用于补充设计历史，不单独定义当前规则。
 - 若 `docs/spec/*.md` 与 `src/**` 冲突，以 `src/**` 为准。
 
 ## 5. 推荐阅读顺序
@@ -389,5 +385,5 @@ Harvest:
 - Genesis 当前走的是 locked stake 路径，不是 wrap stake 路径。
 - Wrap 池按 principal debt 记账，不会因为汇率上涨自动给用户补发更多 uAsset。
 - 11 个 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
-- Oracle adapter 是精度归一化器，做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）与可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不实现 deviation bounds 或 fallback。
+- Oracle adapter 是精度归一化器，校验语义与错误面以 `docs/spec/yield/oracles-and-integrations.md` 为准；不实现 deviation bounds 或 fallback。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。

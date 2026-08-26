@@ -15,7 +15,7 @@
 ## 关键约束
 
 - SY、uAsset、position 的当前产品实现都通过 proxy-backed upgradeable variants 部署。
-- `OutrunStakingPositionUpgradeable.sol` 的 V1 storage namespace 将 `SY` 与两个 decimals 配置值打包在 slot0，后续 `minStake` 至 `positions` 的 slot 顺序保持不变。该顺序调整应在 V1 发布前完成；已有旧布局 position proxy 需要先迁移 decimals，再切换实现。
+- `OutrunStakingPositionUpgradeable.sol` 的 V1 storage namespace 将 `SY` 与两个 decimals 配置值打包在 slot0，后续 `minStake` 至 `positions` 的 slot 顺序保持不变；布局调整窗口止于 V1 发布，发布后布局冻结。
 - router 仍是非 upgradeable helper。
 - oracle adapter 仍是非 upgradeable helper。
 - SY deploy helper 以 upgradeable 路径为准。
@@ -133,9 +133,9 @@ Router target registry wiring：
 
 - router、SY proxy 与 SP proxy 部署完成后，由 router owner 逐个调用 `OutrunRouter.sol::setTrustedSY(SY, true)`，再调用 `OutrunRouter.sol::setTrustedSP(SP, SY)`；后者必须使用该 SP 当前 `SP.SY()` 返回的 canonical SY，且该 SY 已先登记。
 - 注册完成后读取 `OutrunRouter.sol::trustedSY` 与 `OutrunRouter.sol::trustedSYForSP`，并核对 `TrustedSYUpdated` / `TrustedSPUpdated` 事件；所有清单项验收完成前，不开放 router 的用户入口。registry 检查在用户资金 pull、`transferFrom` 和精确 approve 之前执行，未登记 target 或 pair mismatch 会回退且不移动用户资产。
-- `OutrunRouter.sol::setMemeverseLauncher` 成功轮换应发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；代码落地后，部署验收需确认该事件及 `OutrunRouter.sol::memeverseLauncher` 读取值，并将结果记录为验收证据。
+- `OutrunRouter.sol::setMemeverseLauncher` 成功轮换应发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；部署验收需确认该事件及 `OutrunRouter.sol::memeverseLauncher` 读取值，并将结果记录为验收证据。
 - `setTrustedSY(SY, false)` 会阻断该 SY 的直接路径及引用它的 SP 路径，但不会自动清零 SP mapping；撤销或换对时显式调用 `OutrunRouter.sol::setTrustedSP(SP, address(0))`，再按“注册 SY -> 注册 pair”的顺序接入新配置。撤销不回滚已完成 position、uAsset debt 或 SY share state。
-- 这些 registry setter 与 `OutrunRouter.sol::setMemeverseLauncher` 都是 pre-mainnet wiring。主网发布前完成最终 target 清单、getter/event 验收并冻结/移除临时 owner/admin setter；主网运行不依赖运行期新增、替换或撤销 target。
+- 这些 registry setter 与 `OutrunRouter.sol::setMemeverseLauncher` 均为持续 live 的 owner 能力（见 `docs/spec/protocol.md`「router」），不随主网上线冻结移除；首批 target 清单与 getter/event 验收完成前不开放用户入口，运行期新增、替换或撤销由 owner（multisig）按治理流程执行。
 
 SY router wiring：
 
