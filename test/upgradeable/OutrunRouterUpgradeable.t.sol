@@ -10,7 +10,15 @@ import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.
 import {NativeAmountMismatch} from "../../src/libraries/TokenHelper.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
-import {RouterMockSY, RouterMockERC20, RouterMockUAsset, RouterMockLauncher} from "./mocks/RouterMocks.sol";
+import {
+    RouterMockSY,
+    RouterMockERC20,
+    RouterMockUAsset,
+    RouterMockLauncher,
+    RouterMockPartialLauncher,
+    RouterMockEmptyLauncher,
+    RouterMockTransferBackLauncher
+} from "./mocks/RouterMocks.sol";
 
 contract OutrunRouterTest is Test {
     bytes4 internal constant NATIVE_AMOUNT_MISMATCH_SELECTOR = NativeAmountMismatch.selector;
@@ -323,6 +331,94 @@ contract OutrunRouterTest is Test {
         assertEq(launcherUAsset, 100e18);
         assertEq(launcherUser, owner);
         assertEq(deadline, block.timestamp + 30 days);
+    }
+
+    function test_GenesisToleratesPreDonatedUAssetDust() external {
+        address donor = address(0xFEED);
+
+        // Third party donates 1 wei uAsset to the router before any genesis call.
+        uAsset.setMintingCap(donor, 1);
+        vm.startPrank(donor);
+        uAsset.mint(donor, 1);
+        uAsset.transfer(address(router), 1);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        router.genesisBySY(address(position), 100e18, 30, 1, owner, 0);
+
+        assertEq(uAsset.balanceOf(address(router)), 1);
+        assertEq(uAsset.balanceOf(address(launcher)), 100e18);
+        assertEq(uAsset.allowance(address(router), address(launcher)), 0);
+        (, uint128 launcherUAsset,) = launcher.snapshot();
+        assertEq(launcherUAsset, 100e18);
+
+        vm.prank(owner);
+        router.genesisByToken(address(position), address(underlying), 100e18, 0, 30, 1, owner, 0);
+
+        assertEq(uAsset.balanceOf(address(router)), 1);
+        assertEq(uAsset.balanceOf(address(launcher)), 200e18);
+        assertEq(uAsset.allowance(address(router), address(launcher)), 0);
+        (, launcherUAsset,) = launcher.snapshot();
+        assertEq(launcherUAsset, 100e18);
+    }
+
+    function test_RevertWhen_LauncherPartiallyConsumesGenesisUAsset() external {
+        RouterMockPartialLauncher partialLauncher = new RouterMockPartialLauncher(address(uAsset));
+        address donor = address(0xFEED);
+
+        // Pre-donate dust so the revert args pin the delta: the first arg must exclude the donated
+        // 1 wei and report only the unconsumed half of this transaction's mint.
+        uAsset.setMintingCap(donor, 1);
+        vm.startPrank(donor);
+        uAsset.mint(donor, 1);
+        uAsset.transfer(address(router), 1);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(partialLauncher));
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.GenesisUAssetNotConsumed.selector, 50e18, 50e18));
+        router.genesisBySY(address(position), 100e18, 30, 1, owner, 0);
+
+        // Atomicity: the reverted genesis left no position and the router kept only the donated dust.
+        (address positionOwner,,,) = position.positions(1);
+        assertEq(positionOwner, address(0));
+        assertEq(uAsset.balanceOf(address(router)), 1);
+        assertEq(uAsset.balanceOf(address(partialLauncher)), 0);
+        assertEq(uAsset.allowance(address(router), address(partialLauncher)), 0);
+    }
+
+    function test_RevertWhen_LauncherDoesNotConsumeGenesisUAsset() external {
+        RouterMockEmptyLauncher emptyLauncher = new RouterMockEmptyLauncher();
+
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(emptyLauncher));
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.GenesisUAssetNotConsumed.selector, 100e18, 100e18));
+        router.genesisBySY(address(position), 100e18, 30, 1, owner, 0);
+
+        assertEq(uAsset.balanceOf(address(router)), 0);
+        assertEq(uAsset.allowance(address(router), address(emptyLauncher)), 0);
+    }
+
+    function test_RevertWhen_LauncherTransfersBackGenesisUAsset() external {
+        RouterMockTransferBackLauncher transferBackLauncher = new RouterMockTransferBackLauncher(address(uAsset));
+
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(transferBackLauncher));
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.GenesisUAssetNotConsumed.selector, 10e18, 0));
+        router.genesisBySY(address(position), 100e18, 30, 1, owner, 0);
+
+        // Atomicity: the reverted genesis left no position and moved no uAsset.
+        (address positionOwner,,,) = position.positions(1);
+        assertEq(positionOwner, address(0));
+        assertEq(uAsset.balanceOf(address(router)), 0);
+        assertEq(uAsset.balanceOf(address(transferBackLauncher)), 0);
+        assertEq(uAsset.allowance(address(router), address(transferBackLauncher)), 0);
     }
 
     function testStakeFromSYRevertsWhenMintedBelowMinimumUAsset() external {

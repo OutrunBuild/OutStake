@@ -302,3 +302,58 @@ contract RouterMockLauncher {
         return (lastVerseId, lastAmountInUAsset, lastUser);
     }
 }
+
+/**
+ * @title RouterMockPartialLauncher
+ * @notice Mock Memeverse launcher that consumes only half of the approved genesis uAsset.
+ * @dev Partial mock: models a launcher that partially pulls the genesis uAsset (transferFrom of exactly
+ *      half of `amountInUAsset`). Does not model snapshot/verse bookkeeping or other genesis side effects.
+ */
+contract RouterMockPartialLauncher {
+    RouterMockUAsset internal immutable uAsset;
+
+    constructor(address uAsset_) {
+        uAsset = RouterMockUAsset(uAsset_);
+    }
+
+    function genesis(uint256, uint128 amountInUAsset, address) external {
+        // Consume exactly half of the approved amount to model partial launcher consumption.
+        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset / 2)) {
+            revert RouterMockLauncher.RouterGenesisTransferFailed();
+        }
+    }
+}
+
+/**
+ * @title RouterMockEmptyLauncher
+ * @notice Mock Memeverse launcher whose genesis consumes none of the approved uAsset.
+ * @dev Partial mock: models a launcher that leaves the approved genesis uAsset untouched (no transferFrom).
+ *      Does not model snapshot/verse bookkeeping or other genesis side effects.
+ */
+contract RouterMockEmptyLauncher {
+    function genesis(uint256, uint128, address) external {}
+}
+
+/**
+ * @title RouterMockTransferBackLauncher
+ * @notice Mock Memeverse launcher that pulls the full genesis uAsset and transfers part of it back.
+ * @dev Partial mock: models full-pull-then-return launcher behavior (transferFrom of the full `amountInUAsset`
+ *      followed by a transfer of `amountInUAsset / 10` back to the caller). Does not model snapshot/verse
+ *      bookkeeping or other genesis side effects.
+ */
+contract RouterMockTransferBackLauncher {
+    RouterMockUAsset internal immutable uAsset;
+
+    constructor(address uAsset_) {
+        uAsset = RouterMockUAsset(uAsset_);
+    }
+
+    function genesis(uint256, uint128 amountInUAsset, address) external {
+        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
+            revert RouterMockLauncher.RouterGenesisTransferFailed();
+        }
+        if (!uAsset.transfer(msg.sender, amountInUAsset / 10)) {
+            revert RouterMockLauncher.RouterGenesisTransferFailed();
+        }
+    }
+}

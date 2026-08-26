@@ -61,6 +61,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     function mintSYFromToken(address SY, address tokenIn, address receiver, uint256 amountInput, uint256 minSyOut)
         external
         payable
+        nonReentrant
         returns (uint256 amountInSYOut)
     {
         amountInSYOut = _mintSY(SY, tokenIn, receiver, amountInput, minSyOut);
@@ -81,6 +82,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      */
     function redeemSyToToken(address SY, address receiver, address tokenOut, uint256 amountInSY, uint256 minTokenOut)
         external
+        nonReentrant
         returns (uint256 amountInTokenOut)
     {
         _requireTrustedSY(SY);
@@ -154,6 +156,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     function stakeFromToken(address SP, address tokenIn, uint256 tokenAmount, StakeParam calldata stakeParam)
         public
         payable
+        nonReentrant
         returns (uint256 positionId, uint256 mintedUAsset)
     {
         address SY = _trustedSYForSP(SP);
@@ -176,6 +179,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      */
     function stakeFromSY(address SP, uint256 amountInSY, StakeParam calldata stakeParam)
         public
+        nonReentrant
         returns (uint256 positionId, uint256 mintedUAsset)
     {
         address SY = _trustedSYForSP(SP);
@@ -205,7 +209,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 minSyOut,
         address uAssetReceiver,
         uint256 minUAssetMinted
-    ) public payable returns (uint256 mintedUAsset) {
+    ) public payable nonReentrant returns (uint256 mintedUAsset) {
         // Wrap stake enters the shared pool — no individual position id is created, no lockup applies.
         address SY = _trustedSYForSP(SP);
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut);
@@ -223,6 +227,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      */
     function wrapStakeFromSY(address SP, uint256 amountInSY, address uAssetReceiver, uint256 minUAssetMinted)
         public
+        nonReentrant
         returns (uint256 mintedUAsset)
     {
         address SY = _trustedSYForSP(SP);
@@ -293,6 +298,10 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @notice Shared genesis tail: stakes SY, enforces the minted uAsset floor and uint128 bound, then approves
      *      and forwards the minted uAsset into the memeverse launcher.
      * @dev Single source of truth for the steps both genesis entry points share after preparing SY.
+     * @dev The step (5) post-condition is snapshot-delta based: it compares the router's uAsset balance against
+     *      a pre-stake snapshot taken in this function, so uAsset already held before the call (e.g. third-party
+     *      donated dust) is excluded from the assertion, while any launcher shortfall or transfer-back reverts;
+     *      an outflow beyond the exact allowance granted in step (3) is not reachable.
      * @param SY Canonical standardized-yield token holding the stake balance.
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake for genesis.
@@ -311,6 +320,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     ) internal {
         address uAsset = IOutrunStakeManager(SP).uAsset();
         address launcher = memeverseLauncher;
+        // Baseline for the step (5) post-condition: pre-existing balances (including donated dust) stay
+        // outside its assertion domain.
+        uint256 uAssetBalanceBefore = IERC20(uAsset).balanceOf(address(this));
         // The entry point completes step (1): token entry points mint SY, while the SY entry point pulls SY into the router.
         // (2) Stake SY to create a locked position for genesisUser.
         (, uint256 mintedUAsset) = _stakeFromSYBalance(SY, SP, amountInSY, lockupDays, genesisUser, address(this));
@@ -322,14 +334,17 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         // mintedUAsset is bounded by type(uint128).max immediately before this cast.
         // forge-lint: disable-next-line(unsafe-typecast)
         IMemeverseLauncher(launcher).genesis(verseId, uint128(mintedUAsset), genesisUser);
-        // (5) Post-condition: launcher must have consumed the full approved uAsset. Without the check
-        // a partial transferFrom leaves stranded balance + residual allowance with no rescue path.
-        // Reverting upgrades the "launcher fully consumes" trust assumption to an enforceable assertion.
+        // (5) Post-condition: the uAsset balance must return to the pre-stake snapshot and the launcher
+        // allowance must be zero, else revert GenesisUAssetNotConsumed.
         {
-            uint256 residualBalance = IERC20(uAsset).balanceOf(address(this));
+            uint256 balanceAfter = IERC20(uAsset).balanceOf(address(this));
             uint256 residualAllowance = IERC20(uAsset).allowance(address(this), launcher);
-            if (residualBalance != 0 || residualAllowance != 0) {
-                revert GenesisUAssetNotConsumed(residualBalance, residualAllowance);
+            // balanceAfter >= uAssetBalanceBefore always holds: the stake mint (exactly mintedUAsset, trusted SP)
+            // is the only guaranteed inflow, total outflows are bounded by the exact allowance granted in step (3)
+            // (the launcher's transferFrom), and any other in-window movement (e.g. a launcher transfer-back) can
+            // only credit the router, so the subtraction below cannot underflow.
+            if (balanceAfter != uAssetBalanceBefore || residualAllowance != 0) {
+                revert GenesisUAssetNotConsumed(balanceAfter - uAssetBalanceBefore, residualAllowance);
             }
         }
     }
@@ -391,7 +406,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 verseId,
         address genesisUser,
         uint256 minUAssetMinted
-    ) external payable {
+    ) external payable nonReentrant {
         address SY = _trustedSYForSP(SP);
         // (1) Mint SY from the input token.
         uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut);
@@ -416,7 +431,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 verseId,
         address genesisUser,
         uint256 minUAssetMinted
-    ) external {
+    ) external nonReentrant {
         address SY = _trustedSYForSP(SP);
         // (1) Pull caller's SY into the router.
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);

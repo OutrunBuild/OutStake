@@ -44,7 +44,7 @@ interface IOutrunRouter {
      * non-zero value without reverting. The only on-chain guard at zero is SY's `SYZeroSharesOut` (which reverts
      * only when output floors to zero). Integrators must quote via `previewDeposit`/`previewStake` and pass a
      * non-zero floor (e.g. quote ± slippage); SDKs should default to a quoted non-zero floor and monitor for
-     * sandwich conditions. See `docs/spec/router/router-and-user-flows.md §8`.
+     * sandwich conditions.
      */
     struct StakeParam {
         uint128 lockupDays;
