@@ -2,21 +2,12 @@
 
 ## Read Order
 
-1. `AGENTS.md`
-2. `.harness/policy.json`
-3. this file
-4. `docs/TRACEABILITY.md` when you need control-file or artifact locations
-5. `docs/VERIFICATION.md` when you need verification profile or verdict rules
-6. `script/harness/gate.sh` when you need enforcement details or emitted evidence
-7. `.claude/rules/*.md` — Solidity style/best-practices, auto-loaded by `paths:` scope (`src/` / `test/` / `script/`) when editing `.sol` files; consult directly only for cross-scope reference
+1. Follow the control-file read order in `AGENTS.md`「Session Entry」 — that list is authoritative for this file too (AGENTS.md → `.harness/policy.json` → this file → `docs/TRACEABILITY.md` → `docs/VERIFICATION.md` → `script/harness/gate.sh`, each loaded on demand).
+2. `.claude/rules/*.md` — Solidity style/best-practices, auto-loaded by `paths:` scope (`src/` / `test/` / `script/`) when editing `.sol` files; consult directly only for cross-scope reference.
 
 ## Truth Precedence
 
-1. explicit human instruction
-2. `.harness/policy.json`
-3. `script/harness/gate.sh` results
-4. `AGENTS.md` and this file
-5. other repository docs
+As defined in `AGENTS.md`「Truth Precedence」 — that list is authoritative for this file too; do not override it here.
 
 ## Main-Session Rules
 
@@ -25,7 +16,7 @@
 - Dispatch and review are selected by policy-derived `orchestration_profile`.
 - Derive `change_class`, `surface_sensitivity`, `orchestration_profile`, `harness_writer_roles`, `code_writer_roles`, and `code_review_roles` from policy/gate evidence before delegating.
 - For `prod-semantic` work, the main session decides whether spec/docs or other harness-control changes are needed before dispatching `harness_writer_roles`, `code_writer_roles`, or `code_review_roles`.
-- For `prod-semantic` changes the gate emits `doc_round_required=true` and fills `harness_writer_roles` with `process-implementer`. When `doc_round_required=true`, the main session MUST run the product-doc round first — grep the doc-round scope (`docs/spec/` subtree and `docs/` root-level product docs — `GLOSSARY`, `ARCHITECTURE`, `implementation-map`, `deployment`, `SECURITY_AND_APPROVALS`, `TRACEABILITY`, `VERIFICATION`, `testing-and-evidence`; `docs/superpowers/` and `docs/review/` are excluded) for entries describing the affected behavior, fund flow, permissions, events, or invariants, and output a candidate-doc list with a per-item verdict (update / no-update + reason) before proceeding — a silent decision is not allowed. Dispatch `process-implementer` for the affected `docs/` files, then dispatch `spec-reviewer` — before any code writer. The gate does not compute `affected_docs`; that semantic judgment stays with the main session.
+- For `prod-semantic` changes the gate emits `doc_round_required=true` and fills `harness_writer_roles` with `process-implementer`. When `doc_round_required=true`, the main session MUST run the product-doc round first — grep the doc-round scope (`docs/spec/` subtree and `docs/` root-level product docs — `GLOSSARY`, `ARCHITECTURE`, `implementation-map`, `deployment`, `SECURITY_AND_APPROVALS`, `TRACEABILITY`, `VERIFICATION`, `testing-and-evidence`; `docs/review/` is excluded) for entries describing the affected behavior, fund flow, permissions, events, or invariants, and output a candidate-doc list with a per-item verdict (update / no-update + reason) before proceeding — a silent decision is not allowed. Dispatch `process-implementer` for the affected `docs/` files, then dispatch `spec-reviewer` — before any code writer. The gate does not compute `affected_docs`; that semantic judgment stays with the main session.
 - If the main session decides spec/docs changes are required, complete that spec/doc writing round first and dispatch `spec-reviewer` immediately after the spec/doc changes are ready, before any code writer is dispatched.
 - Dispatch any other required harness-control writers after the spec/doc round and `spec-reviewer`, before any code writer; run code reviewers after the owning code writer, then run the selected gate profile and report the result.
 - `spec-reviewer` dispatch is a main-session orchestration hook, not a `gate.sh` output field. For `prod-semantic` work the doc round that precedes it is triggered by the gate's `doc_round_required` signal; `spec-reviewer` itself remains a hook, not a routing field.
