@@ -161,7 +161,9 @@
       "tests": [
         "test/upgradeable/OutrunRouterUpgradeable.t.sol",
         "test/upgradeable/OutrunRouterFuzzUpgradeable.t.sol",
-        "test/upgradeable/RouterProxyIntegration.t.sol"
+        "test/upgradeable/RouterProxyIntegration.t.sol",
+        "test/upgradeable/RouterReentrancyGuardUpgradeable.t.sol",
+        "test/upgradeable/RouterEndToEndConservationUpgradeable.t.sol"
       ],
       "rules": [
         {
@@ -172,12 +174,15 @@
           "change_tests": [
             "test/upgradeable/OutrunRouterUpgradeable.t.sol",
             "test/upgradeable/OutrunRouterFuzzUpgradeable.t.sol",
-            "test/upgradeable/RouterProxyIntegration.t.sol"
+            "test/upgradeable/RouterProxyIntegration.t.sol",
+            "test/upgradeable/RouterReentrancyGuardUpgradeable.t.sol",
+            "test/upgradeable/RouterEndToEndConservationUpgradeable.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/OutrunRouterUpgradeable.t.sol",
             "test/upgradeable/OutrunRouterFuzzUpgradeable.t.sol",
-            "test/upgradeable/RouterProxyIntegration.t.sol"
+            "test/upgradeable/RouterProxyIntegration.t.sol",
+            "test/upgradeable/RouterReentrancyGuardUpgradeable.t.sol"
           ]
         }
       ]
@@ -190,7 +195,9 @@
         "test/upgradeable/OracleSetterUpgradeable.t.sol",
         "test/verification/SweepResidual.t.sol",
         "test/upgradeable/OracleInvariant.t.sol",
-        "test/upgradeable/SYInvariant.t.sol"
+        "test/upgradeable/SYInvariant.t.sol",
+        "test/upgradeable/SYPerActorConservationUpgradeable.t.sol",
+        "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol"
       ],
       "rules": [
         {
@@ -203,7 +210,9 @@
             "test/upgradeable/SYUpgradeable.t.sol",
             "test/upgradeable/SYAdaptersUpgradeable.t.sol",
             "test/upgradeable/OracleSetterUpgradeable.t.sol",
-            "test/verification/SweepResidual.t.sol"
+            "test/verification/SweepResidual.t.sol",
+            "test/upgradeable/SYPerActorConservationUpgradeable.t.sol",
+            "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/SYUpgradeable.t.sol",

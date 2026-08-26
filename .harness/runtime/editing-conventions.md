@@ -11,7 +11,7 @@ Read this file before editing any `.sol` file (all scopes), writing tests or moc
 - Many tiny single-use helpers make code harder to follow because readers must jump around.
 - Extract a helper only when it clearly improves readability, naming, reuse, or testability.
 - Inline trivial single-use logic unless extraction clearly improves comprehension.
-- Solidity style and best practices for each scope are maintained as nested `AGENTS.md` files whose **single source of truth** is the nested file itself: `src/AGENTS.md`, `script/AGENTS.md`, `test/AGENTS.md`. The per-scope `.claude/rules/*.md` files (`solidity-contracts.md` for `src/`, `solidity-tests.md` for `test/`, `solidity-scripts.md` for `script/`) are **generated from** those nested files — after editing a nested `AGENTS.md`, regenerate them by running `bash script/harness/sync-agent-docs.sh`. The local per-tool skill mirrors (`.dsh/skills/`, `.codex/skills/`, `.zcode/skills/`, `.pi/skills/`) have been removed and must **not** be rebuilt.
+- Solidity style and best practices for each scope are maintained as nested `AGENTS.md` files whose **single source of truth** is the nested file itself: `src/AGENTS.md`, `script/AGENTS.md`, `test/AGENTS.md`. The per-scope `.claude/rules/*.md` files (`solidity-contracts.md` for `src/`, `solidity-tests.md` for `test/`, `solidity-scripts.md` for `script/`) are **generated from** those nested files — after editing a nested `AGENTS.md`, regenerate them by running `bash script/harness/sync-agent-docs.sh`.
 
 ## Doc-Code Citation Convention
 

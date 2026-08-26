@@ -55,6 +55,18 @@ docs/TRACEABILITY.md lists control files and artifact locations; other repositor
 - Do not read `script/harness/gate.sh` when policy, runtime, or verification docs already answer the routing question.
 - If tool output is empty, partial, or suspicious, retry once with a different command before treating it as evidence.
 
+## Audit and Review Reference Containment
+
+- `docs/audits/**`, `docs/review/**`, external audit/review reports are fix-input only. Never write finding IDs (`F-007`/`L-001`/`M-03`/review numbers) or doc references into code or non-audit docs.
+- Prohibited sinks: Solidity comments/NatSpec, error/revert strings, names (contract/function/variable/event/error), test names/descriptions, scripts, and all non-audit docs (spec/README/ARCHITECTURE/GLOSSARY/TRACEABILITY etc.).
+- Fixes self-contained: state behavior/invariant/rationale, not provenance (`fix for F-007` / `per review comment 12` etc.). Traceability stays in audit docs or the driving task doc; inline refs only if human explicitly requests.
+
+## Product Documentation Reference Containment
+
+- Product docs (`docs/**` except `docs/audits/**` and `docs/review/**`) are internal. Never reference them from code — Solidity comments, NatSpec, error strings, inline comments.
+- Comments must be self-contained: state behavior, invariant, or rationale in domain terms, no `see docs/...` / `per docs/...`.
+- Applies to `src/**/*.sol` and `script/**/*.sol`; product docs may cross-reference each other.
+
 ## Harness Dispatch Procedure
 
 When `.harness/policy.json` exists and the task modifies repository files:
@@ -86,6 +98,8 @@ Before final response, check:
 - every edited path was classified pre-edit, matches `.harness/policy.json`, and no edited path is outside the classified surface
 - writer, reviewer, and verifier routing followed policy and gate evidence
 - validation command and result are fresh
+- no edited code or doc introduces audit/review finding IDs or document references (containment rules above)
+- no edited code introduces product-doc references (`docs/**` in `src/**/*.sol`/`script/**/*.sol` comments or strings)
 - final answer reports only completed work, validation, and blockers
 
 ## Escalation Boundaries
