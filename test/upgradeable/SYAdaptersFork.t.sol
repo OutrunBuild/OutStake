@@ -488,6 +488,9 @@ contract SYAdaptersOptimismForkTest is Test {
         IERC20(OP_WSTETH).approve(address(lidoL2Sy), amount);
         uint256 sharesForStEthRedeem = lidoL2Sy.deposit(address(this), OP_WSTETH, amount, 0);
         uint256 stEthAmount = lidoL2Sy.redeem(address(this), sharesForStEthRedeem, OP_STETH, 0, false);
+        assertEq(
+            IERC20(OP_WSTETH).allowance(address(lidoL2Sy), OP_STETH), 0, "live wrap leg leaves no wstETH allowance"
+        );
         uint256 previewSharesFromStEth = lidoL2Sy.previewDeposit(OP_STETH, stEthAmount);
         IERC20(OP_STETH).approve(address(lidoL2Sy), stEthAmount);
         uint256 sharesFromStEth = lidoL2Sy.deposit(address(this), OP_STETH, stEthAmount, 0);
@@ -578,6 +581,11 @@ contract SYAdaptersBaseForkTest is Test {
         assertEq(shares, previewShares);
         assertEq(skyL2Sy.balanceOf(address(this)), shares);
         assertEq(IERC20(BASE_SUSDS).balanceOf(address(skyL2Sy)), shares);
+        assertEq(
+            IERC20(BASE_USDS).allowance(address(skyL2Sy), BASE_PSM3),
+            0,
+            "live PSM3 deposit leg leaves no USDS allowance"
+        );
 
         uint256 previewUsds = skyL2Sy.previewRedeem(BASE_USDS, shares);
         uint256 redeemed = skyL2Sy.redeem(address(this), shares, BASE_USDS, 0, false);
@@ -585,6 +593,11 @@ contract SYAdaptersBaseForkTest is Test {
         assertEq(redeemed, previewUsds);
         assertEq(skyL2Sy.balanceOf(address(this)), 0);
         assertEq(IERC20(BASE_USDS).balanceOf(address(this)), redeemed);
+        assertEq(
+            IERC20(BASE_SUSDS).allowance(address(skyL2Sy), BASE_PSM3),
+            0,
+            "live PSM3 redeem leg leaves no sUSDS allowance"
+        );
 
         uint256 usdcAmount = 100e6;
         uint256 usdcBefore = IERC20(BASE_USDC).balanceOf(address(this));
@@ -596,6 +609,11 @@ contract SYAdaptersBaseForkTest is Test {
         assertEq(previewSharesFromUsdc, IPSM3(BASE_PSM3).previewSwapExactIn(BASE_USDC, BASE_SUSDS, usdcAmount));
         assertEq(sharesFromUsdc, previewSharesFromUsdc);
         assertEq(skyL2Sy.balanceOf(address(this)), sharesFromUsdc);
+        assertEq(
+            IERC20(BASE_USDC).allowance(address(skyL2Sy), BASE_PSM3),
+            0,
+            "live PSM3 deposit leg leaves no USDC allowance"
+        );
 
         uint256 previewUsdc = skyL2Sy.previewRedeem(BASE_USDC, sharesFromUsdc);
         uint256 redeemedUsdc = skyL2Sy.redeem(address(this), sharesFromUsdc, BASE_USDC, 0, false);

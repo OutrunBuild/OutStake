@@ -96,7 +96,8 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     error RateDeviationExceeded(uint256 psmRate, uint256 ssrRate, uint256 maxBps);
     error RateProviderCallFailed();
 
-    error PSM3IncompleteConsumption(uint256 expectedConsumed, uint256 actualRemaining);
+    error PSM3IncompleteConsumption(uint256 expectedConsumed, uint256 actualConsumed);
+    error InsufficientBacking(uint256 residentBacking, uint256 outstandingShares);
 
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _yieldBearingToken = yieldBearingToken();
@@ -109,7 +110,9 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
             // leave user funds stranded in SY and sweepable via SYBaseUpgradeable.sol::sweep.
             uint256 balanceBefore = _selfBalance(tokenIn);
             address _psm = psm3();
-            _safeApproveInf(tokenIn, _psm);
+            // Exact per-call approval: the pull covers only this swap's input amount, so no
+            // standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(tokenIn, _psm, amountDeposited);
             amountSharesOut = IPSM3(_psm).swapExactIn(tokenIn, _yieldBearingToken, amountDeposited, 0, address(this), 0);
             uint256 balanceAfter = _selfBalance(tokenIn);
             if (balanceAfter != balanceBefore - amountDeposited) {
@@ -130,7 +133,9 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
             amountTokenOut = amountSharesToRedeem;
         } else {
             address _psm = psm3();
-            _safeApproveInf(_yieldBearingToken, _psm);
+            // Exact per-call approval: the yield-bearing token is the SY's resident share backing, so the
+            // allowance must cover only this swap's pull and leave no standing grant to PSM3.
+            _safeApprove(_yieldBearingToken, _psm, amountSharesToRedeem);
             amountTokenOut = IPSM3(_psm).swapExactIn(_yieldBearingToken, tokenOut, amountSharesToRedeem, 0, receiver, 0);
         }
     }
@@ -140,7 +145,20 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     /// @dev Accounting uses independent RateProvider and reverts with RateProviderCallFailed if none is configured
     ///      (fail-closed, no PSM fallback). If PSM quote deviates from SSR by more than maxDeviationBps, reverts
     ///      to fail-closed (prevents pool-imbalance or stale-oracle pollution of position mint/liquidation).
+    ///      Also reverts with InsufficientBacking when the adapter's own sUSDS balance falls below the
+    ///      outstanding SY supply (backing reconciliation, fail-closed).
     function exchangeRate() public view override returns (uint256 res) {
+        address _yieldBearingToken = yieldBearingToken();
+        // Backing reconciliation, checked before any rate source is read (fail-closed): SYBase mints
+        // 1 SY per 1 sUSDS unit, so this adapter's own sUSDS balance is the full backing of the
+        // outstanding shares. If funds ever leave outside deposit/redeem, quoting a rate would let
+        // staking mint unbacked shares at par, so the quote must revert instead. Snapshot semantics:
+        // only the current balance is checked here, never the rate value itself. Precondition: sUSDS
+        // is a standard (non-fee-on-transfer) token, so a nominal transfer equals the received amount.
+        uint256 outstandingShares = totalSupply();
+        uint256 residentBacking = _selfBalance(_yieldBearingToken);
+        if (residentBacking < outstandingShares) revert InsufficientBacking(residentBacking, outstandingShares);
+
         address rp = rateProvider();
         if (rp == address(0)) revert RateProviderCallFailed();
         uint256 rate;
@@ -152,7 +170,7 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         if (rate == 0) revert RateProviderCallFailed();
         // sUSDS 18, USDS 18: 1 sUSDS = rate/1e27 USDS => 1e18 * rate / 1e27
         uint256 ssrRate = (1 ether * rate) / 1e27;
-        uint256 psmRate = IPSM3(psm3()).previewSwapExactIn(yieldBearingToken(), usds(), 1 ether);
+        uint256 psmRate = IPSM3(psm3()).previewSwapExactIn(_yieldBearingToken, usds(), 1 ether);
         uint256 maxBps = maxDeviationBps();
         if (psmRate != ssrRate && ssrRate != 0) {
             uint256 diff = psmRate > ssrRate ? psmRate - ssrRate : ssrRate - psmRate;
@@ -162,12 +180,25 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         return ssrRate;
     }
 
+    /// @notice Previews the sUSDS shares that would be received for depositing a given token.
+    /// @dev USDC/USDS path forwards to `IPSM3.previewSwapExactIn` (floor quote). Sky SSR accrues per block,
+    ///      shifting the PSM3 rate between preview and execution by a few wei, bidirectional (deposit preview
+    ///      may be higher than execution, redeem preview may be lower). This bounded drift is a PSM3 preview-
+    ///      vs-execution caveat, not locally fixable; adapter keeps faithful pass-through without 9950/10000
+    ///      discount. Callers should not use preview verbatim as `SYBaseUpgradeable.sol::deposit` minSharesOut;
+    ///      leave 1 wei headroom (e.g. `preview > 1 ? preview - 1 : preview`) or small bps margin, consistent
+    ///      with `OutrunStakedUsdsSYUpgradeable` family. sUSDS direct branch is 1:1 and has no conversion drift.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         // sUSDS deposits are already shares; USDC/USDS deposits are quoted through PSM3.
         if (tokenIn == yieldBearingToken()) return amountTokenToDeposit;
         return IPSM3(psm3()).previewSwapExactIn(tokenIn, yieldBearingToken(), amountTokenToDeposit);
     }
 
+    /// @notice Previews the output tokens that would be received for redeeming SY shares.
+    /// @dev sUSDS direct branch is 1:1. USDC/USDS path forwards to `IPSM3.previewSwapExactIn` (floor quote)
+    ///      with same SSR per-block drift caveat as `_previewDeposit` — a few wei bidirectional preview-vs-
+    ///      execution drift, faithful pass-through, no discount; callers should leave 1 wei/bps headroom when
+    ///      using preview as `SYBaseUpgradeable.sol::redeem` minTokenOut.
     function _previewRedeem(address tokenOut, uint256 amountSharesToRedeem) internal view override returns (uint256) {
         // Redeeming to sUSDS is 1:1; redeeming to USDC/USDS is quoted through PSM3.
         if (tokenOut == yieldBearingToken()) return amountSharesToRedeem;

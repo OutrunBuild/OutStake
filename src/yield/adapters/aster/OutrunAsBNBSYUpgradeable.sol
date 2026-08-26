@@ -23,7 +23,7 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
 
     error AsBnbMintQueued();
     error AsBnbMintZeroShares();
-    error AsBnbMintIncompleteConsumption(uint256 expectedConsumed, uint256 actualRemaining);
+    error AsBnbMintIncompleteConsumption(uint256 expectedConsumed, uint256 actualConsumed);
     error InvalidAsBnbMinterAsBnb(address expected, address actual);
     error InvalidAsBnbMinterToken(address expected, address actual);
     error InvalidYieldProxy();

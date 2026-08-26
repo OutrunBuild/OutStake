@@ -68,7 +68,7 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
             IAaveV3Pool(_pool).supply(_underlying, amountDeposited, address(this), 0);
             amountSharesOut = aToken.scaledBalanceOf(address(this)) - scaledBefore;
         } else {
-            // Deposit aToken directly — convert to scaled shares using current liquidity index.
+            // Deposit aToken directly - convert to scaled shares using current liquidity index.
             amountSharesOut =
                 AaveAdapterLib.calcSharesFromAssetHalfUp(amountDeposited, _getNormalizedIncome(_underlying, _pool));
         }
@@ -112,8 +112,8 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// Divide by 1e9 to get the standard 1e18-scaled exchange rate.
     /// @dev Truncation: RAY->WAD is integer division (floor, remainder <1e9 Ray).
     ///      i.e. <1 wei per 1e18 unit and relative <1e-18 at index ~1e27. Bias is
-    ///      conservative — covering the same uAsset debt needs marginally more SY, never
-    ///      less — and negligible. Half-up would need coordinated Position change and is
+    ///      conservative - covering the same uAsset debt needs marginally more SY, never
+    ///      less - and negligible. Half-up would need coordinated Position change and is
     ///      not adopted.
     /// @return exchange rate in 1e18 precision
     function exchangeRate() public view override returns (uint256) {
@@ -123,12 +123,15 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     }
 
     /// @notice Preview the scaled shares received for a given deposit.
-    /// @dev Underlying path uses floor (`calcSharesFromAssetDown`) for a conservative preview
-    ///      (`preview <= execution`), matching the on-chain `scaledBalanceOf` delta's floor
-    ///      lower bound vs the half-up `rayDiv` execution. This guarantees
-    ///      `minSharesOut = preview` never reverts due to rounding (max 1 wei under-quote,
-    ///      0 wei over-quote). aToken path stays `half-up` exact because both preview
-    ///      and execution use the same `rayDiv`.
+    /// @dev Underlying: floor (`calcSharesFromAssetDown`), so `preview <= execution`
+    ///      within same block (scaledBalanceOf floor vs half-up rayDiv; <=1 wei
+    ///      under-quote, 0 over-quote) - `minSharesOut = preview` never reverts.
+    ///      aToken: exact same block (both half-up).
+    ///      Cross-block `getReserveNormalizedIncome` is monotonic; stale preview may
+    ///      exceed execution and `minSharesOut = preview` can revert `SYInsufficient-
+    ///      SharesOut` (fail-closed, >1 wei floor, always `execution <= preview`, no
+    ///      silent loss, amount/time-window dependent). Leave 1 wei/bps headroom;
+    ///      same caveat as ERC4626 `totalAssets` drift.
     /// @param tokenIn token being deposited (underlying or aToken)
     /// @param amountTokenToDeposit amount of token to deposit
     /// @return amountSharesOut expected scaled shares

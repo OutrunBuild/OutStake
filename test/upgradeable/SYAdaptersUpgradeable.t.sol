@@ -3,6 +3,8 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
 import {OutrunWeETHSYUpgradeable} from "../../src/yield/adapters/etherfi/OutrunWeETHSYUpgradeable.sol";
@@ -17,6 +19,8 @@ import {OutrunL2StakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/Outr
 import {OutrunSlisBNBSYUpgradeable} from "../../src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol";
 import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
+import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
+import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {
     ScaledAmountIsZero,
@@ -36,6 +40,7 @@ import {
     MockAsBnbMinter,
     MockDepositAdapter
 } from "./mocks/SYAdapterMocks.sol";
+import {MockLzEndpoint} from "./mocks/OFTMocks.sol";
 
 contract SYAdaptersUpgradeableTest is Test {
     address internal owner = address(0xA11CE);
@@ -1004,15 +1009,7 @@ contract SYAdaptersUpgradeableTest is Test {
     {
         uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
         uint256 tokensPerShare = bound(rateSeed, 1e18, 2e18);
-        MockToken wstETH = new MockToken("wstETH", "wstETH", 18);
-        MockL2StETH l2StETH = new MockL2StETH(address(wstETH), tokensPerShare);
-        address sy = ProxyTestHelper.deploy(
-            address(new OutrunL2WrappableWstETHSYUpgradeable()),
-            abi.encodeCall(
-                OutrunL2WrappableWstETHSYUpgradeable.initialize,
-                (owner, address(l2StETH), address(wstETH), address(l2StETH), 18)
-            )
-        );
+        (address sy, MockToken wstETH, MockL2StETH l2StETH) = _deployL2WrappableWstEthSY(tokensPerShare);
 
         // MockL2StETH mint adds raw shares while balanceOf reports token units, so minting
         // `amount` raw shares leaves a displayed balance >= amount (tokensPerShare >= 1e18).
@@ -1026,23 +1023,48 @@ contract SYAdaptersUpgradeableTest is Test {
         // unwrap floors tokens -> shares and wrap floors shares -> tokens; the double floor loses
         // at most ceil(tokensPerShare / 1e18) quanta — <= 2 while the ratio stays within 2x.
         assertGe(out, amount - 2, "L2 wrappable wstETH stETH roundtrip loss exceeds two quanta");
+        // The wrap leg approves the L2 stETH pull exactly; the resident wstETH backing keeps no allowance.
+        assertEq(wstETH.allowance(sy, address(l2StETH)), 0, "stETH redeem must leave no wstETH allowance to L2 stETH");
+    }
+
+    function testL2WrappableWstEthStEthRedeemLeavesNoAllowance() external {
+        MockToken wstETH = new MockToken("wstETH", "wstETH", 18);
+        MockL2StETH l2StETH = new MockL2StETH(address(wstETH), 1e18);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunL2WrappableWstETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2WrappableWstETHSYUpgradeable.initialize,
+                (owner, address(l2StETH), address(wstETH), address(l2StETH), 18)
+            )
+        );
+
+        wstETH.mint(user, AMOUNT);
+        vm.startPrank(user);
+        wstETH.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(wstETH), AMOUNT, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(l2StETH), 0, false);
+        vm.stopPrank();
+
+        assertEq(out, AMOUNT);
+        // wstETH is the SY's resident share backing: the wrap-leg redeem must approve the L2 stETH
+        // contract for exactly the wrap amount and leave no standing allowance on it.
+        assertEq(wstETH.allowance(sy, address(l2StETH)), 0, "stETH redeem must leave no wstETH allowance to L2 stETH");
+
+        // Counterfactual: with no standing allowance, an over-pull by the L2 stETH spender must be
+        // rejected by the token layer rather than drawing on the SY's backing.
+        address attacker = makeAddr("attacker");
+        vm.prank(address(l2StETH));
+        // OZ reports the offender as the spender, so the encoded first arg is the L2 stETH contract.
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(l2StETH), 0, 1)
+        );
+        wstETH.transferFrom(sy, attacker, 1);
     }
 
     function testFuzz_SkyL2PsmUsdsRoundtripLosesAtMostTwoQuanta(uint128 amountSeed, uint96 rateSeed) external {
         uint256 amount = bound(amountSeed, 2, 1_000_000 ether);
         uint256 rate = bound(rateSeed, 1e18, 2e18);
-        MockToken usdc = new MockToken("USDC", "USDC", 6);
-        MockToken usds = new MockToken("USDS", "USDS", 18);
-        MockToken l2sUSDS = new MockToken("sUSDS", "sUSDS", 18);
-        MockPSM3 psm3 = new MockPSM3();
-        psm3.setRate(address(l2sUSDS), rate);
-        address sy = ProxyTestHelper.deploy(
-            address(new OutrunL2StakedUsdsSYUpgradeable()),
-            abi.encodeCall(
-                OutrunL2StakedUsdsSYUpgradeable.initialize,
-                (owner, address(usdc), address(usds), address(l2sUSDS), address(psm3))
-            )
-        );
+        (address sy, MockToken usds, MockToken l2sUSDS, MockPSM3 psm3) = _deploySkyL2UsdsPsm(rate);
 
         usds.mint(user, amount);
         vm.startPrank(user);
@@ -1054,6 +1076,273 @@ contract SYAdaptersUpgradeableTest is Test {
         // Both PSM3 legs are floors (into the share divides by rate, out of the share multiplies
         // by rate), so the swap roundtrip loses at most ceil(rate / 1e18) quanta — <= 2 at 2x.
         assertGe(out, amount - 2, "PSM3 USDS roundtrip loss exceeds two quanta");
+        // The cross-token redeem approves the PSM3 pull exactly; the resident sUSDS backing keeps no allowance.
+        assertEq(l2sUSDS.allowance(sy, address(psm3)), 0, "cross-token redeem must leave no sUSDS allowance to PSM3");
+    }
+
+    function testSkyL2PsmUsdsCrossTokenRedeemLeavesNoAllowance() external {
+        MockToken usdc = new MockToken("USDC", "USDC", 6);
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockToken sUSDS = new MockToken("sUSDS", "sUSDS", 18);
+        MockPSM3 psm3 = new MockPSM3();
+        psm3.setRate(address(sUSDS), 1e18);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunL2StakedUsdsSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usdc), address(usds), address(sUSDS), address(psm3))
+            )
+        );
+
+        usds.mint(user, AMOUNT);
+        vm.startPrank(user);
+        usds.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(usds), AMOUNT, 0);
+        // Exact per-call approval on the deposit swap: no USDS allowance to PSM3 may persist.
+        assertEq(usds.allowance(address(sy), address(psm3)), 0, "PSM3 deposit must leave no USDS allowance");
+        uint256 out = _asSY(sy).redeem(user, shares, address(usds), 0, false);
+        vm.stopPrank();
+
+        assertEq(out, AMOUNT);
+        // sUSDS is the SY's resident share backing: the cross-token redeem must approve PSM3 for
+        // exactly this swap's pull and leave no standing allowance on it.
+        assertEq(sUSDS.allowance(sy, address(psm3)), 0, "cross-token redeem must leave no sUSDS allowance to PSM3");
+
+        // Counterfactual: with no standing allowance, an over-pull by the PSM3 spender must be
+        // rejected by the token layer rather than drawing on the SY's backing.
+        address attacker = makeAddr("attacker");
+        vm.prank(address(psm3));
+        // OZ reports the offender as the spender, so the encoded first arg is the PSM3 contract.
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(psm3), 0, 1));
+        sUSDS.transferFrom(sy, attacker, 1);
+    }
+
+    function testSkyL2ExchangeRateRevertsWhenBackingBelowShares() external {
+        (address sy, MockToken usds, MockToken sUSDS,) = _deploySkyL2UsdsPsm(1e18);
+
+        usds.mint(user, AMOUNT);
+        vm.startPrank(user);
+        usds.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(usds), AMOUNT, 0);
+        vm.stopPrank();
+
+        uint256 outstanding = _asSY(sy).totalSupply();
+        assertEq(shares, outstanding);
+        // Healthy path: the PSM-minted sUSDS fully backs the outstanding supply, so the quote succeeds.
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
+
+        // Simulate backing leaving the adapter outside deposit/redeem: the self-held sUSDS falls
+        // below the outstanding supply, so the quote must fail closed instead of pricing unbacked
+        // shares at par.
+        uint256 resident = outstanding - 1;
+        deal(address(sUSDS), sy, resident);
+        vm.expectRevert(
+            abi.encodeWithSelector(OutrunL2StakedUsdsSYUpgradeable.InsufficientBacking.selector, resident, outstanding)
+        );
+        _asSY(sy).exchangeRate();
+
+        // Snapshot semantics: the assertion reads only the current balance, so restoring it (here to
+        // strictly more than the supply) releases the quote without any other state change.
+        deal(address(sUSDS), sy, outstanding + 1 ether);
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
+    }
+
+    function testSkyL2ExchangeRateAllowsBackingEqualToOutstandingShares() external {
+        (address sy, MockToken usds, MockToken sUSDS,) = _deploySkyL2UsdsPsm(1e18);
+
+        usds.mint(user, AMOUNT);
+        vm.startPrank(user);
+        usds.approve(sy, AMOUNT);
+        _asSY(sy).deposit(user, address(usds), AMOUNT, 0);
+        vm.stopPrank();
+
+        uint256 outstanding = _asSY(sy).totalSupply();
+        // Boundary: deal the resident sUSDS to exactly the outstanding supply — equality is not a
+        // shortfall (the guard is strict <), so the quote must succeed.
+        deal(address(sUSDS), sy, outstanding);
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
+    }
+
+    function testSkyL2BackingShortfallHaltsStakingPositionMintsAndKeepsRedeemOpen() external {
+        (address sy, MockToken usds, MockToken sUSDS,) = _deploySkyL2UsdsPsm(1e18);
+
+        // Receipt token + staking position wired like the production stack; the mock LZ endpoint
+        // only feeds the uAsset's OFT constructor.
+        OutrunUniversalAssetsUpgradeable uAsset = OutrunUniversalAssetsUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunUniversalAssetsUpgradeable(18, address(new MockLzEndpoint()))),
+                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("UAsset", "UAST", owner))
+            )
+        );
+        OutrunStakingPositionUpgradeable position = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                abi.encodeCall(
+                    OutrunStakingPositionUpgradeable.initialize,
+                    (owner, 1, address(0xFEE), sy, address(uAsset), address(0xC0FFEE))
+                )
+            )
+        );
+        vm.prank(owner);
+        uAsset.setMintingCap(address(position), type(uint256).max);
+
+        // Healthy entry: deposit USDS for SY, approve the position, and stake with zero lockup so
+        // the deadline is the current timestamp and the position is redeemable in the same block.
+        usds.mint(user, AMOUNT);
+        vm.startPrank(user);
+        usds.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(usds), AMOUNT, 0);
+        _asSY(sy).approve(address(position), shares);
+        (uint256 positionId, uint256 mintedUAsset) = position.stake(shares, 0, user, user);
+        vm.stopPrank();
+
+        // Wrap-pool entry while healthy: the wrap ledger must carry debt for the keeper exit below,
+        // because keepWrapRedeem checks the debt before reading the exchange rate.
+        usds.mint(user, 1 ether);
+        vm.startPrank(user);
+        usds.approve(sy, 1 ether);
+        uint256 wrapShares = _asSY(sy).deposit(user, address(usds), 1 ether, 0);
+        _asSY(sy).approve(address(position), wrapShares);
+        position.wrapStake(wrapShares, user);
+        vm.stopPrank();
+
+        // Simulate backing leaving the SY outside deposit/redeem: the adapter's resident sUSDS is
+        // now one wei below the outstanding SY supply.
+        uint256 outstanding = _asSY(sy).totalSupply();
+        uint256 resident = outstanding - 1;
+        deal(address(sUSDS), sy, resident);
+
+        // Mint-side entry points read the rate through _currentExchangeRate, so the adapter's
+        // InsufficientBacking guard propagates and blocks new stake/wrap-stake mints (drawUAsset
+        // shares the same rate-reading home but is expiry-gated ahead of it — probed below by
+        // stepping back into the lock window).
+        bytes memory backingShortfall =
+            abi.encodeWithSelector(OutrunL2StakedUsdsSYUpgradeable.InsufficientBacking.selector, resident, outstanding);
+        uint256 uAssetSupplyBefore = uAsset.totalSupply();
+        vm.startPrank(user);
+        vm.expectRevert(backingShortfall);
+        position.stake(AMOUNT, 0, user, user);
+        vm.expectRevert(backingShortfall);
+        position.wrapStake(AMOUNT, user);
+        vm.stopPrank();
+
+        // Drawing against the staked position is also shut: the lockupDays=0 deadline equals this
+        // block's timestamp, so re-enter the lock window for one second to reach the rate read,
+        // then restore maturity for the redeem below.
+        (,,, uint128 deadline) = position.positions(positionId);
+        vm.warp(deadline - 1);
+        vm.prank(user);
+        vm.expectRevert(backingShortfall);
+        position.drawUAsset(positionId, user);
+        // The draw quote shares drawUAsset's expiry gate (it reverts LockTimeExpired once matured),
+        // so it is probed from the same inside-the-lock-window timestamp before maturity is restored.
+        vm.expectRevert(backingShortfall);
+        position.previewDrawUAsset(positionId);
+        vm.warp(deadline);
+
+        // The owner's wrap-yield harvest reads the same rate before touching the pool, so the
+        // harvest door is shut alongside the mint doors.
+        vm.prank(owner);
+        vm.expectRevert(backingShortfall);
+        position.harvestWrapYield(sy, 0);
+
+        // The keeper's wrap-pool exit reads the same rate after its debt guard; the healthy wrap
+        // stake above funds that debt, and the keeper approves the position to burn its uAsset on
+        // repay, matching the production wiring of the keeper role.
+        address keeper = address(0xC0FFEE);
+        vm.prank(keeper);
+        uAsset.approve(address(position), type(uint256).max);
+        vm.prank(keeper);
+        vm.expectRevert(backingShortfall);
+        position.keepWrapRedeem(0.1 ether, keeper);
+
+        // The keeper's matured-position exit clears its own guard chain (keeper identity, maturity,
+        // debt bound against the healthy stake above) and then reaches the same rate read, so the
+        // shortfall shuts this door too; the keeper's approval above would cover the repay leg, and
+        // the revert fires before any burn or SY transfer. Its quote walks the same guards and fails
+        // closed the same way.
+        vm.prank(keeper);
+        vm.expectRevert(backingShortfall);
+        position.keepRedeem(positionId, 0.1 ether, keeper);
+        vm.expectRevert(backingShortfall);
+        position.previewKeepRedeem(positionId, 0.1 ether);
+
+        // The view surface propagates the halt too: quoting a stake or a wrap stake reads the same
+        // rate, and the wrap-redeem quote passes its debt guard (the healthy 1 ether wrap stake
+        // above funds the pool debt) before reaching the same read.
+        vm.expectRevert(backingShortfall);
+        position.previewStake(AMOUNT);
+        vm.expectRevert(backingShortfall);
+        position.previewWrapStake(AMOUNT);
+        vm.expectRevert(backingShortfall);
+        position.previewWrapRedeem(0.1 ether);
+
+        // The blocked mints left the uAsset supply untouched.
+        assertEq(uAsset.totalSupply(), uAssetSupplyBefore);
+
+        // Exit-channel contrast: redeem never reads the exchange rate (documented intent — staked
+        // SY leaves at face), so the matured position still exits while the quote fails closed.
+        // repay burns the caller's uAsset through the position, so the user must approve it first.
+        vm.startPrank(user);
+        uAsset.approve(address(position), mintedUAsset);
+        (uint256 uAssetBurned, uint256 syOut) = position.redeem(positionId, shares, user, sy, 0);
+        vm.stopPrank();
+        assertEq(uAssetBurned, mintedUAsset);
+        assertEq(syOut, shares);
+        assertEq(_asSY(sy).balanceOf(user), shares);
+
+        // The adapter's preview surface stays usable in the same shortfall state: previews quote
+        // the PSM3 leg directly and never run the backing reconciliation.
+        assertEq(_asSY(sy).previewDeposit(address(usds), AMOUNT), AMOUNT);
+        assertEq(_asSY(sy).previewRedeem(address(usds), shares), shares);
+    }
+
+    function testL2WrappableWstEthExchangeRateRevertsWhenBackingBelowShares() external {
+        (address sy, MockToken wstETH,) = _deployL2WrappableWstEthSY(1e18);
+
+        wstETH.mint(user, AMOUNT);
+        vm.startPrank(user);
+        wstETH.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(wstETH), AMOUNT, 0);
+        vm.stopPrank();
+
+        uint256 outstanding = _asSY(sy).totalSupply();
+        assertEq(shares, outstanding);
+        // Healthy path: the deposited wstETH fully backs the outstanding supply, so the quote succeeds.
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
+
+        // Simulate backing leaving the adapter outside deposit/redeem: the self-held wstETH falls
+        // below the outstanding supply, so the quote must fail closed instead of pricing unbacked
+        // shares at par.
+        uint256 resident = outstanding - 1;
+        deal(address(wstETH), sy, resident);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OutrunL2WrappableWstETHSYUpgradeable.InsufficientBacking.selector, resident, outstanding
+            )
+        );
+        _asSY(sy).exchangeRate();
+
+        // Snapshot semantics: the assertion reads only the current balance, so restoring it (here to
+        // strictly more than the supply) releases the quote without any other state change.
+        deal(address(wstETH), sy, outstanding + 1 ether);
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
+    }
+
+    function testL2WrappableWstEthExchangeRateAllowsBackingEqualToOutstandingShares() external {
+        (address sy, MockToken wstETH,) = _deployL2WrappableWstEthSY(1e18);
+
+        wstETH.mint(user, AMOUNT);
+        vm.startPrank(user);
+        wstETH.approve(sy, AMOUNT);
+        _asSY(sy).deposit(user, address(wstETH), AMOUNT, 0);
+        vm.stopPrank();
+
+        uint256 outstanding = _asSY(sy).totalSupply();
+        // Boundary: deal the resident wstETH to exactly the outstanding supply — equality is not a
+        // shortfall (the guard is strict <), so the quote must succeed.
+        deal(address(wstETH), sy, outstanding);
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
     }
 
     function testFuzz_WstETHNativePreviewBoundsActualWithinOneQuantum(uint128 amountSeed, uint96 rateSeed) external {
@@ -1264,6 +1553,43 @@ contract SYAdaptersUpgradeableTest is Test {
             address(new OutrunAaveV3SYUpgradeable()),
             abi.encodeCall(
                 OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(aavePool), owner)
+            )
+        );
+    }
+
+    // Variation point across call sites: `psmRate` is the PSM3 share rate that drives both swap
+    // execution and the SSR-synced exchange-rate quote. Identity callers pass 1e18.
+    function _deploySkyL2UsdsPsm(uint256 psmRate)
+        internal
+        returns (address sy, MockToken usds, MockToken sUSDS, MockPSM3 psm3)
+    {
+        MockToken usdc = new MockToken("USDC", "USDC", 6);
+        usds = new MockToken("USDS", "USDS", 18);
+        sUSDS = new MockToken("sUSDS", "sUSDS", 18);
+        psm3 = new MockPSM3();
+        psm3.setRate(address(sUSDS), psmRate);
+        sy = ProxyTestHelper.deploy(
+            address(new OutrunL2StakedUsdsSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usdc), address(usds), address(sUSDS), address(psm3))
+            )
+        );
+    }
+
+    // Variation point across call sites: `tokensPerShare` is the L2 stETH share-to-token ratio that
+    // backs both the wrap math and the exchange-rate quote. Identity callers pass 1e18.
+    function _deployL2WrappableWstEthSY(uint256 tokensPerShare)
+        internal
+        returns (address sy, MockToken wstETH, MockL2StETH l2StETH)
+    {
+        wstETH = new MockToken("wstETH", "wstETH", 18);
+        l2StETH = new MockL2StETH(address(wstETH), tokensPerShare);
+        sy = ProxyTestHelper.deploy(
+            address(new OutrunL2WrappableWstETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunL2WrappableWstETHSYUpgradeable.initialize,
+                (owner, address(l2StETH), address(wstETH), address(l2StETH), 18)
             )
         );
     }

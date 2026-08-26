@@ -24,6 +24,8 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
     }
     OutrunL2WrappableWstETHSYStorage private outrunL2WrappableWstETHSYStorage;
 
+    error InsufficientBacking(uint256 residentBacking, uint256 outstandingShares);
+
     /// @notice Initializes the SY adapter with L2 stETH/wstETH wrap capability.
     /// @dev Same decimal-mismatch risk as OutrunL2OracleBackedSYUpgradeable.__L2OracleBackedSY_init;
     ///      validate via `L2AssetValidation.validateL2WrappableParams` before broadcasting.
@@ -79,8 +81,9 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
         address _stETH = stETH();
         if (tokenOut == _stETH) {
             address _yieldBearingToken = yieldBearingToken();
-            // L2 stETH.wrap pulls wstETH from this contract via transferFrom, so approve the L2 stETH contract first.
-            _safeApproveInf(_yieldBearingToken, _stETH);
+            // L2 stETH.wrap pulls wstETH from this contract via transferFrom; approve exactly the wrap amount
+            // because wstETH is the SY's resident share backing and must not carry a standing allowance.
+            _safeApprove(_yieldBearingToken, _stETH, amountSharesToRedeem);
             amountTokenOut = IL2StETH(_stETH).wrap(amountSharesToRedeem);
             _transferOut(_stETH, receiver, amountTokenOut);
         } else {
@@ -91,7 +94,19 @@ contract OutrunL2WrappableWstETHSYUpgradeable layout at erc7201("outrun.storage.
 
     /// @notice Returns the stETH amount for 1 wstETH using the L2 stETH.getTokensByShares.
     /// @return res The amount of stETH equivalent to 1 wstETH (scaled by 1e18).
+    /// @dev Reverts with InsufficientBacking when the adapter's own wstETH balance falls below the
+    ///      outstanding SY supply (backing reconciliation, fail-closed).
     function exchangeRate() public view override returns (uint256 res) {
+        // Backing reconciliation, checked before the rate source is read (fail-closed): SYBase mints
+        // 1 SY per 1 wstETH unit, so this adapter's own wstETH balance is the full backing of the
+        // outstanding shares. If funds ever leave outside deposit/redeem, quoting a rate would let
+        // staking mint unbacked shares at par, so the quote must revert instead. Snapshot semantics:
+        // only the current balance is checked here; the rate source stays the external L2 stETH
+        // contract and its value is not validated by this assertion.
+        uint256 outstandingShares = totalSupply();
+        uint256 residentBacking = _selfBalance(yieldBearingToken());
+        if (residentBacking < outstandingShares) revert InsufficientBacking(residentBacking, outstandingShares);
+
         return IL2StETH(stETH()).getTokensByShares(1 ether);
     }
 
