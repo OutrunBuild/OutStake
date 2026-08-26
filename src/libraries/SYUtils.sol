@@ -37,8 +37,7 @@ library SYUtils {
     /// @param assetAmount Amount of asset to convert.
     /// @return The equivalent SY amount, rounded up.
     /// @dev This helper does not rescale from uAsset decimals. Position-only coverage helper — adapters
-    ///      intentionally use AaveAdapterLib half-up/floor for previews (quote), not this ceiling; see
-    ///      docs/spec/common-foundations.md § ray-domain rounding comparison.
+    ///      intentionally use AaveAdapterLib half-up/floor for previews (quote), not this ceiling.
     // The ceil term (+ exchangeRate - 1) moves the checked-add overflow threshold to assetAmount * ONE >
     // type(uint256).max - exchangeRate,
     // slightly narrower than the floor variant's 2^256 - 1. Real debt and rates stay far below it.

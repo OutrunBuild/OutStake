@@ -121,8 +121,7 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
     /// @dev Same as LayerZero upstream: integer division discards remainder and lastUpdated is always
     ///      forwarded to block.timestamp, so refill is stepwise. With tight limit + large window
     ///      (e.g. limit=100, window=86400, decay=0 for 863s) capacity appears frozen. Deployer should
-    ///      keep limit >= window (LayerZero devtools advice) to keep per-second refill >= 1; see
-    ///      docs/spec/common-foundations.md OFT and rate limiter.
+    ///      keep limit >= window (LayerZero devtools advice) to keep per-second refill >= 1.
     /// @param amountInFlight Current in-flight amount, in LD (local decimals)
     /// @param lastUpdated Timestamp of the last rate limit update
     /// @param limit Maximum amount allowed in the window, in LD (local decimals)

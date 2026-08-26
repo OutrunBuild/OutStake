@@ -17,8 +17,8 @@ library WadRayMath {
     /**
      * @notice Divides two ray, rounding half up to the nearest ray
      * @dev Revert data is intentionally empty `revert(0,0)` mirroring Aave's gas-optimized assembly; this is a
-     * documented exception to the repository's custom-error observability convention (see
-     * `docs/spec/common-foundations.md` ray-domain section). Callers needing a decoded selector may add a
+     * documented exception to the repository's custom-error observability convention for the ray
+     * domain. Callers needing a decoded selector may add a
      * caller-side guard such as `if (b == 0) revert ZeroIndex()` before calling.
      * @param a Ray
      * @param b Ray

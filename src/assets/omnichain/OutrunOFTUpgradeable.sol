@@ -109,7 +109,7 @@ abstract contract OutrunOFTUpgradeable is
         // decay = limit*elapsed/window is stepwise (integer division discards remainder).
         // If limit << window, capacity appears frozen for many seconds (e.g. limit=100, window=86400
         // -> decay=0 for 863s). Keep limit >= window per LayerZero devtools advice to guarantee
-        // per-second refill >= 1 and avoid liveness/UX freeze. See docs/spec/common-foundations.md.
+        // per-second refill >= 1 and avoid liveness/UX freeze.
         // This check is intentionally limit < window (LD wei vs seconds, numerically comparable for
         // the frozen trigger); deployer must choose limit/window with this granularity in mind.
         if (limit < window) revert InvalidRateLimit();

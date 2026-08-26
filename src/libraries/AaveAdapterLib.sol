@@ -8,7 +8,7 @@ import {WadRayMath} from "./WadRayMath.sol";
 ///      shares" and converts to actual asset amounts using the liquidity index. The index is always ray-scaled
 ///      (1e27 = WadRayMath.RAY).
 /// @dev Quote/preview-only helpers — for debt-coverage use SYUtils.assetToSyUp (ceiling, wad 1e18), not this
-///      half-up/floor family. Position vs adapter rounding separation per docs/spec/common-foundations.md.
+///      half-up/floor family. Position vs adapter rounding separation is intentional.
 library AaveAdapterLib {
     /// @notice Thrown when the Aave liquidity index is zero; provides a decoded selector for the otherwise
     /// empty `WadRayMath.rayDiv` revert, which intentionally mirrors Aave's gas-optimized `revert(0,0)`.

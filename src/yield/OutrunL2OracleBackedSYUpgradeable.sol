@@ -56,7 +56,7 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     /// by `10**12`. Validate off-chain against L1 Etherscan / official docs and via
     /// `L2AssetValidation.validateL2OracleBackedParams` in deployment scripts before broadcasting;
     /// post-deploy the value is immutable (no setter) and requires SY + SP redeployment to fix.
-    /// See `docs/deployment.md` L2 checklist and `script/lib/L2AssetValidation.sol`.
+    /// See `script/lib/L2AssetValidation.sol`.
     /// @param name_ Token name for the ERC20 representation.
     /// @param symbol_ Token symbol for the ERC20 representation.
     /// @param owner_ Address that will be granted the owner role.
