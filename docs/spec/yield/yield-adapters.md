@@ -12,7 +12,7 @@
 - oracle-backed variants 通过 `exchangeRateOracle` storage 获取汇率
 - Optimism-specific `OutrunL2WrappableWstETHSYUpgradeable` 不使用 `exchangeRateOracle` storage / getter / setter；`exchangeRate()` 直接返回 `IL2StETH.getTokensByShares(1 ether)`
 - adapter 本身不重复继承 UUPS
-- `SYBaseUpgradeable.sol::deposit` 与 `SYBaseUpgradeable.sol::redeem` 均挂 `nonReentrant`（`ReentrancyGuardTransient` 经 `TokenHelper`）：`deposit` 隔离 `_transferIn` 与 adapter `_deposit` 外调窗口内对 `deposit`/`redeem` 的重入，`redeem` 保护 token-out-before-burn 逆CEI顺序的 `_redeem` 外调窗口；`deposit` 的 `nonReentrant` 为未记载增强（规格原仅在 redeem 逆CEI语境提及，→ L-016）。`redeem` 采用 token-out-before-burn 结算顺序：adapter `_redeem`（含外部调用）先把 tokenOut 交付给 receiver，随后 `_burn` 才烧掉 SY 份额；`burnFromInternalBalance=true` 仅允许 owner 配置的 trusted router caller 使用，并从 `address(this)` 烧份额；其他 caller 传入 `true` 会回退。`burnFromInternalBalance=false` 仍是直兑路径，从 `msg.sender` 烧份额。这条 CEI 逆序是有意设计，调整顺序或移除 `nonReentrant` 前必须保留该不变量。
+- `SYBaseUpgradeable.sol::deposit` 与 `SYBaseUpgradeable.sol::redeem` 均挂 `nonReentrant`（`ReentrancyGuardTransient` 经 `TokenHelper`）：`deposit` 隔离 `_transferIn` 与 adapter `_deposit` 外调窗口内对 `deposit`/`redeem` 的重入，`redeem` 保护 token-out-before-burn 逆CEI顺序的 `_redeem` 外调窗口。`redeem` 采用 token-out-before-burn 结算顺序：adapter `_redeem`（含外部调用）先把 tokenOut 交付给 receiver，随后 `_burn` 才烧掉 SY 份额；`burnFromInternalBalance=true` 仅允许 owner 配置的 trusted router caller 使用，并从 `address(this)` 烧份额；其他 caller 传入 `true` 会回退。`burnFromInternalBalance=false` 仍是直兑路径，从 `msg.sender` 烧份额。这条 CEI 逆序是有意设计，调整顺序或移除 `nonReentrant` 前必须保留该不变量。
 - 消费外部协议的 `_redeem` 路径不得以常驻授权暴露 yield-bearing-token 背书：`OutrunL2StakedUsdsSYUpgradeable.sol::_redeem` 在 PSM3 swap 腿、`OutrunL2WrappableWstETHSYUpgradeable.sol::_redeem` 在 L2 stETH wrap 腿，均以逐笔精确 `_safeApprove` 授权同 call 将被 `transferFrom` 拉走的数量（外部协议按 `amountIn`/`sharesAmount` 接口语义足额拉取时，残余 allowance 为 0）；不使用 `_safeApproveInf`（其惰性刷新到 max 的语义会把常驻背书置于无限授权下，外部协议沦陷即单笔抽空）。Sky L2 的 `_deposit` PSM3 swap 腿同样以逐笔精确 `_safeApprove` 授权中转输入 token（差额守卫见 `PSM3IncompleteConsumption`）；其余族 `_deposit` 侧仍经 `_safeApproveInf` 授权，其同交易全量消费守卫只消除部分成交残留，不消除常驻授权暴露——误转滞留的中转 token 对沦陷 spender 仍可达，属已记录未修的已知缺口。
 
 ## SY 错误面与初始化约束
@@ -47,7 +47,7 @@
 - `OutrunAsBNBSYUpgradeable.sol::_revertOnZeroShares`：
   - `AsBnbMintQueued()`：mint 返回零份额且 `activitiesOnGoing()` 为真，表示 Aster 队列处理中；等待活动完成后重试。
   - `AsBnbMintZeroShares()`：mint 返回零份额且没有进行中的活动，表示真实零产出失败，不按队列分支重试。
-- `OutrunAsBNBSYUpgradeable.sol::_deposit` 全量消费守卫（未记载增强，02报告 §4 → L-010）：
+- `OutrunAsBNBSYUpgradeable.sol::_deposit` 全量消费守卫：
   - `AsBnbMintIncompleteConsumption(uint256 expectedConsumed, uint256 actualConsumed)`：slisBNB 分支 `balanceAfter != balanceBefore - amountDeposited` 时触发（`_selfBalance` 前后差校验，确认 `IAsBnbMinter.mintAsBnb` 已全量消费输入，否则部分成交残留可被 `SYBaseUpgradeable.sol::sweep` 提取；`expectedConsumed = amountDeposited`，`actualConsumed = balanceBefore - balanceAfter` 为 minter 实际拉取量，参数名与规格共有错位——第二参语义为已消耗量非剩余量），方向为 fail-closed 保守增强；规格错误面/Aster消费面/Matrix 三处均缺，已补记
 - `OutrunSlisBNBSYUpgradeable`：
   - `InvalidStakeManager()`：初始化时 `convertSnBnbToBnb(1 ether) < 1 ether`；这是 Lista adapter 的同名独立声明，表示 stake-manager 汇率低于平价。
@@ -62,9 +62,9 @@
 
 以上 adapter 级零产出守卫保留用于族特定的诊断（如 Aster 队列区分）；`SYBaseUpgradeable.sol::deposit` 另有基座级 `SYZeroSharesOut()` 兜底，在 `_mint` 前统一拒绝任何 adapter 返回的零份额，未自带守卫的族（如 4626/PSM3/wrap/unwrap 路径的尘额存款）由基座拒绝。
 
-> 微漂移批量（02报告 §4，零安全面，→ L-017）——方向全部保守/收紧，无一放松，规格择要补记：
+> 微漂移批量（零安全面）——方向全部保守/收紧，无一放松，规格择要补记：
 > - `SYBaseUpgradeable.sol::sweep` 检查顺序：零地址/零额先于 `SYSweepInvalidToken`（`token==address(this)` 且 `to==0` 时实际报 `SYSweepZeroAddress`，非 `InvalidToken`）；错误优先级未定序，不影响安全面
-> - `SYBaseUpgradeable.sol::setTrustedRouter` 同值重设不拒绝，emit `SetTrustedRouter(x,x)`（幂等写入，02报告定性零安全面）
+> - `SYBaseUpgradeable.sol::setTrustedRouter` 同值重设不拒绝，emit `SetTrustedRouter(x,x)`（幂等写入，零安全面）
 > - `OutrunOFTUpgradeable.sol::_removeDust` 本地 `unchecked` 覆写（`(_amountLD / DCR) * DCR`，数学等价于 `OFTCoreUpgradeable` 检查版，`floor(a/r)*r ≤ a` 恒成立）
 > - 继承 `InvalidLocalDecimals`（`OFTCoreUpgradeable` 要求 `localDecimals ≥ 6`，本仓库 18-dec 部署不可达，仅继承暴露）
 > - `OutrunOFTUpgradeable.sol` `window==0` 早退跳过显式 `_removeDust`（返回值已是 DCR 倍数，重施为 no-op；`OutrunOFTUpgradeable.sol:190` 注释自证）
