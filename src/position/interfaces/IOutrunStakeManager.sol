@@ -264,6 +264,8 @@ interface IOutrunStakeManager {
      * @dev Position-owner path. Burns uAsset from the caller via `repay`. Full redeem burns all remaining
      * position debt; partial redeem uses ceiling rounding and rejects any partial path that would consume all
      * remaining debt. Enforces `minTokenOut` on direct SY or downstream SY redemption.
+     * Caller prerequisite: the position owner must first approve this position contract to spend uAsset for the
+     * debt being repaid (repay's msg.sender is the position contract); see `keepRedeem`'s dev note.
      * @param positionId Identifier of the position to redeem from.
      * @param syRedeemed Amount of SY principal to redeem.
      * @param receiver Address receiving the redemption proceeds.

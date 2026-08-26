@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
@@ -1046,6 +1047,120 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
 
         vm.prank(user);
         sameDecimalsSy.approve(address(sameDecimalsPosition), type(uint256).max);
+    }
+}
+
+// Owner-path redeem approval prerequisite: repay burns the caller's uAsset with the position
+// contract as the minter, so a first redeem without a prior uAsset approval fails at the ERC20
+// dependency boundary and rolls back atomically.
+contract PositionRedeemApprovalTest is PositionStackTestBase {
+    function setUp() external {
+        _deployPositionStack();
+
+        vm.startPrank(user);
+        token.approve(address(sy), type(uint256).max);
+        sy.deposit(user, address(token), 100e18, 0);
+        sy.approve(address(position), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    function testRedeemRevertsWhenOwnerHasNotApprovedUAsset() external {
+        vm.prank(user);
+        (uint256 positionId, uint256 mintedUAsset) = position.stake(10e18, 30, user, user);
+        assertEq(mintedUAsset, 10e18, "1:1 rate must mint debt equal to principal");
+        assertEq(uAsset.allowance(user, address(position)), 0, "default state: no prior uAsset approval");
+
+        vm.warp(block.timestamp + 31 days);
+
+        (address ownerBefore, uint256 syStakedBefore, uint256 debtBefore, uint128 deadlineBefore) =
+            position.positions(positionId);
+        uint256 syTotalStakingBefore = position.syTotalStaking();
+        uint256 ownerBalanceBefore = uAsset.balanceOf(user);
+        uint256 minterDebtBefore = uAsset.mintingStatusTable(address(position)).amountInMinted;
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(position), 0, 10e18)
+        );
+        position.redeem(positionId, 10e18, user, address(sy), 0);
+
+        (address ownerAfter, uint256 syStakedAfter, uint256 debtAfter, uint128 deadlineAfter) =
+            position.positions(positionId);
+        assertEq(ownerAfter, ownerBefore, "revert must not change the position owner");
+        assertEq(syStakedAfter, syStakedBefore, "revert must not change staked SY");
+        assertEq(debtAfter, debtBefore, "revert must not change position debt");
+        assertEq(uint256(deadlineAfter), uint256(deadlineBefore), "revert must not change the deadline");
+        assertEq(position.syTotalStaking(), syTotalStakingBefore, "revert must not change syTotalStaking");
+        assertEq(uAsset.balanceOf(user), ownerBalanceBefore, "revert must not change the owner balance");
+        assertEq(uAsset.allowance(user, address(position)), 0, "revert must not change the allowance");
+        assertEq(
+            uAsset.mintingStatusTable(address(position)).amountInMinted,
+            minterDebtBefore,
+            "revert must not change the minter debt"
+        );
+    }
+
+    function testRedeemSucceedsAfterOwnerApprovesExactDebt() external {
+        vm.prank(user);
+        (uint256 positionId,) = position.stake(10e18, 30, user, user);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.startPrank(user);
+        uAsset.approve(address(position), 10e18);
+        (uint256 burned, uint256 amountTokenOut) = position.redeem(positionId, 10e18, user, address(sy), 0);
+        vm.stopPrank();
+
+        assertEq(burned, 10e18, "full redeem must burn the entire position debt");
+        assertEq(amountTokenOut, 10e18, "direct SY tokenOut pays principal 1:1");
+        assertEq(uAsset.balanceOf(user), 0, "owner uAsset fully burned");
+        assertEq(uAsset.allowance(user, address(position)), 0, "exact approval is fully consumed");
+        assertEq(sy.balanceOf(user), 100e18, "SY principal returned to the owner");
+        (address positionOwner,,,) = position.positions(positionId);
+        assertEq(positionOwner, address(0), "full redeem deletes the position");
+        assertEq(position.syTotalStaking(), 0, "syTotalStaking back to zero");
+        assertEq(
+            uAsset.mintingStatusTable(address(position)).amountInMinted, 0, "repay clears the stake manager mint debt"
+        );
+    }
+
+    function testRedeemRevertsWhenApprovedOwnerLacksUAssetBalance() external {
+        vm.prank(user);
+        (uint256 positionId,) = position.stake(10e18, 30, user, user);
+
+        vm.warp(block.timestamp + 31 days);
+
+        vm.startPrank(user);
+        uAsset.approve(address(position), 10e18);
+        // The balance leg of the same prerequisite: the approval covers the debt, but the owner no
+        // longer holds the minted uAsset, so repay's burn fails after the allowance check. The
+        // revert also rolls back the allowance decrement performed before the burn.
+        uAsset.transfer(keeper, 10e18);
+        vm.stopPrank();
+
+        (address ownerBefore, uint256 syStakedBefore, uint256 debtBefore, uint128 deadlineBefore) =
+            position.positions(positionId);
+        uint256 syTotalStakingBefore = position.syTotalStaking();
+        uint256 minterDebtBefore = uAsset.mintingStatusTable(address(position)).amountInMinted;
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, user, 0, 10e18));
+        position.redeem(positionId, 10e18, user, address(sy), 0);
+
+        (address ownerAfter, uint256 syStakedAfter, uint256 debtAfter, uint128 deadlineAfter) =
+            position.positions(positionId);
+        assertEq(ownerAfter, ownerBefore, "revert must not change the position owner");
+        assertEq(syStakedAfter, syStakedBefore, "revert must not change staked SY");
+        assertEq(debtAfter, debtBefore, "revert must not change position debt");
+        assertEq(uint256(deadlineAfter), uint256(deadlineBefore), "revert must not change the deadline");
+        assertEq(position.syTotalStaking(), syTotalStakingBefore, "revert must not change syTotalStaking");
+        assertEq(uAsset.balanceOf(user), 0, "revert must not change the owner balance");
+        assertEq(uAsset.allowance(user, address(position)), 10e18, "revert must restore the pre-burn allowance");
+        assertEq(
+            uAsset.mintingStatusTable(address(position)).amountInMinted,
+            minterDebtBefore,
+            "revert must not change the minter debt"
+        );
     }
 }
 

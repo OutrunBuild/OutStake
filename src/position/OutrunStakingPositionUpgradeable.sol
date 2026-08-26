@@ -389,6 +389,9 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// @dev Debt is repaid proportionally: if all SY is redeemed, all remaining uAsset debt is burned.
     /// Partial redeems use ceil rounding for debt so no stranded debt remains on the position.
     /// Direct SY tokenOut transfers SY 1:1 without an adapter burn; all other tokenOut paths go through SY.redeem.
+    /// The caller must first approve this position to spend their uAsset: repay burns the owner's balance with
+    /// msg.sender = address(this) (the minter whose mint debt decreases), so allowance[owner][this] must cover
+    /// UAssetBurned.
     /// @param positionId The position identifier.
     /// @param syRedeemed Amount of SY to redeem from the position.
     /// @param receiver Address that receives the tokenOut.
@@ -622,8 +625,8 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     /// Invariant: ceilDebt >= floorDebt; harvest `syWrap - ceil(debt)` is safe — may under-harvest dust, never over-harvest.
     /// When `uAssetDecimals > canonicalAssetDecimals` and `a % f != 0` (`f = 10**(uDec-cDec)`), the up/up composite
     /// `roundUpDiv(roundUpDiv(a,f)*1e18, exchangeRate)` exceeds the ideal `roundUpDiv(a*1e18, f*exchangeRate)` by
-    /// at most `1e18/exchangeRate + 1` SY wei (1 wei if exchangeRate >= 1e18) per `docs/spec/common-foundations.md`
-    /// § mixed-decimals up/up two-stage composite rounding bias; bias is intentionally conservative (harder to pass solvency, never looser).
+    /// at most `1e18/exchangeRate + 1` SY wei (1 wei if exchangeRate >= 1e18) — mixed-decimals
+    /// up/up two-stage composite rounding bias; bias is intentionally conservative (harder to pass solvency, never looser).
     /// @param amountInUAsset The uAsset amount to convert.
     /// @param exchangeRate_ The SY exchange rate, 1e18-scaled, read once by the caller and passed in.
     function _assetToSyUp(uint256 amountInUAsset, uint256 exchangeRate_) internal view returns (uint256) {
@@ -822,7 +825,7 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @notice UUPS upgrade guard that enforces decimals immutability.
-    /// @dev Reverts with `DecimalsMismatch` if live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` diverges from the values cached at `initialize`; such divergence would silently mis-scale every sy<->uAsset conversion by 10**delta and brick debt accounting. The divergence must be resolved by redeploying SY + position rather than upgrading in place (see docs/spec/yield/yield-adapters.md and docs/deployment.md).
+    /// @dev Reverts with `DecimalsMismatch` if live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` diverges from the values cached at `initialize`; such divergence would silently mis-scale every sy<->uAsset conversion by 10**delta and brick debt accounting. The divergence must be resolved by redeploying SY + position rather than upgrading in place.
     function _authorizeUpgrade(address) internal override onlyOwner {
         OutrunStakingPositionStorage storage $ = outrunStakingPositionStorage;
         // SY/uAsset are immutable after initialize (zero only before first initialize, which never reaches _authorizeUpgrade).
