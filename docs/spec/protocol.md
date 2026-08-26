@@ -34,7 +34,7 @@ position minter 对账式（`mintingStatusTable(address(position)).amountInMinte
 
 ### router
 
-当前路由层由 `OutrunRouter` 实现，保持非 upgradeable、可重部署 helper 语义。目标登记与脱困回收为 owner-only 的 pre-mainnet 临时面（`OutrunRouter.sol:38-39,52,62,517` `setTrustedSY`/`setTrustedSP`/`trustedSY`/`trustedSYForSP`/`sweep`，`onlyOwner nonReentrant`），本概览仅作指针：详见 `docs/spec/router/router-and-user-flows.md` §1.2/§7.5 与 `docs/spec/access-control.md`，主网前随 `OutrunRouter.sol:1-14` `OutrunTODO` 清单冻结移除。
+当前路由层由 `OutrunRouter` 实现，保持非 upgradeable、可重部署 helper 语义。目标登记与脱困回收为 owner-only 的持续 live 动态注册表能力（`OutrunRouter.sol::setTrustedSY`/`::setTrustedSP`/`::trustedSY`/`::trustedSYForSP`/`::sweep`，`onlyOwner nonReentrant`，由 `Ownable` 持有、产品外经 multisig 治理，产品合约内不设 `TimelockController`），本概览仅作指针：详见 `docs/spec/router/router-and-user-flows.md` §1.2/§7.5 与 `docs/spec/access-control.md`，不随主网上线冻结移除。
 
 ### integrations
 

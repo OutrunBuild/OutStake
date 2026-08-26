@@ -45,6 +45,14 @@
   3. 确认 `exchangeRateOracle_`（或 wrappable 路径的 `stETH_`）非零且已部署
   4. 广播后读取 `IStandardizedYield.assetInfo` 与 `OutrunStakingPositionUpgradeable.sol::SY` 侧 `canonicalAssetDecimals` 缓存值，确认与清单一致
 - 扩展约束：`OutrunStakingPositionUpgradeable.sol::initialize` 缓存后不再重读，部署后无法通过 SY 侧更新修复 decimals；错配需重新部署 SY + SP。
+- feed 信任根核对（广播前必做，记录为验收证据）：
+  1. `exchangeRateOracle_` 指向的 `OutrunExchangeOracleAdapter` 所绑定 feed（`OutrunExchangeOracleAdapter.sol::oracle`）须核对为官方发布渠道：官方 feed 页比对地址与 aggregator/治理权归属，截图存档；不接受未经验证的自建或代理 feed
+  2. `maxStaleness` 按率源更新节奏设定并留出告警响应余量（wstETH 家族按 Lido 跨链指引不超过 2 天，与 `OutrunL2OracleBackedSYUpgradeable.sol` 的 `exchangeRateOracle` 存储字段注释指引同源）
+  3. L2 部署须配置非零 `sequencerUptimeFeed`，`sequencerGracePeriod` 落在恢复宽限合理区间（建议 30 分钟至 1 天），防 sequencer 恢复窗口内消费旧价
+- 监控告警（链下必配）：
+  1. 率漂移告警：逐实例监控 `OutrunExchangeOracleAdapter.sol::getExchangeRate`（经 `OutrunL2OracleBackedSYUpgradeable.sol::exchangeRate` 透传至 `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate`）读值相对外部可信参考（官方数据源或近期读数中位数）的偏离，超阈值即告警——该族链上无偏差守卫（`docs/spec/yield/oracles-and-integrations.md` 明文单源、无 bounds，oracle 输入属外部信任边界），fresh 偏高 answer 的窗口内 `OutrunStakingPositionUpgradeable.sol::stake` / `OutrunStakingPositionUpgradeable.sol::wrapStake` / `OutrunStakingPositionUpgradeable.sol::drawUAsset` 会按偏差面值铸出 uAsset，偏低向则静默低估
+  2. 应急联动：告警触发后 owner 执行 `OutrunStakingPositionUpgradeable.sol::pause` 冻结用户面，并以 `OutrunUniversalAssetsUpgradeable.sol::setMintingCap(SP, 0)` 封顶续铸敞口；率回归可信区间并核对 wrap 池偿付状态（`OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 是否处于 `WrapPoolUndercollateralized` 冻结态）后再评估恢复
+  3. 边界标注：本节为文档/监控收敛，无代码改动（accepted risk）——单源消费与无 bounds 为 `docs/spec/yield/oracles-and-integrations.md` 明文钉住的设计，链上带宽监控由链下完成（本节即该分派的运维落点）
 
 ## 跨链限流（OFT Outbound Rate Limit）高危参数校验清单
 
@@ -82,6 +90,23 @@
   2. 止血：对受影响 `srcEid` 执行 `setPeer(eid, bytes32(0))` 撤销 peer（`onlyOwner`），阻断该通道后续 `lzReceive` 的 peer 校验；必要时同步调整 DVN/`enforcedOptions` 或暂停 endpoint 通道
   3. 排空：在途报文上限 = `Σ rateLimiter.limit`（每 peer 独立），需等待或通过 endpoint 侧重放/丢弃策略排空后，再 `unpause()` 恢复
   4. 禁忌：不可通过给 `_credit` 加 `whenNotPaused` 代码修复——会造成源链已 burn、目标链 revert 的永久丢资产（burn-without-mint），与暂停矩阵的活性保证冲突；本处置为文档/监控收敛，无代码改动（accepted risk）
+
+## SY 背书沦陷应急处置
+
+名义余额族 SY 适配器（Sky L2 sUSDS、Optimism wrappable wstETH）在 `OutrunL2StakedUsdsSYUpgradeable.sol::exchangeRate` 与 `OutrunL2WrappableWstETHSYUpgradeable.sol::exchangeRate` 入口设有 resident 背书对账断言：适配器自持 yield-bearing-token 余额低于流通 SY `totalSupply` 时 revert `InsufficientBacking(uint256 residentBacking, uint256 outstandingShares)`（fail-closed）。守卫语义、单位约定依据与诚实边界在 `docs/spec/yield/yield-adapters.md`「SY 错误面与初始化约束」，本节为操作真值。
+
+- 识别信号（链下必配监控）：
+  1. 交换率读取处 revert：SP 全部换算经 `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 汇入 `exchangeRate`，任一读率用户面入口（stake/wrapStake/drawUAsset/keepRedeem/keepWrapRedeem/harvestWrapYield 及对应 preview 视图，与 `docs/spec/position/accounting.md` §11 的 `ZeroExchangeRate` 消费面一致）回退 `InsufficientBacking(uint256 residentBacking, uint256 outstandingShares)` 即为守卫触发；`redeem` 不读汇率（债务按 syRedeemed/syStaked 比例计算），守卫触发时仍可用——用户仍可经 redeem 换出背书已失的 SY，为有意的退出通道保留，不是遗漏
+  2. 余额对账告警：适配器自持 yield-bearing-token 余额监控跌破流通 SY `totalSupply`（应先于断言触发告警；断言已触发时本地用户面已自动冻结）
+- 守卫效果：本地 SP 用户面自动冻结（面值铸出/释放路径 fail-closed），不依赖 owner 响应；守卫只阻断续铸，不恢复已失背书。守卫触发 ≠ pause 态：SP `paused()` 仍为 false，仅上述率读取入口（及对应 preview）revert；需 owner 的熔断仍按定序显式 `pause()`。
+- 应急处置 runbook（对齐上文 OFT runbook 的排序逻辑——先断对端、再断本地）：
+  1. 定序：先在所有对端链暂停出站（对端 `pause()` 阻断向本链的 outbound send），再在本地 `pause()`
+  2. 入站豁免注意：`OutrunOFTUpgradeable.sol::_credit` 的跨链活性豁免使单链 `pause()` 不阻断对端铸入（见上文「跨链信任根投产校验与应急处置」），在途报文仍可能落地增发——对端出站暂停必须先行
+  3. 清盘路径：对受影响 SP 执行 `OutrunUniversalAssetsUpgradeable.sol::setMintingCap(SP, 0)` 封顶续铸，或 `OutrunUniversalAssetsUpgradeable.sol::revokeMinter` 撤销其铸币权
+- 恢复前置：背书缺口清算（resident backing 补足至 ≥ 流通 SY `totalSupply`）确认后才可 `unpause()`，未确认背书恢复前不解除暂停（选项 B 的受控解冻窗口为唯一显式例外，见下）。若未执行本地 pause，背书补足后守卫即自动放行，无需 unpause。若迁移至新 SY/新 SP（SP 无换绑 SY 入口），原 SP 终局取下述两个显式选项之一，由 owner 按事件裁量，不可混用——不得在“不解除暂停”的表述下声称走完存量烧尽中段：
+  1. 选项 A（冻结迁移，默认）：原 SP 保持 paused，`OutrunUniversalAssetsUpgradeable.sol::setMintingCap`(SP,0) 阻断新铸；存量仓位与 minter 债务记录冻结在链上——三类存量烧尽入口 `OutrunStakingPositionUpgradeable.sol::redeem` / `OutrunStakingPositionUpgradeable.sol::keepRedeem` / `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 均带 `whenNotPaused`，paused 期不可用；收尾可直接 `OutrunUniversalAssetsUpgradeable.sol::revokeMinter` 清盘，或保留冻结态等待链上/链下清算方案；用户资金迁移经新 SY/新 SP 承接。
+  2. 选项 B（受控解冻烧尽）：若选择按 `docs/spec/position/state-machines.md` §8.6 走 `OutrunStakingPositionUpgradeable.sol::redeem` / `OutrunStakingPositionUpgradeable.sol::keepRedeem` / `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 完成存量烧尽，必须显式接受“临时 unpause 窗口内赎回的是背书已失的 SY”这一风险并配套补偿/公告方案；烧尽完成后 `OutrunUniversalAssetsUpgradeable.sol::revokeMinter` 收尾。
+- 投产前置校验（守卫记账前提，投产前必做并记录为验收证据）：背书对账守卫按名义转账额记账（存款转入 N 即背书 +N、份额 +N），其前提是所绑 yield-bearing token 为标准代币（非 fee-on-transfer，名义转账额 = 实收额）。若部署绑定的 sUSDS/wstETH 存在转账损耗，每次存款流通份额增量将超过背书增量，守卫将持续回退 `InsufficientBacking(uint256 residentBacking, uint256 outstandingShares)` 并冻结全部读率入口（见上「识别信号」）；投产前必须核实所绑 YBT 无转账损耗。
 
 ## Keeper/Harvest 权限分区与活性布线
 

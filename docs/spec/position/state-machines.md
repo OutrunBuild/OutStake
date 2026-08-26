@@ -64,7 +64,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
    - `position.UAssetMinted` 减少 `UAssetBurned`
    - 若剩余 `SY` 为 0，则删除 position
    - 守恒引用：`syTotalStaking` 的减少镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧；剩余 `SY == 0` 即 full redeem，删除 position 并从 active sum 移除，见 [accounting.md §10.1](./accounting.md)。
-6. debt 清偿：上述判定与减记完成后，再对调用者执行 `uAsset.repay(msg.sender, UAssetBurned)`；语义上不依赖下游 `uAsset.repay(0)` 之类的零额 repay。
+6. debt 清偿：上述判定与减记完成后，再对调用者执行 `uAsset.repay(msg.sender, UAssetBurned)`；语义上不依赖下游 `uAsset.repay(0)` 之类的零额 repay。调用前提：`OutrunStakingPositionUpgradeable.sol::redeem` 的 repay 调用帧内，minter/`msg.sender` 是 position 合约（`OutrunStakingPositionUpgradeable`）而非赎回调用者，被 burn 的是赎回调用者（position owner）的 `uAsset` 余额，因此 owner 首次赎回前必须先 `uAsset.approve` 授权 position 合约不少于本次 `UAssetBurned` 的额度；未授权时该交易以依赖边界错误 `ERC20InsufficientAllowance` 整笔原子回退，补足授权（并持有足额 `uAsset` 余额）后重试即成功——这与 keeper 侧 `keepRedeem` / `keepWrapRedeem` 的预授权前置是同一机制，通用 repay 授权规则见 [accounting.md §2](./accounting.md)。
 7. 资产输出：
    - `tokenOut == SY` 时直接转出 `SY`
    - 否则调用 `SY.redeem(receiver, syRedeemed, tokenOut, minTokenOut, false)` 产出目标 token
@@ -190,7 +190,7 @@ position manager 的完整错误参数、回滚边界和事件字段以 [account
 - `OutrunStakingPositionUpgradeable.sol::setMinStake` 由 owner 调用并更新 SY 最小 stake；允许设置为 0，成功后发出 `SetMinStake(minStake)`。
 - `OutrunStakingPositionUpgradeable.sol::setRevenuePool` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 harvest 收款目的地并发出 indexed `SetRevenuePool(revenuePool)`。
 - `OutrunStakingPositionUpgradeable.sol::setKeeper` 由 owner 调用；新地址为零时 `ZeroInput()`，否则更新 keeper 权限并发出 indexed `SetKeeper(keeper)`。
-- 三个配置事件中 `SetMinStake` 只记录新值，`SetRevenuePool`/`SetKeeper` 为 indexed；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 15 个 manager errors。
+- 三个配置事件中 `SetMinStake` 只记录新值，`SetRevenuePool`/`SetKeeper` 为 indexed；字段、索引和依赖边界见 [accounting.md §11.2](./accounting.md)。owner 权限失败由 OpenZeppelin Ownable 依赖错误表示，不属于 18 个 manager errors。
 
 ### 7.2 Keeper/Owner 操作分区与部署布线
 

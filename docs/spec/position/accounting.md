@@ -276,9 +276,9 @@ rounding matrix：
 
 ## 11. Position manager 错误与事件真源
 
-本节是 `IOutrunStakeManager.sol` 声明的 17 个自定义错误和 10 个事件的 canonical surface。错误表只覆盖 position manager 自己声明并在本地分支触发的错误；OpenZeppelin、`TokenHelper`、`SY` adapter 和 `uAsset` 的错误属于依赖边界。每个本地错误都会使整笔交易 revert，已经发生的 manager storage 写入、ERC20 transfer 或下游调用一并回滚。
+本节是 `IOutrunStakeManager.sol` 声明的 18 个自定义错误和 10 个事件的 canonical surface。错误表只覆盖 position manager 自己声明并在本地分支触发的错误；OpenZeppelin、`TokenHelper`、`SY` adapter 和 `uAsset` 的错误属于依赖边界。每个本地错误都会使整笔交易 revert，已经发生的 manager storage 写入、ERC20 transfer 或下游调用一并回滚。
 
-### 11.1 17 个自定义错误
+### 11.1 18 个自定义错误
 
 下表中的 `::function` 简写均指 `OutrunStakingPositionUpgradeable.sol::function`；接口声明锚点为 `IOutrunStakeManager.sol`。
 
@@ -300,7 +300,8 @@ rounding matrix：
 | `WrapPoolUndercollateralized()` | `::keepWrapRedeem` / `::previewWrapRedeem` 在当前汇率下 `_assetToSyUp(wrapUAssetDebt) > syWrapStaking`。 | 无 | keeper wrap redeem 采用 all-or-nothing；该只读 guard 在 pool subtraction、uAsset repay 和 SY transfer 前触发，不能以 pro-rata 方式支付。 |
 | `NothingToDraw()` | `::drawUAsset` 的 `currentValueInUAsset <= position.UAssetMinted`。 | 无 | 汇率估值后、position debt 写入和 uAsset mint 前触发；`previewDrawUAsset` 在同一条件下返回 0，不触发本错误（rate==0 时先在汇率读取点 revert `ZeroExchangeRate()`，不进入本条件）。 |
 | `PartialRedeemMustLeaveDebt()` | `::redeem` / `::previewRedeem` 的 partial 分支（`syRedeemed < syStaked`）在 ceiling 计算后 `UAssetBurned >= position.UAssetMinted`。full redeem 直接烧全部 debt，不进入此分支。 | 无 | `_computeRedeemPositionDebt` 在 position reduction、uAsset repay 和 output 前执行；不会留下 SY 仍存在但 debt 已被清零的 partial position。 |
-| `InsufficientTokenOut(uint256 actual, uint256 minExpected)` | `::redeem` 直接输出 SY 时 `syRedeemed < minTokenOut`；`::harvestWrapYield` 直接输出 SY 时 `amountInSY < minTokenOut`（rate==0 先在读取点 revert `ZeroExchangeRate()`，不进入本检查）。非 SY 输出交由 `SY.redeem` 的依赖校验。 | `actual`：本地可交付 SY 数量；`minExpected`：调用者的最小值。 | redeem 分支在 position apply 前；harvest 分支在临时扣减 `syTotalStaking` / `syWrapStaking` 后，但 revert 原子性会回滚该扣减。非 SY 的 adapter slippage/error 不属于这 17 个错误。 |
+| `InsufficientTokenOut(uint256 actual, uint256 minExpected)` | `::redeem` 直接输出 SY 时 `syRedeemed < minTokenOut`；`::harvestWrapYield` 直接输出 SY 时 `amountInSY < minTokenOut`（rate==0 先在读取点 revert `ZeroExchangeRate()`，不进入本检查）。非 SY 输出交由 `SY.redeem` 的依赖校验。 | `actual`：本地可交付 SY 数量；`minExpected`：调用者的最小值。 | redeem 分支在 position apply 前；harvest 分支在临时扣减 `syTotalStaking` / `syWrapStaking` 后，但 revert 原子性会回滚该扣减。非 SY 的 adapter slippage/error 不属于这 18 个错误。 |
+| `DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset)` | `OutrunStakingPositionUpgradeable.sol::_authorizeUpgrade` 在 `SY.assetInfo().assetDecimals` 或 `uAsset.decimals()` 的实时值与 `initialize` 缓存的 `canonicalAssetDecimals`/`uAssetDecimals` 漂移时 | `cachedCanonical`/`currentCanonical`/`cachedUAsset`/`currentUAsset`：缓存与实时的两组 decimals | UUPS 升级守卫，发生在任何存储布局迁移前；漂移会使所有 `SY↔uAsset` 双段换算以 `10**delta` 静默错账，须通过重部署 SY+position 解决而非原地升级 |
 
 本地错误和下游依赖的边界固定如下：`uAsset.mint` 的 mint cap、`uAsset.repay` 的账户余额/授权、`SY.redeem` 的 token 校验与输出下限、`_transferIn` / `_transferOut` 的 ERC20 行为，以及 initializer 的 `assetInfo()` / `decimals()` 失败，不会改名为 position manager 错误；它们的 revert data 原样形成外部依赖边界。任何下游 revert 同样回滚本函数已做的 manager storage 写入。
 
