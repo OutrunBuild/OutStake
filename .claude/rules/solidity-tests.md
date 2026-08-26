@@ -24,7 +24,7 @@ Auto-loads when you edit `test/` files.
 
 ## Test mapping registration
 
-Every new `.t.sol` test file MUST be registered in `.harness/policy.json::test_mapping`, or explicitly listed in `.harness/policy.json::testing_gaps` with a reason, before it can be considered part of the test suite. The gate now fails if any `test/**/*.t.sol` is missing from both.
+Every new `.t.sol` test file MUST be registered in `.harness/policy.json::test_mapping`, or explicitly listed in `.harness/policy.json::testing_gaps` with a reason, before it can be considered part of the test suite. The gate fails if any `test/**/*.t.sol` is missing from both.
 
 ## Common cheatcodes
 - Impersonate a caller: `vm.prank(alice)` (single) / `vm.startPrank(alice)` … `vm.stopPrank()` (multiple).
@@ -48,8 +48,8 @@ Every new `.t.sol` test file MUST be registered in `.harness/policy.json::test_m
 - Always cover: zero / max amounts, unauthorized caller (`vm.prank(attacker)` + `vm.expectRevert(...)`).
 - Coverage: `forge coverage` (`--report lcov` for lcov).
 
-## Inheritance (strict — see .harness/runtime/editing-conventions.md "Test Code Rules")
-Never directly inherit a production contract. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`). (AGENTS.md is always in context — this is a reminder.)
+## Inheritance (see .harness/runtime/editing-conventions.md "Test Code Rules")
+Do not inherit upgradeable production contracts; non-upgradeable production contracts may be inherited, and an upgradeable `abstract contract` may be inherited only as a harness in the area's `mocks/` — the precise rules live in editing-conventions.md. Simulate dependencies with interfaces, abstract contracts, or standalone implementations. Mocks go in the area's `mocks/` subdirectory (e.g. `test/support/mocks/`, `test/upgradeable/mocks/`, `test/deploy/mocks/`).
 
 ## Mock Fidelity
 

@@ -34,14 +34,10 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --account deploy
 # Hardware signing: use --ledger instead of --account
 ```
 
-The `--account`/`--ledger` example is illustrative only — this repo does not support it without first changing `BaseScript` (see "No hardcoded config or secrets").
-
 ## Key management
 | Environment | Key source |
 |---|---|
 | Local (anvil) | Anvil default keys — publicly known, never on real networks |
 | Testnet / Mainnet | Env var `PRIVATE_KEY` via `BaseScript.setUp()` (loaded from `.env` by `script/ops/*.sh`) |
-
-Note: the keystore (`--account`) and hardware-wallet (`--ledger`) key sources are **not** currently wired into this repo — only the `PRIVATE_KEY` env flow works today.
 
 Keep `.env` out of VCS (`.gitignore` lists `.env` and `.env.*`, with `!.env.example` for the committed template); required vars are documented in the root `.env.example`.
