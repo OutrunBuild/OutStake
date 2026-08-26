@@ -4,9 +4,6 @@ pragma solidity ^0.8.35;
 
 import {IOAppCore} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
 import {ILayerZeroEndpointV2} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
-import {IOFT, SendParam, MessagingFee} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
-
 import {BaseScript} from "../lib/BaseScript.s.sol";
 import {console} from "forge-std/console.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
@@ -37,7 +34,6 @@ interface IOwnable {
 }
 
 contract OutstakeScript is BaseScript {
-    using OptionsBuilder for bytes;
     using SafeCast for uint256;
 
     error InvalidEndpoint();
@@ -91,7 +87,6 @@ contract OutstakeScript is BaseScript {
         // _deployOutrunDeployer(deployerNonce);
 
         _assertOutrunDeployer(deployerNonce);
-        // _crossChainOFT();
         // _deployUETH(1);
         // _deployUUSD(1);
         // _deployUBNB(1);
@@ -153,32 +148,10 @@ contract OutstakeScript is BaseScript {
     function _chainsInit() internal virtual {
         endpoints[97] = vm.envAddress("BSC_TESTNET_ENDPOINT");
         endpoints[84532] = vm.envAddress("BASE_SEPOLIA_ENDPOINT");
-        endpoints[421614] = vm.envAddress("ARBITRUM_SEPOLIA_ENDPOINT");
-        endpoints[43113] = vm.envAddress("AVALANCHE_FUJI_ENDPOINT");
-        endpoints[80002] = vm.envAddress("POLYGON_AMOY_ENDPOINT");
-        endpoints[57054] = vm.envAddress("SONIC_TESTNET_ENDPOINT");
-        endpoints[11155420] = vm.envAddress("OPTIMISTIC_SEPOLIA_ENDPOINT");
-        endpoints[300] = vm.envAddress("ZKSYNC_SEPOLIA_ENDPOINT");
-        endpoints[59141] = vm.envAddress("LINEA_SEPOLIA_ENDPOINT");
-        endpoints[168587773] = vm.envAddress("BLAST_SEPOLIA_ENDPOINT");
-        endpoints[534351] = vm.envAddress("SCROLL_SEPOLIA_ENDPOINT");
-        endpoints[10143] = vm.envAddress("MONAD_TESTNET_ENDPOINT");
-        endpoints[80069] = vm.envAddress("BERA_SEPOLIA_ENDPOINT");
         endpoints[11155111] = vm.envAddress("ETHEREUM_SEPOLIA_ENDPOINT");
 
         endpointIds[97] = vm.envUint("BSC_TESTNET_EID").toUint32();
         endpointIds[84532] = vm.envUint("BASE_SEPOLIA_EID").toUint32();
-        endpointIds[421614] = vm.envUint("ARBITRUM_SEPOLIA_EID").toUint32();
-        endpointIds[43113] = vm.envUint("AVALANCHE_FUJI_EID").toUint32();
-        endpointIds[80002] = vm.envUint("POLYGON_AMOY_EID").toUint32();
-        endpointIds[57054] = vm.envUint("SONIC_TESTNET_EID").toUint32();
-        endpointIds[11155420] = vm.envUint("OPTIMISTIC_SEPOLIA_EID").toUint32();
-        endpointIds[300] = vm.envUint("ZKSYNC_SEPOLIA_EID").toUint32();
-        endpointIds[59141] = vm.envUint("LINEA_SEPOLIA_EID").toUint32();
-        endpointIds[168587773] = vm.envUint("BLAST_SEPOLIA_EID").toUint32();
-        endpointIds[534351] = vm.envUint("SCROLL_SEPOLIA_EID").toUint32();
-        endpointIds[10143] = vm.envUint("MONAD_TESTNET_EID").toUint32();
-        endpointIds[80069] = vm.envUint("BERA_SEPOLIA_EID").toUint32();
         endpointIds[11155111] = vm.envUint("ETHEREUM_SEPOLIA_EID").toUint32();
     }
 
@@ -203,21 +176,10 @@ contract OutstakeScript is BaseScript {
     /// @dev Shared chain list for the three uAsset deploys: one definition site, so the
     /// omnichain peer/rate-limit set can never drift between UETH/UUSD/UBNB.
     function _sharedOmnichainIds() internal pure returns (uint32[] memory omnichainIds) {
-        omnichainIds = new uint32[](9);
+        omnichainIds = new uint32[](3);
         omnichainIds[0] = 97; // BSC Testnet
         omnichainIds[1] = 84532; // Base Sepolia
-        omnichainIds[2] = 421614; // Arbitrum Sepolia
-        omnichainIds[3] = 43113; // Avalanche Fuji C-Chain
-        omnichainIds[4] = 80002; // Polygon Amoy
-        omnichainIds[5] = 57054; // Sonic Blaze
-        omnichainIds[6] = 168587773; // Blast Sepolia
-        omnichainIds[7] = 534351; // Scroll Sepolia
-        omnichainIds[8] = 11155111; // Sepolia
-        // omnichainIds[9] = 10143;     // Monad Testnet
-        // omnichainIds[10] = 80069;    // Bera Sepolia
-        // omnichainIds[11] = 59141;    // Linea Sepolia
-        // omnichainIds[12] = 11155420; // Optimistic Sepolia
-        // omnichainIds[13] = 300;      // ZKsync Sepolia
+        omnichainIds[2] = 11155111; // Sepolia
     }
 
     function _deployUAsset(uint256 nonce, string memory symbol, string memory assetWord) internal {
@@ -362,25 +324,14 @@ contract OutstakeScript is BaseScript {
     }
 
     /// @dev Hardcoded allowlist of chain ids where the mock stack may run: anvil (31337) plus the
-    /// 14 testnets wired in `_chainsInit`. Single source of truth alongside `_chainsInit`: adding
-    /// a testnet requires updating both, or the mock helpers below fail closed on the new chain.
+    /// 3 testnets wired in `_chainsInit`. Single source of truth alongside `_chainsInit`: adding a
+    /// testnet requires updating both, or the mock helpers below fail closed on the new chain.
     function _testnetChainIds() internal pure returns (uint32[] memory testnetChainIds) {
-        testnetChainIds = new uint32[](15);
+        testnetChainIds = new uint32[](4);
         testnetChainIds[0] = 31337; // Anvil local chain
         testnetChainIds[1] = 97; // BSC Testnet
         testnetChainIds[2] = 84532; // Base Sepolia
-        testnetChainIds[3] = 421614; // Arbitrum Sepolia
-        testnetChainIds[4] = 43113; // Avalanche Fuji C-Chain
-        testnetChainIds[5] = 80002; // Polygon Amoy
-        testnetChainIds[6] = 57054; // Sonic Blaze
-        testnetChainIds[7] = 11155420; // Optimistic Sepolia
-        testnetChainIds[8] = 300; // ZKsync Sepolia
-        testnetChainIds[9] = 59141; // Linea Sepolia
-        testnetChainIds[10] = 168587773; // Blast Sepolia
-        testnetChainIds[11] = 534351; // Scroll Sepolia
-        testnetChainIds[12] = 10143; // Monad Testnet
-        testnetChainIds[13] = 80069; // Bera Sepolia
-        testnetChainIds[14] = 11155111; // Sepolia
+        testnetChainIds[3] = 11155111; // Sepolia
     }
 
     /// @dev Fail closed outside the testnet allowlist: the mock stack is testnet/local-only, and
@@ -549,22 +500,6 @@ contract OutstakeScript is BaseScript {
         if (enforceOutrunRouter && outrunRouterAddr != outrunRouter) revert InvalidAddress();
 
         console.log("OutrunRouter deployed on %s", outrunRouterAddr);
-    }
-
-    function _crossChainOFT() internal {
-        address uusd = vm.envAddress("UUSD");
-        bytes memory receiveOptions = OptionsBuilder.newOptions().addExecutorLzReceiveOption(85000, 0);
-        SendParam memory sendUAssetParam = SendParam({
-            dstEid: vm.envUint("SCROLL_SEPOLIA_EID").toUint32(),
-            to: bytes32(uint256(uint160(owner))),
-            amountLD: 500000 * 1e18,
-            minAmountLD: 0,
-            extraOptions: receiveOptions,
-            composeMsg: abi.encode(),
-            oftCmd: abi.encode()
-        });
-        MessagingFee memory messagingFee = IOFT(uusd).quoteSend(sendUAssetParam, false);
-        IOFT(uusd).send{value: messagingFee.nativeFee}(sendUAssetParam, messagingFee, msg.sender);
     }
 
     function _updateRouterLauncher() internal {

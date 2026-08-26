@@ -144,12 +144,6 @@ contract OutstakeScriptUpgradeableTest is Test {
 
         _pushChain(97, LOCAL_EID);
         _pushChain(84532, 40_245);
-        _pushChain(421614, 40_231);
-        _pushChain(43113, 40_106);
-        _pushChain(80002, 40_209);
-        _pushChain(57054, 40_367);
-        _pushChain(168587773, 40_243);
-        _pushChain(534351, 40_214);
         _pushChain(11155111, 40_161);
     }
 
@@ -216,8 +210,8 @@ contract OutstakeScriptUpgradeableTest is Test {
     }
 
     function testDeployUAssetRevertsWhenLocalChainNotInOmnichainSet() external {
-        // Monad Testnet (10143) is fully configured in _chainsInit but excluded from
-        // _sharedOmnichainIds: validation must fail closed before any peer/rate-limit config.
+        // A chain id outside the 3-chain mesh: fully wired locally but never a member of
+        // _sharedOmnichainIds, so validation must fail closed before any peer/rate-limit config.
         uint32 nonMemberChainId = 10143;
         vm.chainId(nonMemberChainId);
         script.setEndpoint(nonMemberChainId, address(endpoint));
@@ -256,50 +250,20 @@ contract OutstakeScriptUpgradeableTest is Test {
     }
 
     function testRunRouterOnlyDoesNotRequireChainEndpointEnv() external {
-        // Poison the 28 chain endpoint/EID envs that `_chainsInit` reads, overriding whatever the
+        // Poison the 6 chain endpoint/EID envs that `_chainsInit` reads, overriding whatever the
         // runner environment pre-sets (repo `.env`/CI/dev shells may already provide them). Each key
-        // is overwritten with a deliberately-invalid value: the 14 *_ENDPOINT keys get "0xdeadbeef"
-        // (not a valid 20-byte address → `vm.envAddress` reverts) and the 14 *_EID keys get
+        // is overwritten with a deliberately-invalid value: the 3 *_ENDPOINT keys get "0xdeadbeef"
+        // (not a valid 20-byte address → `vm.envAddress` reverts) and the 3 *_EID keys get
         // "not-a-number" (not numeric → `vm.envUint` reverts). A fixed Router-only run() never reads
         // them, so the test passes; a regression that re-reads any key reverts immediately. This is
         // an explicit poison-pin rather than an "env must be absent" precondition, so the test is
         // discriminating regardless of what the environment pre-sets.
-        string[14] memory endpointKeys = [
-            "BSC_TESTNET_ENDPOINT",
-            "BASE_SEPOLIA_ENDPOINT",
-            "ARBITRUM_SEPOLIA_ENDPOINT",
-            "AVALANCHE_FUJI_ENDPOINT",
-            "POLYGON_AMOY_ENDPOINT",
-            "SONIC_TESTNET_ENDPOINT",
-            "OPTIMISTIC_SEPOLIA_ENDPOINT",
-            "ZKSYNC_SEPOLIA_ENDPOINT",
-            "LINEA_SEPOLIA_ENDPOINT",
-            "BLAST_SEPOLIA_ENDPOINT",
-            "SCROLL_SEPOLIA_ENDPOINT",
-            "MONAD_TESTNET_ENDPOINT",
-            "BERA_SEPOLIA_ENDPOINT",
-            "ETHEREUM_SEPOLIA_ENDPOINT"
-        ];
+        string[3] memory endpointKeys = ["BSC_TESTNET_ENDPOINT", "BASE_SEPOLIA_ENDPOINT", "ETHEREUM_SEPOLIA_ENDPOINT"];
         for (uint256 i = 0; i < endpointKeys.length; i++) {
             vm.setEnv(endpointKeys[i], "0xdeadbeef");
         }
 
-        string[14] memory eidKeys = [
-            "BSC_TESTNET_EID",
-            "BASE_SEPOLIA_EID",
-            "ARBITRUM_SEPOLIA_EID",
-            "AVALANCHE_FUJI_EID",
-            "POLYGON_AMOY_EID",
-            "SONIC_TESTNET_EID",
-            "OPTIMISTIC_SEPOLIA_EID",
-            "ZKSYNC_SEPOLIA_EID",
-            "LINEA_SEPOLIA_EID",
-            "BLAST_SEPOLIA_EID",
-            "SCROLL_SEPOLIA_EID",
-            "MONAD_TESTNET_EID",
-            "BERA_SEPOLIA_EID",
-            "ETHEREUM_SEPOLIA_EID"
-        ];
+        string[3] memory eidKeys = ["BSC_TESTNET_EID", "BASE_SEPOLIA_EID", "ETHEREUM_SEPOLIA_EID"];
         for (uint256 i = 0; i < eidKeys.length; i++) {
             vm.setEnv(eidKeys[i], "not-a-number");
         }

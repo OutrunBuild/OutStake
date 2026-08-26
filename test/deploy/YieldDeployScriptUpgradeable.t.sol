@@ -39,7 +39,6 @@ contract YieldDeployScriptHarness is YieldDeployScript {
 
 contract YieldDeployScriptUpgradeableTest is Test {
     uint256 internal constant ETHEREUM_SEPOLIA_CHAINID = 11_155_111;
-    uint256 internal constant ARBITRUM_SEPOLIA_CHAINID = 421_614;
     uint256 internal constant BASE_SEPOLIA_CHAINID = 84_532;
 
     address internal owner = address(0xA11CE);
@@ -58,8 +57,6 @@ contract YieldDeployScriptUpgradeableTest is Test {
 
         // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("ETHEREUM_SEPOLIA_CHAINID", vm.toString(ETHEREUM_SEPOLIA_CHAINID));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("ARBITRUM_SEPOLIA_CHAINID", vm.toString(ARBITRUM_SEPOLIA_CHAINID));
         // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("BASE_SEPOLIA_CHAINID", vm.toString(BASE_SEPOLIA_CHAINID));
     }
@@ -109,17 +106,6 @@ contract YieldDeployScriptUpgradeableTest is Test {
     function testSupportAUSDCOnBaseSepoliaDeploysInitializedSYAndPosition() external {
         vm.chainId(BASE_SEPOLIA_CHAINID);
         (YieldDeployMockToken usdc, YieldDeployMockAToken aUSDC, YieldDeployMockAavePool pool) = _setBaseAUSDCEnv();
-
-        (address sy, address sp) = _supportAUSDC();
-
-        _assertAUSDCSY(sy, address(usdc), address(aUSDC), address(pool));
-        _assertPosition(sp, sy, address(uusd));
-        assertEq(uusd.mintingCaps(sp), 1_000_000_000 ether);
-    }
-
-    function testSupportAUSDCOnArbitrumSepoliaDeploysInitializedSYAndPosition() external {
-        vm.chainId(ARBITRUM_SEPOLIA_CHAINID);
-        (YieldDeployMockToken usdc, YieldDeployMockAToken aUSDC, YieldDeployMockAavePool pool) = _setArbitrumAUSDCEnv();
 
         (address sy, address sp) = _supportAUSDC();
 
@@ -246,17 +232,6 @@ contract YieldDeployScriptUpgradeableTest is Test {
         vm.setEnv("BASE_SEPOLIA_AUSDC", vm.toString(address(aUSDC)));
         // forge-lint: disable-next-line(unsafe-cheatcode)
         vm.setEnv("BASE_SEPOLIA_POOL", vm.toString(address(pool)));
-    }
-
-    function _setArbitrumAUSDCEnv()
-        internal
-        returns (YieldDeployMockToken usdc, YieldDeployMockAToken aUSDC, YieldDeployMockAavePool pool)
-    {
-        (usdc, aUSDC, pool) = _newAaveMocks();
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("ARBITRUM_SEPOLIA_AUSDC", vm.toString(address(aUSDC)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("ARBITRUM_SEPOLIA_POOL", vm.toString(address(pool)));
     }
 
     function _newAaveMocks()

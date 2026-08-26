@@ -115,15 +115,12 @@ contract YieldDeployScript is BaseScript {
     }
 
     /**
-     * Support aUSDC (Arbitrum Sepolia, Base Sepolia)
+     * Support aUSDC (Base Sepolia)
      */
     function _supportAUSDC() internal {
         address aUSDC;
         address aavePool;
-        if (block.chainid == vm.envUint("ARBITRUM_SEPOLIA_CHAINID")) {
-            aUSDC = vm.envAddress("ARBITRUM_SEPOLIA_AUSDC");
-            aavePool = vm.envAddress("ARBITRUM_SEPOLIA_POOL");
-        } else if (block.chainid == vm.envUint("BASE_SEPOLIA_CHAINID")) {
+        if (block.chainid == vm.envUint("BASE_SEPOLIA_CHAINID")) {
             aUSDC = vm.envAddress("BASE_SEPOLIA_AUSDC");
             aavePool = vm.envAddress("BASE_SEPOLIA_POOL");
         } else {

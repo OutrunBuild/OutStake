@@ -43,36 +43,20 @@ depth = 500
 [rpc_endpoints]
 bsc_testnet = "${BSC_TESTNET_RPC}"
 base_sepolia = "${BASE_SEPOLIA_RPC}"
-arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
 sepolia = "${ETHEREUM_SEPOLIA_RPC}"
-avalanche_fuji = "${AVALANCHE_FUJI_RPC}"
-polygon_amoy = "${POLYGON_AMOY_RPC}"
-sonic_testnet = "${SONIC_TESTNET_RPC}"
-optimistic_sepolia = "${OPTIMISTIC_SEPOLIA_RPC}"
-zksync_sepolia = "${ZKSYNC_SEPOLIA_RPC}"
-linea_sepolia = "${LINEA_SEPOLIA_RPC}"
-blast_sepolia = "${BLAST_SEPOLIA_RPC}"
-scroll_sepolia = "${SCROLL_SEPOLIA_RPC}"
-monad_testnet = "${MONAD_TESTNET_RPC}"
-bera_sepolia = "${BERA_SEPOLIA_RPC}"
 
+eth_mainnet = "${ETH_MAINNET_RPC}"
 bsc_mainnet = "${BSC_MAINNET_RPC}"
+base_mainnet = "${BASE_MAINNET_RPC}"
 
 [etherscan]
 bsc_testnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "97", url = "${ETHEREUMSCAN_API_URL}" }
 base_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "84532", url = "${ETHEREUMSCAN_API_URL}" }
-arbitrum_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "421614", url = "${ETHEREUMSCAN_API_URL}" }
 sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155111", url = "${ETHEREUMSCAN_API_URL}" }
-avalanche_fuji = { key = "${ETHEREUMSCAN_API_KEY}", chain = "43113", url = "${ETHEREUMSCAN_API_URL}" }
-polygon_amoy = { key = "${ETHEREUMSCAN_API_KEY}", chain = "80002", url = "${ETHEREUMSCAN_API_URL}" }
-sonic_testnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "57054", url = "${ETHEREUMSCAN_API_URL}" }
-optimistic_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155420", url = "${ETHEREUMSCAN_API_URL}" }
-zksync_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "300", url = "${ETHEREUMSCAN_API_URL}" }
-linea_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "59141", url = "${ETHEREUMSCAN_API_URL}" }
-blast_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "168587773", url = "${ETHEREUMSCAN_API_URL}" }
-scroll_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "534351", url = "${ETHEREUMSCAN_API_URL}" }
 
+eth_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "1", url = "${ETHEREUMSCAN_API_URL}" }
 bsc_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "56", url = "${ETHEREUMSCAN_API_URL}" }
+base_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "8453", url = "${ETHEREUMSCAN_API_URL}" }
 
 [lint]
 exclude_lints = [
