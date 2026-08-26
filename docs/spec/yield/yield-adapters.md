@@ -67,7 +67,7 @@
 > - `SYBaseUpgradeable.sol::setTrustedRouter` 同值重设不拒绝，emit `SetTrustedRouter(x,x)`（幂等写入，零安全面）
 > - `OutrunOFTUpgradeable.sol::_removeDust` 本地 `unchecked` 覆写（`(_amountLD / DCR) * DCR`，数学等价于 `OFTCoreUpgradeable` 检查版，`floor(a/r)*r ≤ a` 恒成立）
 > - 继承 `InvalidLocalDecimals`（`OFTCoreUpgradeable` 要求 `localDecimals ≥ 6`，本仓库 18-dec 部署不可达，仅继承暴露）
-> - `OutrunOFTUpgradeable.sol` `window==0` 早退跳过显式 `_removeDust`（返回值已是 DCR 倍数，重施为 no-op；`OutrunOFTUpgradeable.sol:190` 注释自证）
+> - `OutrunOFTUpgradeable.sol` `window==0` 早退跳过显式 `_removeDust`（返回值已是 DCR 倍数，重施为 no-op；`OutrunOFTUpgradeable.sol::_credit` 注释自证）
 > - `PSM3IncompleteConsumption` 第二参命名错位（`actualRemaining` 实载已消耗差值 `balanceBefore - balanceAfter`，规格与代码共有，语义以实现为准）
 > - `OutrunExchangeOracleAdapter.sol::rawDecimals` public getter 暴露（构造期捕获 `AggregatorInterface.decimals()`，仅读视图）
 > - `OutrunL2StakedUsdsSYUpgradeable.sol::maxDeviationBps()` 0→100 映射（storage 0 时 getter 返 100 默认，`initialize` 后恒为 100 不可达，仅为未配置态兜底）
