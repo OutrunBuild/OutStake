@@ -16,13 +16,13 @@ Gate output controls:
 - `--log-level error|warn|info|debug`: defaults to `info`. `error` prints only error-oriented output, `warn` prints warnings/errors without success summaries, and `debug` includes the structured gate record in text mode.
 - `--output text|json`: defaults to JSON for `--classify-only` and text for normal verification. `json` prints the structured classification or final record to stdout and takes precedence over `--quiet`.
 
-`--changed-files` has one meaning: every repo-relative path after it, until the next option, is treated as a changed file. Old "pass a changed-files list file path" behavior is removed.
+`--changed-files` has one meaning: every repo-relative path after it, until the next option, is treated as a changed file.
 
 Local current-work gate invocations must use exact changed-file input. Solidity changed-files mode requires diff evidence via `CHANGE_CLASSIFIER_DIFF_FILE` or `GATE_DIFF_BASE`; without it, semantic classification is blocked.
 
 Gate verifies classification and command outcomes. Spec/document impact is decided before doc writers, `spec-reviewer`, code writers, or code reviewers are dispatched, not by gate.
 
-For `fast` verification, `targeted_tests` still starts from the exact file set selected by `test_mapping`, but the gate now tries to compress that file set into a single `forge test --match-contract <regex>` run. The gate builds the regex from `forge test --list --match-path <file>` results, validates that `forge test --list --match-contract <regex>` resolves to the same test-contract set, and only then runs the compressed command. If extraction or validation fails, the gate falls back to the original per-file `forge test --match-path <file>` loop.
+For `fast` verification, `targeted_tests` still starts from the exact file set selected by `test_mapping`, but the gate tries to compress that file set into a single `forge test --match-contract <regex>` run. The gate builds the regex from `forge test --list --match-path <file>` results, validates that `forge test --list --match-contract <regex>` resolves to the same test-contract set, and only then runs the compressed command. If extraction or validation fails, the gate falls back to the original per-file `forge test --match-path <file>` loop.
 
 CI uses one gate path. On every CI event (push, pull_request, workflow_dispatch), `script/harness/ci-gate-entrypoint.sh` unconditionally invokes `gate:ci -- --all` over every surface file, regardless of the diff: full test suite, `forge build`, coverage, slither, and full fmt/lint/bash/node checks.
 
@@ -31,12 +31,20 @@ This full gate is the backstop for the local pre-push hook (`.githooks/pre-push`
 Diff evidence must not be created as persistent repository files. Prefer `GATE_DIFF_BASE=<git-ref>`; when `CHANGE_CLASSIFIER_DIFF_FILE` is needed, point it at a `mktemp` file outside the repository and remove it after `gate.sh` exits.
 
 
-`full` and `ci` command gates:
+`fast`, `full`, and `ci` command gates (this table is the single source; README links here):
 
-| Command | Condition |
-|---|---|
-| `forge coverage` | `change_class=prod-semantic` and `surface_sensitivity=sensitive` |
-| `slither` | same as coverage, only when changed production Solidity includes `src/**/*.sol` |
+| Command | fast | full / ci | Condition |
+|---|---|---|---|
+| `forge fmt --check` | yes | yes | changed Solidity files |
+| `npx solhint` | yes | yes | changed Solidity files |
+| `forge build` | yes | yes | always |
+| `forge test --match-path` | yes | no | changed/mapped targeted tests |
+| `forge test -vvv` | no | yes | full / ci |
+| `forge coverage` | no | yes | `change_class=prod-semantic` and `surface_sensitivity=sensitive` |
+| `slither` | no | yes | same as coverage, only when changed production Solidity includes `src/**/*.sol` |
+| `bash -n` | yes | yes | changed shell files |
+| `node --check` | yes | yes | changed JavaScript files |
+| `npm ci` | yes | yes | package manifest or lockfile changed |
 
 `full-subagent` is an orchestration profile, not a gate profile. It means an independent verifier is required; the verifier runs the selected `fast`, `full`, or `ci` profile.
 
