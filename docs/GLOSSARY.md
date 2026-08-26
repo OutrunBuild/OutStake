@@ -20,12 +20,12 @@
 - **syWrapStaking**：wrap 池中的 SY 本金量。
 - **wrapUAssetDebt**：wrap 池的 uAsset 总债务。
 - **drawUAsset**：提取仓位升值部分对应的 uAsset 债务。仅在仓位锁定期内（`block.timestamp < deadline`）可用；到期后 revert `LockTimeExpired`。
-- **keepRedeem**：keeper-only 入口（`OutrunStakingPositionUpgradeable.sol::keepRedeem` 校验 `keeper()`，非 keeper `PermissionDenied`），keeper 代偿已到期的锁仓仓位债务；与 `OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 的 `onlyOwner` 分区为故意设计。
-- **keepWrapRedeem**：keeper-only 入口（`OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 校验 `keeper()`，非 keeper `PermissionDenied`）；keeper 烧自己的 uAsset 兑换 wrap 池 SY（仅直付 SY），池子抵押不足时 revert `WrapPoolUndercollateralized`（全有或全无兑付，不再 pro-rata）；与 `OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 的 `onlyOwner` 分区为故意设计。
-- **harvestWrapYield**：owner-only 入口（`OutrunStakingPositionUpgradeable.sol::harvestWrapYield` `onlyOwner`），提取 wrap 池中超出债务等值 SY 的超额收益至 `revenuePool`；keeper 无权调用，与 `keepRedeem`/`keepWrapRedeem` 的 `keeper` 分区为故意设计。
+- **keepRedeem**：keeper-only 到期仓位代偿赎回入口（`OutrunStakingPositionUpgradeable.sol::keepRedeem`，非 keeper revert `PermissionDenied`）；权限分区语义见 `docs/spec/access-control.md`。
+- **keepWrapRedeem**：keeper-only wrap 池兑付入口（`OutrunStakingPositionUpgradeable.sol::keepWrapRedeem`，非 keeper revert `PermissionDenied`；池抵押不足 revert `WrapPoolUndercollateralized`，全有或全无）；权限分区语义见 `docs/spec/access-control.md`。
+- **harvestWrapYield**：owner-only wrap 池超额收益收割入口（`OutrunStakingPositionUpgradeable.sol::harvestWrapYield`，输出至 `revenuePool`）；权限分区语义见 `docs/spec/access-control.md`。
 - **NATIVE**：address(0) 的别名，用于统一标识 chain native coin（如 ETH、BNB）。
 - **Position Owner**：锁仓仓位的拥有者，拥有 drawUAsset 和 redeem 权限。注意：仓位 owner 和初始 uAsset receiver 可以是不同地址。
-- **Keeper**：由 owner 经 `OutrunStakingPositionUpgradeable.sol::setKeeper` 设置的单一地址，仅拥有 `OutrunStakingPositionUpgradeable.sol::keepRedeem` 与 `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 权限，无 `OutrunStakingPositionUpgradeable.sol::harvestWrapYield` 权限（该入口为 `onlyOwner`）；与 harvest 的职责分离为故意设计，部署需 keeper/owner 共置布线，见 `docs/spec/access-control.md` 与 `docs/deployment.md`「Keeper/Harvest 权限分区与活性布线」节。
+- **Keeper**：由 owner 经 `OutrunStakingPositionUpgradeable.sol::setKeeper` 设置的单一地址，仅有 `keepRedeem` 与 `keepWrapRedeem` 权限、无 `harvestWrapYield` 权限；部署布线见 `docs/deployment.md`「Keeper/Harvest 权限分区与活性布线」节。
 - **Revenue Pool**：接收 wrap 池超额收益的地址。
 - **Minter**：在 uAsset 合约中被 owner 授予 mintingCap 的地址，可在额度内铸造 uAsset。
 - **mintingCap**：minter 的铸造上限。
@@ -40,13 +40,13 @@
 - **_debit**：OFT 源链侧 burn 本地 token 的函数，且不触碰 minter 债务台账。
 - **_credit**：OFT 目标链侧 mint 本地 token 的函数；且不触碰 minter 债务台账；零地址收款人重映射为 `0xdead`。
 - **L2 Oracle-backed Adapter**：通过外部 oracle 读取 exchangeRate 的 L2 SY adapter，deposit/redeem 严格 1:1，不进行 wrap/unwrap/swap。
-- **Upgradeable Variant**：当前产品真源使用 `Upgradeable` 后缀的 implementation；旧非 upgradeable 合约不再作为当前产品表面保留。
+- **Upgradeable Variant**：当前产品真源使用 `Upgradeable` 后缀的 proxy-backed implementation。
 - **ERC1967Proxy**：当前 upgradeable implementation 使用的 proxy 部署壳，部署时携带 initializer calldata 并把 proxy address 作为产品地址。
 - **UUPS**：当前 upgradeable implementation 使用的 upgrade pattern；upgrade authority 位于 implementation 的 `_authorizeUpgrade(address)`，由 owner 控制。
 - **SYBaseUpgradeable**：当前所有 SY adapters 的共享 upgradeable base，统一持有 UUPS authority。
-- **Multisig Owner**：当前 upgradeable implementation 的单一 protocol owner（部署期 owner 约束按脚本区分：`OutstakeScript.s.sol` 系强制 `OWNER` 等于广播者 EOA、部署完成后 `transferOwnership` 转交 multisig；`YieldDeployScript.s.sol` 系无此 `OWNER == 广播者` 约束、`OWNER` 可直接设为终态 multisig；详见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
+- **Multisig Owner**：upgradeable product 的单一 protocol owner；部署期 owner 取值约束见 `docs/deployment.md`「关键约束」；无 timelock、无新增 governance module。
 - **Initializer**：upgradeable variant 替代 constructor 的初始化入口；通过 proxy deployment 调用一次，写入 owner 与原构造依赖。
 - **exchangeRateOracle**：oracle-backed SY upgradeable variants 中存储 oracle adapter 地址的 mutable storage 字段，通过 owner-only `setExchangeRateOracle(address)` 更新。
-- **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter；通过 `latestRoundData()`（非 `latestAnswer()`）读取，在精度归一化前做 raw answer 正性检查、`maxStaleness` 新鲜度窗口校验（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）与可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate` fail-closed）；不提供 bounds、fallback 或多源聚合保证。
+- **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter，经 `latestRoundData()` 读取并做精度归一化；完整校验语义与错误面以 `docs/spec/yield/oracles-and-integrations.md` 为准。
 - **OutrunOFTUpgradeable**：当前 custom OFT base，使用 LayerZero 官方 `OFTCoreUpgradeable` / `OAppUpgradeable` 路径并保留自定义 ERC20 metadata/decimals；需要自定义 metadata/decimals 时不继承默认 `OFTUpgradeable`。
 - **ReentrancyGuardTransient**：当前 upgradeable helper 使用的 vendored OpenZeppelin transient reentrancy guard（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`，经 `TokenHelper.sol` 继承）；部署链需要支持 EIP-1153 transient storage。

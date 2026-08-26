@@ -16,11 +16,11 @@
 `OutrunOFTUpgradeable` 的 pause 阻断本地用户主动发起的 ERC20 路径与 pause 之后新发起的 outbound send，但 inbound `_credit` 为不阻塞已在跨链流程中的代币而不受 `whenNotPaused` 阻断；完整执行边界以 `docs/spec/common-foundations.md`「Pause 与跨链 OFT 执行边界」为准。
 `uAsset` 的 minter 债务账本与流通供应分离：`revokeMinter(minter)` 只把该 minter 的 `mintingCap` 置零以禁止未来 mint，不清除既有 `amountInMinted`，未偿债务仍需后续 repay。`OutrunUniversalAssetsUpgradeable` 当前无 `sweep` 为有意设计，未来若新增 `sweep` 必须 `onlyOwner nonReentrant` 经 timelock/multisig 且阻断 `address(this)`/`SY`/`NATIVE`，否则脱钩跨账本不变量。
 OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收款人重映射为 `0xdead` 的设计语义以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
-`transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定为修复无仓位/wrap 债支撑的错账、活 SP 退役走清盘路径）以 `docs/spec/common-foundations.md`「基础规则」为准。
+`transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；输入校验、账务约束与用途限定以 `docs/spec/common-foundations.md`「基础规则」为准。
 
 另外，redeem/keep 系与 OFT 跨链之间存在本地销债边界：`OutrunStakingPositionUpgradeable.sol::redeem` / `::keepRedeem` / `::keepWrapRedeem` 经 `OutrunUniversalAssetsUpgradeable.sol::repay` 销毁调用者（position owner 或 keeper）在 position 所在链上的 uAsset 余额来销债；OFT 跨链（`OutrunOFTUpgradeable.sol::_debit` / `::_credit`）只移动流通供应、不移动 minter 债务台账，因此被桥出到其他链的 uAsset 必须先桥回（受 `OutrunOFTUpgradeable` 的 peer / outbound rate limit 配置约束）或在本地另行获取，才能用于原链销债。keeper 赎回是独立的信任路径，烧的是 keeper 自己的同链 uAsset，不等同于用户自主赎回。
 
-OFT 跨链可用性依赖 per-eid peer 与 outbound rate limit（含 DVN/enforcedOptions 信任根）配置 — 本概览仅作指针：出站可用性与限流语义详见 `docs/spec/common-foundations.md`「OFT 与 rate limiter」与「OFT 换算参数与发送/部署校验语义」，信任根与部署投产校验见 `docs/deployment.md`「跨链信任根投产校验与应急处置」与「跨链限流（OFT Outbound Rate Limit）高危参数校验清单」；`OutrunOFTUpgradeable.sol::_debit` 前经 `OutrunRateLimiterUpgradeable.sol::_outflow` 校验，额度耗尽或 peer 未设时以 `RateLimitExceeded`/`NoPeer` 静默阻断出站（`quoteOFT`/`getAmountCanBeSent` 预览，`isRateLimited` 区分未配置），运行期需对 `RateLimitExceeded` 与零 peer 告警。
+OFT 跨链可用性依赖 per-eid peer 与 outbound rate limit（含 DVN/enforcedOptions 信任根）配置；语义、预览入口与告警要求见下文「跨链可用性与限流」节，此处不重复。
 
 ### position
 

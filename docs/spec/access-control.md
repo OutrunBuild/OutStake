@@ -14,15 +14,13 @@
 
 ## 权限模型
 
-- protocol owner 是 multisig（部署期 owner 约束按脚本区分：`OutstakeScript.s.sol` 系强制 `OWNER` 等于广播者 EOA、部署完成后 `transferOwnership` 转交 multisig；`YieldDeployScript.s.sol` 系无此 `OWNER == 广播者` 约束、`OWNER` 可直接设为终态 multisig；详见 `docs/deployment.md`「关键约束」）
+- protocol owner 是 multisig（部署期 owner 取值约束见 `docs/deployment.md`「关键约束」）
 - 不引入 timelock
 - 不引入额外 governance module
-- router 的 `setTrustedSY(address,bool)` 与 `setTrustedSP(address,address)` 是 owner-only 的持续 live 目标登记入口（动态新增，产品外 multisig 治理）（`OutrunRouter.sol::setTrustedSY`、`OutrunRouter.sol::setTrustedSP`、`IOutrunRouter.sol::setTrustedSY`、`IOutrunRouter.sol::setTrustedSP`）。`setTrustedSY` 启用前要求目标为有代码的合约；`setTrustedSP` 的非零 SY 必须已登记且等于 `SP.SY()`。`TrustedSYUpdated` 与 `TrustedSPUpdated` 记录配置变化，`setTrustedSP(SP,address(0))` 和禁用 SY 都可撤销后续调用权限。
-- `OutrunRouter.sol::mintSYFromToken` 与 `OutrunRouter.sol::redeemSyToToken` 先检查 `OutrunRouter.sol::trustedSY`；所有 SP preview、stake、wrap stake 与 genesis 入口先检查 `OutrunRouter.sol::trustedSYForSP` 并重检 `SP.SY()`。这些检查都发生在用户资产 `transferFrom`、token pull 或下游 `approve` 之前；未注册 target 回退 `IOutrunRouter.sol::UntrustedRouterTarget`，pair 漂移回退 `IOutrunRouter.sol::RouterTargetMismatch`。
-- `OutrunRouter.sol::setTrustedSY(SY, false)` 不会自动清除已有的 `trustedSYForSP` mapping，撤销流程应另行调用 `OutrunRouter.sol::setTrustedSP(SP, address(0))` 并核对 `trustedSY` / `trustedSYForSP` getter；撤销只阻断后续 router 调用，不改变既有 position、uAsset debt 或 SY share state。
-- 首批 SY/SP 清单部署后核对事件/getter，后续运行期仍支持经 `OutrunRouter.sol::setTrustedSY`/`setTrustedSP` 动态新增、撤销或替换，由 `Ownable`（产品外 multisig）持续管控，不在主网上线时冻结移除。
-- router 的 `setMemeverseLauncher(address)` 是 owner 入口（`OutrunRouter.sol::setMemeverseLauncher`、`IOutrunRouter.sol::setMemeverseLauncher`），产品外经 `Ownable`（multisig）管控、产品合约内不设 timelock；成功轮换发出 `IOutrunRouter.sol::SetMemeverseLauncher` 事件（旧 launcher 为 `oldLauncher`、新 launcher 为 `newLauncher`）；该事件已落地（`IOutrunRouter.sol` 声明、`OutrunRouter.sol::_setMemeverseLauncher` emit；constructor 部署期同样经该路径首发 `SetMemeverseLauncher(address(0), launcher)`，`oldLauncher` 为零初值）；仅当 launcher 终态确定时可考虑改为 `immutable`，否则保持 live
-- router 的 `sweep(address,address,uint256)` 是 owner-only 脱困回收（`OutrunRouter.sol::sweep`、`IOutrunRouter.sol::sweep`），`onlyOwner nonReentrant`（`ReentrancyGuardTransient` 经 `TokenHelper`），零地址回退 `IOutrunRouter.sol::SweepZeroAddress`、零额回退 `IOutrunRouter.sol::SweepZeroAmount`，经 `TokenHelper::_transferOut` 支持 `NATIVE` sentinel（`address(0)`）的 ERC20/native 转出并发 `IOutrunRouter.sol::Sweep` 事件；无 per-token blocklist 为有意设计——路由器无背书资产、背书资产（`SY`）余额仅在 `_mintSY` 到 `SP.stake/wrapStake/genesis` 同一交易瞬态内出现，上界约单笔 `tokenIn` 量；第三方直接转入的无背书 token/`uAsset` dust 可跨交易存留，不进入 genesis 后置断言域，由 owner 经 `OutrunRouter.sol::sweep` 回收；该入口与 `setTrustedSY`/`setTrustedSP`/`setMemeverseLauncher` 同为持续 live 的动态能力，由 `Ownable`（产品外 multisig）管控、产品合约内不设 timelock（见 `docs/spec/router/router-and-user-flows.md` §1.1/§1.2/§7.6）
+- router owner 面（权限归属一览；完整语义、事件与撤销/轮换流程见 `docs/spec/router/router-and-user-flows.md` §1.2/§7.4/§7.5/§7.6）：
+  - `setTrustedSY(address,bool)`、`setTrustedSP(address,address)`、`setMemeverseLauncher(address)`、`sweep(address,address,uint256)` 均为 owner-only、持续 live 的动态能力（`Ownable`，产品外 multisig 治理，产品合约内不设 timelock），不随主网上线冻结移除。
+  - `setTrustedSY` 启用前要求目标为有代码的合约；`setTrustedSP` 的非零 SY 必须已登记且等于 `SP.SY()`；`sweep` 为脱困回收（零地址/零额回退，`NATIVE` sentinel 可转出，无 per-token blocklist 为有意设计）。
+  - registry 校验在用户资产 `transferFrom`、token pull 与精确 approve 之前执行；未登记 target 回退 `IOutrunRouter.sol::UntrustedRouterTarget`，pair 漂移回退 `IOutrunRouter.sol::RouterTargetMismatch`。
 - oracle adapter 不拥有 proxy upgrade 权限
 - uAsset（`OutrunUniversalAssetsUpgradeable` 含完整继承链）owner 入口分为四组，均为 owner-only（当前无 `sweep` 为有意设计，未来若新增必须 `onlyOwner nonReentrant` 经 timelock/multisig 且在 `TokenHelper::_transferOut` 前对 `token == address(this)`/`SY`/`NATIVE` 阻断，否则移动 `balanceOf` 不回写 `amountInMinted` 破坏跨账本不变量）：
   - 铸造面：`setMintingCap`、`revokeMinter`、`transferMinterDebt`

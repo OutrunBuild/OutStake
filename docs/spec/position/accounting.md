@@ -13,8 +13,8 @@
 - `OutrunStakingPositionUpgradeable.sol` 的 V1 ERC-7201 namespace 将 `SY` 与两个 decimals 配置值打包在同一个 storage word；`minStake` 至 `positions` 的后续字段位置保持不变。该布局优化适用于 V1 发布前；若存在旧布局 proxy，升级前必须迁移旧 decimals 或恢复旧 struct 顺序。
 - `SY` 依赖在 initializer 中写入后保持固定，不新增 `setSY()`，避免 position / wrap debt 对应的 share token 与 exchangeRate source 被替换。
 - oracle-backed SY upgradeable variants 可通过 owner-only `setExchangeRateOracle(address)` 更换 `exchangeRateOracle`，但 setter 不改变 balances、shares、position accounting 或 yield-bearing token 配置。
-- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（做 raw answer 正性、新鲜度窗口 `maxStaleness`（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）、可选构造期 sequencer 校验，并在精度归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds/fallback/多源聚合）；本次变更仅在归一化后追加非零校验（`ZeroNormalizedRate`），归一化前的正性/新鲜度/sequencer 校验语义不变。
-- 旧 non-upgradeable contracts 已退出当前产品真源；当前 upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout。L2 oracle-backed SY 变体（`OutrunL2StakedTokenSYUpgradeable` / `OutrunL2WstETHSYUpgradeable`）在共享基类中的 state（`exchangeRateOracle` 引用与 underlying asset 元数据）使用基类 ERC-7201 槽 `erc7201("outrun.storage.OutrunL2OracleBackedSY")`；原 per-subclass 命名空间 `outrun.storage.OutrunL2StakedTokenSY` / `outrun.storage.OutrunL2WstETHSY` 已并入该槽，升级兼容性以新槽为准。前提：当前无任何测试网/主网部署这两个变体（无存量旧布局 proxy），V1 发布前布局变更无需迁移函数；若出现任何存量部署，必须先提供迁移函数或恢复旧命名空间。
+- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（做 raw answer 正性、新鲜度窗口 `maxStaleness`（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）、可选构造期 sequencer 校验，并在精度归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds/fallback/多源聚合）。
+- 当前 upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout。L2 oracle-backed SY 变体（`OutrunL2StakedTokenSYUpgradeable` / `OutrunL2WstETHSYUpgradeable`）在共享基类中的 state（`exchangeRateOracle` 引用与 underlying asset 元数据）使用基类 ERC-7201 槽 `erc7201("outrun.storage.OutrunL2OracleBackedSY")`，升级兼容性以该槽为准。前提：当前无任何测试网/主网部署这两个变体（无存量部署），V1 发布前布局变更无需迁移函数；若出现任何存量部署，必须先提供迁移函数。
 
 ## 2. `uAsset` 的 minter-cap 账务
 
@@ -29,8 +29,8 @@
 - `mint(receiver, amount)` 由调用者自己的 minter 额度承担，成功后增加调用者的 `amountInMinted`。
 - `repay(account, amount)` 减少调用者（`msg.sender`，即 minter）自己的 `amountInMinted`；`account` 是被 burn 的地址，必须持有足够的 `uAsset`。若 `account != msg.sender`，则还必须先授权 `msg.sender` 消耗对应 `uAsset`。
 - `revokeMinter(minter)` 只把 cap 设为 0 以禁止后续 mint，不会自动清空历史已铸债务；既有 `amountInMinted` 保留到后续 repay。
-- `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束（不 mint/burn/transfer、`mintingCap` headroom、用途限定）以 `docs/spec/common-foundations.md`「基础规则」为准。
-- accounting 视角补充：`transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务，不更新 position/wrap 记录；仅限修复无仓位/wrap 债支撑的错账（SP 侧无账本导出/导入入口，活账本迁移不可执行），活 SP 退役走清盘路径（见 `docs/spec/position/state-machines.md` §8.6）。
+- `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束以 `docs/spec/common-foundations.md`「基础规则」为准。
+- accounting 视角补充：`transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务，不更新 position/wrap 记录（SP 侧无账本导出/导入入口）；用途限定与对账验收见 `docs/spec/common-foundations.md`「基础规则」与本文 §10.2。
 - OFT 跨链铸烧豁免（outbound `_debit`/inbound `_credit` 不触碰 minter 债务台账、`_credit` 零地址重映射 `0xdead`）以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
 
 因此，`uAsset` 当前不是”全局总债务池”，而是”按 minter 独立记账的铸造额度和未偿债务”；owner 只能迁移这笔 minter 维度债务归属，不能消灭债务或改变总供应，也不能仅靠 `uAsset` 调账就让 position/wrap 账本自动一致。
@@ -135,7 +135,7 @@ rounding matrix：
 
 因此，position/wrap 账务都以 `SY` 数量和资产值之间的双向换算为前提，但 mixed-decimals 双段归一化按上表作为当前实现落文。
 
-- 上表三处 up/up 守卫（wrap redeem 健康守卫、keeper redeem 全仓位守卫、harvest coverage）共享 `OutrunStakingPositionUpgradeable.sol::_assetToSyUp` 的双段复合，在 `uAssetDecimals > canonicalAssetDecimals` 且债务非 f 整除（`f = 10 ** (uAssetDecimals - canonicalAssetDecimals)`）时继承同一量化偏差带（至多 `1e18 / exchangeRate + 1` SY wei，exchangeRate ≥ 1e18 时 1 wei；wrap 债务整除性经 `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 任意整数减债即可破坏），方向保守、只误拒不放行不足额；量化以 `docs/spec/common-foundations.md` 的「mixed-decimals up/up 双段复合取整偏差」条目为准
+- 上表三处 up/up 守卫（wrap redeem 健康守卫、keeper redeem 全仓位守卫、harvest coverage）共享 `OutrunStakingPositionUpgradeable.sol::_assetToSyUp` 的双段复合，继承同一保守量化偏差带（方向保守、只误拒不放行不足额）；量化推导以 `docs/spec/common-foundations.md`「mixed-decimals up/up 双段复合取整偏差」条目为准。
 
 ## 6. Draw 账务
 
@@ -188,9 +188,9 @@ rounding matrix：
 
 不足额判定说明：
 
-- 全仓位守卫与 per-amount 防御都 revert `InsufficientSyCollateral()`，但判定口径不同：前者在仓位整体不足额时一刀切拒绝任何 `amountInUAsset > 0` 的调用，且在全仓位守卫前置下已严格覆盖所有 per-amount 情形；后者不重复全仓位判断、正常路径不触发，仅作为**防御性不变量检查**保留，防止未来重构在成功分账时 `ownerExcessSY = syRedeemed - keeperPrincipalSY` 下溢
-- 方向性说明：不足额仓位上任何 `amountInUAsset > 0` 的 keepRedeem，keeper 拿回 SY 的市值不大于所烧 uAsset 面值（当前汇率下至多盈亏平衡，整除边界存在平衡例外），故全仓位一刀切拒绝不会放行任何“实值亏损”的 redeem，只可能误拒（量化偏差带见下述限定）；`revert 触发 ⟺ 仓位整体不足额` 在全仓位守卫口径下成立；限定：在 `uAssetDecimals > canonicalAssetDecimals` 且债务非 f 整除（`f = 10 ** (uAssetDecimals - canonicalAssetDecimals)`）时，up/up 双段复合守卫相对精确紧界存在量化偏差带——至多 `1e18 / exchangeRate + 1` SY wei（exchangeRate ≥ 1e18 时 1 wei），偿付裕度落入该带的“实值不亏”仓位会被误拒（前述「整除边界存在平衡例外」carve-out 只覆盖盈亏平衡，不覆盖带内严格充足）；偏差方向保守——守卫值恒不低于债务精确面值，绝不放行不足额仓位，owner 可经 `OutrunStakingPositionUpgradeable.sol::redeem` 自赎（redeem 无该守卫）；量化与推导以 `docs/spec/common-foundations.md` 的「mixed-decimals up/up 双段复合取整偏差」条目为准
-- keepRedeem 对调用者（keeper）的 `uAsset` 零暴露：两种不足额判定触发时调用都失败且不烧 `uAsset`，汇率下跌风险由仓位/owner 承担，不内化到 keeper 调用者
+- 全仓位守卫与 per-amount 防御都 revert `InsufficientSyCollateral()`，但判定口径不同：前者在仓位整体不足额时一刀切拒绝任何 `amountInUAsset > 0` 的调用，且已严格覆盖所有 per-amount 情形；后者正常路径不触发，仅作为防御性不变量检查保留，防止未来重构在成功分账时 `ownerExcessSY = syRedeemed - keeperPrincipalSY` 下溢。
+- 方向性：守卫绝不放行不足额仓位，只可能在 `docs/spec/common-foundations.md`「mixed-decimals up/up 双段复合取整偏差」刻画的量化偏差带内误拒；owner 可经 `OutrunStakingPositionUpgradeable.sol::redeem` 自赎（redeem 无该守卫）。
+- keepRedeem 对调用者（keeper）的 `uAsset` 零暴露：不足额判定触发时调用失败且不烧 `uAsset`，汇率下跌风险由仓位/owner 承担，不内化到 keeper 调用者。
 
 只读查询：
 

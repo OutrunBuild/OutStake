@@ -6,7 +6,10 @@
 
 ## 边界
 
+本节为 `OutrunExchangeOracleAdapter` 的语义真源；其他文档（基础规则表、术语表、架构总览、implementation map）对该 adapter 的描述均为指针或摘要。
+
 - `OutrunExchangeOracleAdapter` 仍是非 upgradeable helper
+- adapter 经 `AggregatorInterface.latestRoundData()` 读取 feed（`answer` 与 `updatedAt` 取自同一 round），不使用 `latestAnswer()`
 - oracle-backed SY upgradeable variants 通过 `exchangeRateOracle` storage 指向 oracle adapter
 - `setExchangeRateOracle(address)` 是 owner-only
 - adapter 自身做 raw answer 正性检查（非正 revert `InvalidOracleAnswer`）与 `maxStaleness` 新鲜度窗口校验（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）及可选构造期 L2 sequencer 校验，并在归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 heartbeat、deviation bounds、fallback 或多源聚合保证；5 个具名错误全集声明于 `IExchangeRateOracle.sol`，校验实现见 `OutrunExchangeOracleAdapter.sol::getExchangeRate` 与 `OutrunExchangeOracleAdapter.sol::_validateSequencer`
