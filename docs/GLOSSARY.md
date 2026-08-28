@@ -1,4 +1,4 @@
-# OutStakeV2 术语表
+# OutStake 术语表
 
 - **uAsset (Universal Asset)**：统一债务与流通资产层代币，按 minter 维度的 mint cap 约束铸造，通过 repay 路径回收对应债务。
 - **SY (Standardized Yield)**：标准化收益份额代币，将不同外部收益资产包装为统一的 deposit / redeem / preview / exchangeRate 接口。

@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'OutStakeV2 禁用 EnterWorktree（默认建到 .claude/worktrees/）。worktree 用: git worktree add .worktrees/<name>' >&2; exit 2"
+            "command": "echo 'OutStake 禁用 EnterWorktree（默认建到 .claude/worktrees/）。worktree 用: git worktree add .worktrees/<name>' >&2; exit 2"
           }
         ]
       }

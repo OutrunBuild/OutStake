@@ -1,4 +1,4 @@
-# OutStakeV2 Protocol Specification
+# OutStake Protocol Specification
 
 ## 系统目标
 

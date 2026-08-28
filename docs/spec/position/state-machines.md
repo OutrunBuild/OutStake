@@ -1,8 +1,8 @@
-# OutStakeV2 State Machines
+# OutStake State Machines
 
 ## 1. 文档目的
 
-本文档把 `OutStakeV2` 当前用户可见主流程整理成状态机表达，帮助读者理解各个入口如何改变 position、wrap 池、`uAsset` debt 与 pause 状态。本文只描述当前本地代码里已经存在的流程，并记录当前 upgradeable-only implementation 的状态机边界；mixed-decimals 双段换算与 harvest coverage rounding 的条目均为当前代码已完成行为，按当前实现语义直接描述。
+本文档把 `OutStake` 当前用户可见主流程整理成状态机表达，帮助读者理解各个入口如何改变 position、wrap 池、`uAsset` debt 与 pause 状态。本文只描述当前本地代码里已经存在的流程，并记录当前 upgradeable-only implementation 的状态机边界；mixed-decimals 双段换算与 harvest coverage rounding 的条目均为当前代码已完成行为，按当前实现语义直接描述。
 
 position manager 的完整错误参数、回滚边界和事件字段以 [accounting.md §11](./accounting.md) 为 canonical surface；本文件在每条状态机中保留入口实际执行顺序和对应错误/事件交叉引用。
 

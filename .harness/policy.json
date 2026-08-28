@@ -42,7 +42,7 @@
       "solidity_test": "normal"
     }
   },
-  "repo": "OutStakeV2",
+  "repo": "OutStake",
   "risk_rules": {
     "slither_exclude_detectors": "naming-convention,too-many-digits,unindexed-event-address,immutable-states,unimplemented-functions",
     "slither_filter_paths": "lib|test|script|node_modules"

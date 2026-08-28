@@ -1,8 +1,8 @@
-# OutStakeV2 Accounting
+# OutStake Accounting
 
 ## 1. 文档目的
 
-本文档说明 `OutStakeV2` 当前实现中的核心账务规则，并明确 mixed-decimals 双段换算语义，包括 `uAsset` minter-cap、position debt、wrap 池、汇率换算、赎回按比例销债、keeper redeem 分账与 wrap yield harvest。
+本文档说明 `OutStake` 当前实现中的核心账务规则，并明确 mixed-decimals 双段换算语义，包括 `uAsset` minter-cap、position debt、wrap 池、汇率换算、赎回按比例销债、keeper redeem 分账与 wrap yield harvest。
 
 ## 1.1 Upgradeable accounting readiness
 
@@ -92,7 +92,7 @@ wrap 池当前使用三组聚合账务变量：
 - 如果用户贡献的是价值 X 的资产，则铸出的 SY 或 debt 应通过同一换算关系推导
 - position / wrap debt 的统一语义是：先 `SY -> canonical asset`，再 `canonical asset -> uAsset`；需要从 debt 反推 `SY` 时，则先 `uAsset -> canonical asset`，再 `canonical asset -> SY`
 - `canonical asset` 在这里是 `exchangeRate()` 定义的价值单位；`canonicalAssetDecimals` 取自 `SY.assetInfo().assetDecimals`，`uAssetDecimals` 取自 `uAsset.decimals()`
-- 以下 mixed-decimals 双段换算为当前代码已完成行为；具体单位模型与四个基础公式以 [docs/spec/common-foundations.md](/home/azkrale/Web3Project/OutStakeV2/docs/spec/common-foundations.md) 为准
+- 以下 mixed-decimals 双段换算为当前代码已完成行为；具体单位模型与四个基础公式以 [docs/spec/common-foundations.md](/home/azkrale/Web3Project/OutStake/docs/spec/common-foundations.md) 为准
 
 `OutrunStakingPositionUpgradeable` 的相关账务应按四个基础方向换算：
 

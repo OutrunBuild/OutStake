@@ -1,4 +1,4 @@
-# OutStakeV2
+# OutStake
 
 Foundry-only workspace.
 

@@ -1,10 +1,10 @@
 # AGENTS Contract
 
-OutStakeV2 is a pre-deployment Foundry (Solidity) staking protocol suite — upgradeable staking positions, a router, standardized-yield (SY) adapters for Aave/Aster/Ethena/Etherfi/Lido/Lista/Sky, oracle libraries, and LayerZero omnichain assets — whose repository work is routed through a policy/gate harness (`script/harness/gate.sh` + `.harness/policy.json`). Goal: route repository work through the harness without violating policy, review, or verification rules.
+OutStake is a pre-deployment Foundry (Solidity) staking protocol suite — upgradeable staking positions, a router, standardized-yield (SY) adapters for Aave/Aster/Ethena/Etherfi/Lido/Lista/Sky, oracle libraries, and LayerZero omnichain assets — whose repository work is routed through a policy/gate harness (`script/harness/gate.sh` + `.harness/policy.json`). Goal: route repository work through the harness without violating policy, review, or verification rules.
 
 ## Session Entry
 
-- AGENTS.md is the session entry for OutStakeV2.
+- AGENTS.md is the session entry for OutStake.
 - Load only the files needed for the current task. Control-file read order is fixed:
   1. AGENTS.md
   2. .harness/policy.json

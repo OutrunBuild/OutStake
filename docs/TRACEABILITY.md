@@ -1,4 +1,4 @@
-# OutStakeV2 Traceability
+# OutStake Traceability
 
 - Machine truth: .harness/policy.json
 - Session contract: .harness/runtime/main-session-contract.md

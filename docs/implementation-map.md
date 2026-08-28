@@ -1,8 +1,8 @@
-# OutStakeV2 Implementation Map
+# OutStake Implementation Map
 
 ## 文档目的
 
-本文档用于给出 `OutStakeV2` 当前实现面的结构化映射，说明各 surface 的本地依赖、证据来源与当前状态。
+本文档用于给出 `OutStake` 当前实现面的结构化映射，说明各 surface 的本地依赖、证据来源与当前状态。
 
 本文档只描述本仓库当前源码、测试与部署入口能够直接证明的实现事实。凡涉及外部协议、oracle、跨链消息、launcher 或 vault 行为，而本仓库无法单独证明其真实线上表现者，均作为本地依赖边界陈述，不升级为既成事实。
 

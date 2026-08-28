@@ -1,4 +1,4 @@
-# OutStakeV2 Oracles And Integrations
+# OutStake Oracles And Integrations
 
 ## 文档目的
 

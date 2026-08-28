@@ -1,4 +1,4 @@
-# OutStakeV2 Router And User Flows
+# OutStake Router And User Flows
 
 ## 1. 文档目的
 

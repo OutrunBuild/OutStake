@@ -1,4 +1,4 @@
-# OutStakeV2 Yield Adapters
+# OutStake Yield Adapters
 
 ## 文档目的
 

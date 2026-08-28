@@ -1,4 +1,4 @@
-# OutStakeV2 Verification
+# OutStake Verification
 
 - Verification entrypoint: `script/harness/gate.sh`
 - Classification-only entrypoint: `bash script/harness/gate.sh --classify-only --changed-files <path> [<path> ...]`

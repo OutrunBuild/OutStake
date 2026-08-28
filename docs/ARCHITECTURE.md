@@ -1,4 +1,4 @@
-# OutStakeV2 架构总览
+# OutStake 架构总览
 
 ## 1. 模块地图
 
