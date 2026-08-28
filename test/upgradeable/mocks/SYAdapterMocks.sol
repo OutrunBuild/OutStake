@@ -259,6 +259,7 @@ contract MockWstETH is MockToken {
         return stEthAmount;
     }
 
+    // solhint-disable-next-line no-complex-fallback
     receive() external payable {
         // Mimic real WstETH.receive: stake ETH via stETH and mint wstETH directly
         // Real path is shares = stETH.submit{value}(); _mint(msg.sender, shares);

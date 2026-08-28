@@ -95,6 +95,15 @@
       "key": "low-level-calls|src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol|Low level call in OutrunWstETHSYUpgradeable._deposit(address,uint256):"
     },
     {
+      "id": "b72ac5fda5043a62fdd39b6793ea49b751e8713955dbfc33efe7f430c28b9f68",
+      "check": "reentrancy-balance",
+      "impact": "High",
+      "confidence": "Medium",
+      "location": "src/router/OutrunRouter.sol#L312-L350",
+      "summary": "Reentrancy in OutrunRouter._genesisFromSYBalance(address,address,uint256,uint128,uint256,address,uint256):",
+      "key": "reentrancy-balance|src/router/OutrunRouter.sol|Reentrancy in OutrunRouter._genesisFromSYBalance(address,address,uint256,uint128,uint256,address,uint256):"
+    },
+    {
       "id": "42c816a65344b9ddfac977017eecfbde55a0cd2bb729dac1ad8e4b63274600b2",
       "check": "reentrancy-balance",
       "impact": "High",

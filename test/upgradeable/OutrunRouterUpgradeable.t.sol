@@ -349,8 +349,8 @@ contract OutrunRouterTest is Test {
         assertEq(uAsset.balanceOf(address(router)), 1);
         assertEq(uAsset.balanceOf(address(launcher)), 100e18);
         assertEq(uAsset.allowance(address(router), address(launcher)), 0);
-        (, uint128 launcherUAsset,) = launcher.snapshot();
-        assertEq(launcherUAsset, 100e18);
+        (, uint128 snapUAsset,) = launcher.snapshot();
+        assertEq(snapUAsset, 100e18);
 
         vm.prank(owner);
         router.genesisByToken(address(position), address(underlying), 100e18, 0, 30, 1, owner, 0);
@@ -358,8 +358,8 @@ contract OutrunRouterTest is Test {
         assertEq(uAsset.balanceOf(address(router)), 1);
         assertEq(uAsset.balanceOf(address(launcher)), 200e18);
         assertEq(uAsset.allowance(address(router), address(launcher)), 0);
-        (, launcherUAsset,) = launcher.snapshot();
-        assertEq(launcherUAsset, 100e18);
+        (, snapUAsset,) = launcher.snapshot();
+        assertEq(snapUAsset, 100e18);
     }
 
     function test_RevertWhen_LauncherPartiallyConsumesGenesisUAsset() external {
