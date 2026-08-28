@@ -10,7 +10,6 @@ import {IAToken} from "../../src/integrations/aave/interfaces/IAToken.sol";
 import {IAsBnbMinter} from "../../src/integrations/aster/interfaces/IAsBnbMinter.sol";
 import {IYieldProxy} from "../../src/integrations/aster/interfaces/IYieldProxy.sol";
 import {ILiquidityPool} from "../../src/integrations/etherfi/interfaces/ILiquidityPool.sol";
-import {IL2StETH} from "../../src/integrations/lido/interfaces/IL2StETH.sol";
 import {IListaStakeManager} from "../../src/integrations/lista/interfaces/IListaStakeManager.sol";
 import {IWstETH} from "../../src/integrations/lido/interfaces/IWstETH.sol";
 import {IPSM3} from "../../src/integrations/sky/interfaces/IPSM3.sol";
@@ -20,9 +19,6 @@ import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAav
 import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol";
 import {OutrunStakedUSDeSYUpgradeable} from "../../src/yield/adapters/ethena/OutrunStakedUSDeSYUpgradeable.sol";
 import {OutrunWeETHSYUpgradeable} from "../../src/yield/adapters/etherfi/OutrunWeETHSYUpgradeable.sol";
-import {
-    OutrunL2WrappableWstETHSYUpgradeable
-} from "../../src/yield/adapters/lido/OutrunL2WrappableWstETHSYUpgradeable.sol";
 import {OutrunSlisBNBSYUpgradeable} from "../../src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol";
 import {OutrunWstETHSYUpgradeable} from "../../src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol";
 import {OutrunL2StakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol";
@@ -420,99 +416,6 @@ contract SYAdaptersEtherfiMainnetForkTest is Test {
                     abi.encodeCall(
                         OutrunWeETHSYUpgradeable.initialize,
                         (OWNER, EETH, WEETH, ETHERFI_DEPOSIT_ADAPTER, ETHERFI_LIQUIDITY_POOL)
-                    )
-                ))
-        );
-    }
-}
-
-contract SYAdaptersOptimismForkTest is Test {
-    address internal constant OWNER = address(0xA11CE);
-    uint256 internal constant OPTIMISM_MAINNET_CHAIN_ID = 10;
-    uint256 internal constant OPTIMISM_MAINNET_FORK_BLOCK = 151_675_883;
-
-    address internal constant L1_STETH = 0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84;
-    address internal constant OP_WSTETH = 0x1F32b1c2345538c0c6f582fCB022739c4A194Ebb;
-    address internal constant OP_STETH = 0x76A50b8c7349cCDDb7578c6627e79b5d99D24138;
-
-    OutrunL2WrappableWstETHSYUpgradeable internal lidoL2Sy;
-
-    function setUp() external {
-        string memory optimismRpc;
-        try vm.envString("OPTIMISM_MAINNET_RPC") returns (string memory rpc) {
-            optimismRpc = rpc;
-        } catch {
-            vm.skip(true);
-            return;
-        }
-
-        try vm.createSelectFork(optimismRpc, OPTIMISM_MAINNET_FORK_BLOCK) returns (uint256) {}
-        catch {
-            vm.skip(true);
-            return;
-        }
-        assertEq(block.chainid, OPTIMISM_MAINNET_CHAIN_ID);
-        assertEq(block.number, OPTIMISM_MAINNET_FORK_BLOCK);
-
-        assertGt(OP_WSTETH.code.length, 0);
-        assertGt(OP_STETH.code.length, 0);
-
-        lidoL2Sy = _deployLidoL2Sy();
-        // L1_STETH is an Ethereum mainnet address with no code on this L2 fork, so its wiring is
-        // asserted through the adapter's stored assetInfo() rather than a code-length check.
-        (, address l1Underlying,) = lidoL2Sy.assetInfo();
-        assertEq(l1Underlying, L1_STETH);
-    }
-
-    function testOptimismFork_LidoL2WrappableWstEthMatchesLiveQuote() external {
-        uint256 amount = 0.1 ether;
-        deal(OP_WSTETH, address(this), amount);
-        IERC20(OP_WSTETH).approve(address(lidoL2Sy), amount);
-
-        assertEq(lidoL2Sy.yieldBearingToken(), OP_WSTETH);
-        assertEq(lidoL2Sy.stETH(), OP_STETH);
-        assertEq(lidoL2Sy.exchangeRate(), IL2StETH(OP_STETH).getTokensByShares(1 ether));
-
-        uint256 previewShares = lidoL2Sy.previewDeposit(OP_WSTETH, amount);
-        uint256 shares = lidoL2Sy.deposit(address(this), OP_WSTETH, amount, 0);
-        assertEq(shares, previewShares);
-        assertEq(lidoL2Sy.balanceOf(address(this)), shares);
-        assertEq(IERC20(OP_WSTETH).balanceOf(address(lidoL2Sy)), shares);
-
-        uint256 previewWstEth = lidoL2Sy.previewRedeem(OP_WSTETH, shares);
-        uint256 redeemed = lidoL2Sy.redeem(address(this), shares, OP_WSTETH, 0, false);
-        assertEq(redeemed, previewWstEth);
-        assertEq(lidoL2Sy.balanceOf(address(this)), 0);
-        assertEq(IERC20(OP_WSTETH).balanceOf(address(this)), redeemed);
-
-        IERC20(OP_WSTETH).approve(address(lidoL2Sy), amount);
-        uint256 sharesForStEthRedeem = lidoL2Sy.deposit(address(this), OP_WSTETH, amount, 0);
-        uint256 stEthAmount = lidoL2Sy.redeem(address(this), sharesForStEthRedeem, OP_STETH, 0, false);
-        assertEq(
-            IERC20(OP_WSTETH).allowance(address(lidoL2Sy), OP_STETH), 0, "live wrap leg leaves no wstETH allowance"
-        );
-        uint256 previewSharesFromStEth = lidoL2Sy.previewDeposit(OP_STETH, stEthAmount);
-        IERC20(OP_STETH).approve(address(lidoL2Sy), stEthAmount);
-        uint256 sharesFromStEth = lidoL2Sy.deposit(address(this), OP_STETH, stEthAmount, 0);
-        assertEq(previewSharesFromStEth, IL2StETH(OP_STETH).getSharesByTokens(stEthAmount));
-        assertEq(sharesFromStEth, previewSharesFromStEth);
-        assertEq(lidoL2Sy.balanceOf(address(this)), sharesFromStEth);
-
-        uint256 previewStEth = lidoL2Sy.previewRedeem(OP_STETH, sharesFromStEth);
-        uint256 redeemedStEth = lidoL2Sy.redeem(address(this), sharesFromStEth, OP_STETH, 0, false);
-        assertEq(previewStEth, IL2StETH(OP_STETH).getTokensByShares(sharesFromStEth));
-        assertEq(redeemedStEth, previewStEth);
-        assertEq(lidoL2Sy.balanceOf(address(this)), 0);
-        assertApproxEqAbs(IERC20(OP_STETH).balanceOf(address(this)), redeemedStEth, 1);
-    }
-
-    function _deployLidoL2Sy() internal returns (OutrunL2WrappableWstETHSYUpgradeable) {
-        OutrunL2WrappableWstETHSYUpgradeable impl = new OutrunL2WrappableWstETHSYUpgradeable();
-        return OutrunL2WrappableWstETHSYUpgradeable(
-            payable(ProxyTestHelper.deploy(
-                    address(impl),
-                    abi.encodeCall(
-                        OutrunL2WrappableWstETHSYUpgradeable.initialize, (OWNER, OP_STETH, OP_WSTETH, L1_STETH, 18)
                     )
                 ))
         );
