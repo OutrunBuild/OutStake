@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {MockAUSDCOracle} from "./mocks/MockAUSDCOracle.sol";
 import {MockSUSDSOracle} from "./mocks/MockSUSDSOracle.sol";
 import {OutrunExchangeOracleAdapter} from "../../src/libraries/oracle/OutrunExchangeOracleAdapter.sol";
+import {IExchangeRateOracle} from "../../src/libraries/oracle/interfaces/IExchangeRateOracle.sol";
 import {MockAggregator} from "./mocks/MockOracleWarningsMocks.sol";
 
 contract MockOracleWarningsTest is Test {
@@ -128,6 +129,27 @@ contract MockOracleWarningsTest is Test {
 
         vm.expectRevert(SEQUENCER_GRACE_PERIOD_NOT_OVER_SELECTOR);
         adapter.getExchangeRate();
+    }
+
+    /// @notice elapsed == grace is rejected (strict <=), one second past the grace passes — the
+    ///      spec leaves the equal-value point undefined, this pins the implementation's choice.
+    function test_OracleGraceBoundaryEqualValueIsRejected() external {
+        MockAggregator priceFeed = new MockAggregator(8);
+        MockAggregator sequencer = new MockAggregator(0);
+        OutrunExchangeOracleAdapter adapter =
+            new OutrunExchangeOracleAdapter(address(priceFeed), 1 days, address(sequencer), 1 hours);
+
+        vm.warp(10 days);
+        priceFeed.setLatestRoundData(1e8, block.timestamp);
+
+        // Recovery recorded exactly one grace period ago: elapsed == grace must still revert.
+        sequencer.setLatestRoundData(0, block.timestamp - 1 hours, block.timestamp - 1 hours);
+        vm.expectRevert(IExchangeRateOracle.SequencerGracePeriodNotOver.selector);
+        adapter.getExchangeRate();
+
+        // One second past the grace window the answer is accepted.
+        sequencer.setLatestRoundData(0, block.timestamp - 1 hours - 1, block.timestamp - 1 hours - 1);
+        assertEq(adapter.getExchangeRate(), 1e18, "answer past grace window was rejected");
     }
 
     function testExchangeOracleAdapterNormalizes8DecimalAnswerTo18Scale() external {

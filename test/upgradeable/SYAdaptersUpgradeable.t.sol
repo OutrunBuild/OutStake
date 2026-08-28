@@ -164,15 +164,30 @@ contract SYAdaptersUpgradeableTest is Test {
         assertEq(sharesOut, scaledDelta);
     }
 
-    function testAaveUnderlyingDepositThatRoundsToZeroReverts() external {
+    function testAaveUnderlyingDepositPropagatesPoolZeroScaledAmountRevert() external {
         uint256 amount = 1;
         (address sy, MockToken underlying,) = _deployAave(3e27);
 
         underlying.mint(user, amount);
         vm.startPrank(user);
         underlying.approve(sy, amount);
+        // The pool's zero-scaled-amount guard is the deepest observable revert on this path;
+        // the adapter's own zero-shares guard is covered by the aToken-branch test below.
         vm.expectRevert(ScaledAmountIsZero.selector);
         _asSY(sy).deposit(user, address(underlying), amount, 0);
+        vm.stopPrank();
+    }
+
+    function testAaveATokenDepositThatRoundsToZeroReverts() external {
+        (address sy,, MockAToken aToken) = _deployAave(3e27);
+
+        aToken.mint(user, 1);
+        vm.startPrank(user);
+        aToken.approve(sy, 1);
+        // 1 wei aToken at a 3e27 liquidity index scales to zero shares; the adapter's own
+        // zero-shares guard fires before any minSharesOut check.
+        vm.expectRevert(OutrunAaveV3SYUpgradeable.AaveZeroShares.selector);
+        _asSY(sy).deposit(user, address(aToken), 1, 0);
         vm.stopPrank();
     }
 

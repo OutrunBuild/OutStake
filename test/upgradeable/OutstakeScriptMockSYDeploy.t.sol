@@ -13,6 +13,7 @@ import {MockSUSDS} from "../support/mocks/MockSUSDS.sol";
 import {MockAUSDCOracle} from "../support/mocks/MockAUSDCOracle.sol";
 import {MockSUSDSOracle} from "../support/mocks/MockSUSDSOracle.sol";
 import {MockExchangeRateOracle} from "../support/mocks/MockExchangeRateOracle.sol";
+import {YieldDeployMockUniversalAsset} from "../deploy/mocks/YieldDeployMocks.sol";
 
 contract OutstakeScriptHarness is OutstakeScript {
     function configure(address owner_, address deployer_, address outrunDeployer_) external {
@@ -55,6 +56,7 @@ contract OutstakeScriptMockSYDeployTest is Test {
     // cross-wiring or a broken/reverting oracle is detectable.
     MockAUSDCOracle internal mockAUSDCOracle;
     MockSUSDSOracle internal mockSUSDSOracle;
+    YieldDeployMockUniversalAsset internal uusd;
 
     function setUp() external {
         script = new OutstakeScriptHarness();
@@ -124,6 +126,99 @@ contract OutstakeScriptMockSYDeployTest is Test {
 
         vm.expectRevert(MockExchangeRateOracle.InvalidOracleAnswer.selector);
         aUSDCSY.exchangeRate();
+    }
+
+    // --- mock-support validation matrix (the revert legs of _validateMockSupportConfig) ---
+
+    /// @dev Baseline env wiring that passes validation: a deployed mock SY reading its own oracle,
+    ///      and a UUSD stand-in that is Ownable-by-script, carries code, and answers decimals().
+    function _setValidMockSupportEnv() internal {
+        uusd = new YieldDeployMockUniversalAsset(address(script));
+        script.exposedDeployMockERC20SY(1);
+        address syAddress =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("MockAUSDCSY", uint256(1))));
+        mockAUSDCOracle.setLatestAnswer(1_100_000);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("MOCK_AUSDC_SY", vm.toString(syAddress));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("UUSD", vm.toString(address(uusd)));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("REVENUE_POOL", vm.toString(user));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("KEEPER", vm.toString(user));
+    }
+
+    function testSupportMockAUSDCPassesValidationAndDeploysThePosition() external {
+        _setValidMockSupportEnv();
+
+        script.exposedSupportMockAUSDC(2);
+
+        address sp =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("Mock SP aUSDC", uint256(2))));
+        assertGt(sp.code.length, 0);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCOwnerDiffersFromDeployer() external {
+        _setValidMockSupportEnv();
+        script.configure(user, address(script), address(outrunDeployer));
+
+        vm.expectRevert(OutstakeScript.InvalidOwner.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCKeeperIsZero() external {
+        _setValidMockSupportEnv();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("KEEPER", vm.toString(address(0)));
+
+        vm.expectRevert(OutstakeScript.InvalidKeeper.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCUUSDIsZeroAddress() external {
+        _setValidMockSupportEnv();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("UUSD", vm.toString(address(0)));
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCSyIsZeroAddress() external {
+        _setValidMockSupportEnv();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("MOCK_AUSDC_SY", vm.toString(address(0)));
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCUUSDHasNoCode() external {
+        _setValidMockSupportEnv();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("UUSD", vm.toString(user));
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCUUSDOwnerDiffersFromScriptOwner() external {
+        _setValidMockSupportEnv();
+        // MockUSDC carries code but is owned by this test contract, not by the configured owner.
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("UUSD", vm.toString(address(mockUSDC)));
+
+        vm.expectRevert(OutstakeScript.InvalidOwner.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCSyExchangeRateRevertsFailClosed() external {
+        _setValidMockSupportEnv();
+        // A zeroed oracle makes the SY's exchangeRate() revert; validation must fail closed.
+        mockAUSDCOracle.setLatestAnswer(0);
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
+        script.exposedSupportMockAUSDC(2);
     }
 
     // The default forge chainid 31337 is inside the allowlist, so the deploy tests above are

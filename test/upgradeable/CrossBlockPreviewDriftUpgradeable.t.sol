@@ -6,12 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
 import {OutrunWstETHSYUpgradeable} from "../../src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol";
 import {OutrunL2StakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol";
-import {OutrunExchangeOracleAdapter} from "../../src/libraries/oracle/OutrunExchangeOracleAdapter.sol";
-import {IExchangeRateOracle} from "../../src/libraries/oracle/interfaces/IExchangeRateOracle.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {MockToken, MockAToken, MockAavePool, MockStETH, MockWstETH, MockPSM3} from "./mocks/SYAdapterMocks.sol";
-import {MockAggregator} from "../support/mocks/MockOracleWarningsMocks.sol";
 
 /**
  * @title CrossBlockPreviewDriftUpgradeableTest
@@ -22,9 +19,7 @@ import {MockAggregator} from "../support/mocks/MockOracleWarningsMocks.sol";
  *      taken at T0 is either still exact, or the execution is lower and the call with
  *      minSharesOut = preview(T0) reverts (SYInsufficientSharesOut) — it can never silently pass at
  *      a lower amount. Discounted (50 bps) NATIVE branches additionally survive small cross-block
- *      drift by design. The oracle adapter's sequencer grace equal-value point (elapsed == grace is
- *      rejected, strict <=) is pinned here too — the staleness equal-point is already covered by
- *      MockOracleWarnings.t.sol::testFuzz_StalenessBoundaryTwoSided.
+ *      drift by design.
  */
 contract CrossBlockPreviewDriftUpgradeableTest is Test {
     address internal owner = makeAddr("owner");
@@ -197,9 +192,12 @@ contract CrossBlockPreviewDriftUpgradeableTest is Test {
         stETH.setPooledEthPerShare(2.2e18);
         wstETH.setStEthPerToken(2.2e18);
 
-        vm.prank(user);
-        vm.expectRevert();
+        vm.startPrank(user);
+        uint256 executed = IStandardizedYield(address(wstEthSy)).deposit{value: amount}(user, address(0), amount, 0);
+        assertLt(executed, preview, "drifted execution must fall below the stale discounted preview");
+        vm.expectRevert(abi.encodeWithSelector(IStandardizedYield.SYInsufficientSharesOut.selector, executed, preview));
         IStandardizedYield(address(wstEthSy)).deposit{value: amount}(user, address(0), amount, preview);
+        vm.stopPrank();
     }
 
     // --------------------------------------------------------------------------
@@ -247,30 +245,5 @@ contract CrossBlockPreviewDriftUpgradeableTest is Test {
             IStandardizedYield(address(skyL2Sy)).redeem(user, shares, address(usdc), redeemPreview, false);
         assertGe(redeemed, redeemPreview, "redeem execution fell below stale preview after rate growth");
         vm.stopPrank();
-    }
-
-    // --------------------------------------------------------------------------
-    // Oracle adapter: sequencer grace equal-value point
-    // --------------------------------------------------------------------------
-
-    /// @notice elapsed == grace is rejected (strict <=), one second past the grace passes — the
-    ///      spec leaves the equal-value point undefined, this pins the implementation's choice.
-    function test_OracleGraceBoundaryEqualValueIsRejected() external {
-        MockAggregator priceFeed = new MockAggregator(8);
-        MockAggregator sequencer = new MockAggregator(0);
-        OutrunExchangeOracleAdapter adapter =
-            new OutrunExchangeOracleAdapter(address(priceFeed), 1 days, address(sequencer), 1 hours);
-
-        vm.warp(10 days);
-        priceFeed.setLatestRoundData(1e8, block.timestamp);
-
-        // Recovery recorded exactly one grace period ago: elapsed == grace must still revert.
-        sequencer.setLatestRoundData(0, block.timestamp - 1 hours, block.timestamp - 1 hours);
-        vm.expectRevert(IExchangeRateOracle.SequencerGracePeriodNotOver.selector);
-        adapter.getExchangeRate();
-
-        // One second past the grace window the answer is accepted.
-        sequencer.setLatestRoundData(0, block.timestamp - 1 hours - 1, block.timestamp - 1 hours - 1);
-        assertEq(adapter.getExchangeRate(), 1e18, "answer past grace window was rejected");
     }
 }

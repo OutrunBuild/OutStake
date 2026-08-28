@@ -2,11 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
-import {
-    OutrunL2WrappableWstETHSYUpgradeable
-} from "../../src/yield/adapters/lido/OutrunL2WrappableWstETHSYUpgradeable.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
@@ -146,23 +142,15 @@ contract L2OracleBackedInitTest is Test {
         OutrunStakingPositionUpgradeable pos6 = _deployPosition(address(sy6), 18);
         OutrunStakingPositionUpgradeable pos18 = _deployPosition(address(sy18), 18);
 
-        // Use wrapStake to observe debt: same 1e18 SY at 1e18 rate => canonical 1e18
-        // pos6 (canonical 6, u=18): syToAsset floors via _scaleCanonicalToUAsset (u>=canonical => *1e12)
-        // pos18 (canonical 18, u=18): 1:1
-        // Instead of exercising full stake flow, directly probe the scaling by checking
-        // that the two Positions would mint different uAsset amounts for the same SY.
-        // We do this via the public view helpers exposed through stake math:
-        // mint 10e18 SY, 1e18 rate => canonical 10e18
+        // Exercise the production scaling path through the public preview view: at the fixture's
+        // 1e18 rate both positions convert the same SY to the same canonical value, and the
+        // canonical -> uAsset rescale must differ by exactly 10**12 (6 vs 18 canonical decimals
+        // against an 18-decimal uAsset).
         uint256 amountInSY = 10e18;
-        // pos6: canonical 6 => _scaleCanonicalToUAsset = 10e18 *1e12 = 1e31 uUnits (but capped by mint cap)
-        // pos18: canonical 18 => 10e18 uUnits
-        // To avoid mint-cap overflow, assert the scaling factor directly via the Position helper:
-        // compute expected uAsset debt via syToAsset logic: uDebt = syAmount * rate /1e18 scaled to uDecimals
-        // For 6 vs 18, ratio = 1e12
-        uint256 uDebt6 = _syToUAsset(pos6, amountInSY);
-        uint256 uDebt18 = _syToUAsset(pos18, amountInSY);
-        assertEq(uDebt6 / uDebt18, 1e12, "6 vs 18 mis-scale is 1e12");
-        assertEq(uDebt6, uDebt18 * 1e12);
+        uint256 preview6 = pos6.previewStake(amountInSY);
+        uint256 preview18 = pos18.previewStake(amountInSY);
+        assertEq(preview6 / preview18, 1e12, "6 vs 18 mis-scale is 1e12");
+        assertEq(preview6, preview18 * 1e12);
     }
 
     // --- helpers ---
@@ -203,29 +191,6 @@ contract L2OracleBackedInitTest is Test {
         // Solidity packs from right: first variable at lowest bytes. So SY (address) at bytes 0-19, canonical at byte 20, u at byte 21.
         uint8 canonical = uint8((s >> (20 * 8)) & 0xFF);
         return canonical;
-    }
-
-    function _syToUAsset(OutrunStakingPositionUpgradeable pos, uint256 syAmount) internal view returns (uint256) {
-        // Position._scaleCanonicalAssetToUAsset is internal; replicate its math via public exchangeRate + decimals.
-        // For these mocks rate=1e18, syToAsset canonical = syAmount * rate /1e18 = syAmount.
-        // Then scale canonical->u: if u>=canonical => *10**(u-canonical) else /.
-        uint8 canonical = _canonicalDecimals(pos);
-        uint8 uAssetDecimals = _uAssetDecimals(pos);
-        uint256 canonicalValue = syAmount; // rate 1e18
-        if (uAssetDecimals >= canonical) {
-            return canonicalValue * 10 ** (uAssetDecimals - canonical);
-        } else {
-            return canonicalValue / 10 ** (canonical - uAssetDecimals);
-        }
-    }
-
-    function _uAssetDecimals(OutrunStakingPositionUpgradeable pos) internal view returns (uint8) {
-        bytes32 base = keccak256(abi.encode(uint256(keccak256(bytes("outrun.storage.OutrunStakingPosition"))) - 1))
-            & ~bytes32(uint256(0xff));
-        bytes32 slot0 = vm.load(address(pos), base);
-        uint256 s = uint256(slot0);
-        uint8 uAssetDecimals = uint8((s >> (21 * 8)) & 0xFF);
-        return uAssetDecimals;
     }
 
     function _erc7201(string memory id) internal pure returns (bytes32) {

@@ -60,7 +60,9 @@ contract OutstakeRouterDriftFixTest is Test {
         script.exposedDeployOutrunRouter(1);
 
         OutrunRouter deployedRouter = OutrunRouter(outrunDeployer.getDeployed(address(script), salt));
-        assertEq(address(deployedRouter), expected);
+        // The expected address is a pure CREATE3 derivation, so re-deriving it proves nothing;
+        // deployed code at that address is the real deployment probe.
+        assertGt(expected.code.length, 0, "router code must exist at the expected CREATE3 address");
         assertEq(deployedRouter.owner(), owner);
         assertEq(deployedRouter.memeverseLauncher(), address(launcher));
     }

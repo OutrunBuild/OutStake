@@ -8,6 +8,8 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
+import {SYBaseUpgradeable} from "../../src/yield/SYBaseUpgradeable.sol";
+import {NativeTransferFailed} from "../../src/libraries/TokenHelper.sol";
 import {
     SYUpgradeableMockToken,
     TestSYUpgradeable,
@@ -15,6 +17,7 @@ import {
     TestSYUpgradeableWithoutUpdatePauseBackstop
 } from "./mocks/SYUpgradeableMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
+import {RevertingReceiver} from "../support/mocks/TokenHelperMocks.sol";
 
 contract SYUpgradeableTest is Test {
     address internal owner = address(0xA11CE);
@@ -311,6 +314,50 @@ contract SYUpgradeableTest is Test {
         vm.prank(user);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         syNoBackstop.redeem(user, 5e18, address(token), 0, false);
+    }
+
+    // Sweep guard family: every revert leg of the rescue path plus the native transfer-failure
+    // leg reached through TokenHelper._transferOut.
+    function testSYBaseSweepRevertsWhenRecipientIsZero() external {
+        vm.prank(owner);
+        vm.expectRevert(SYBaseUpgradeable.SYSweepZeroAddress.selector);
+        sy.sweep(address(token), address(0), 1);
+    }
+
+    function testSYBaseSweepRevertsWhenAmountIsZero() external {
+        vm.prank(owner);
+        vm.expectRevert(SYBaseUpgradeable.SYSweepZeroAmount.selector);
+        sy.sweep(address(token), user, 0);
+    }
+
+    function testSYBaseSweepRevertsWhenTokenIsTheYieldBearingToken() external {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(SYBaseUpgradeable.SYSweepInvalidToken.selector, address(token)));
+        sy.sweep(address(token), user, 1);
+    }
+
+    function testSYBaseSweepRevertsWhenTokenIsTheShareTokenItself() external {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(SYBaseUpgradeable.SYSweepInvalidToken.selector, address(sy)));
+        sy.sweep(address(sy), user, 1);
+    }
+
+    function testSYBaseSweepNativeRevertsWhenRecipientRejectsTheTransfer() external {
+        RevertingReceiver receiver = new RevertingReceiver();
+        vm.deal(address(sy), 1 ether);
+
+        vm.prank(owner);
+        vm.expectRevert(NativeTransferFailed.selector);
+        sy.sweep(address(0), address(receiver), 1 ether);
+    }
+
+    function testSYBaseSweepNativeDeliversStrandedBalanceToTheRecipient() external {
+        vm.deal(address(sy), 1 ether);
+
+        vm.prank(owner);
+        sy.sweep(address(0), user, 1 ether);
+
+        assertEq(user.balance, 1 ether);
     }
 
     function _deploySYWithoutUpdatePauseBackstop() internal returns (TestSYUpgradeable) {

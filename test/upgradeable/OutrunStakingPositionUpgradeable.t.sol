@@ -210,8 +210,6 @@ contract OutrunStakingPositionUpgradeableTest is PositionStackTestBase {
         assertEq(wordAfter, wordBefore, "cross-decimals slot0 must survive upgrade");
         assertEq(MockPositionUUPSV2(address(mixedPosition)).canonicalAssetDecimals(), 6, "canonical 6 frozen");
         assertEq(MockPositionUUPSV2(address(mixedPosition)).uAssetDecimals(), 18, "uAsset 18 frozen");
-        // mock does not expose previewStake; verify the 1e12 scale is preserved via decimals
-        assertEq(previewBefore, 1e18, "cross-decimals scaling 1e6 -> 1e18 before upgrade");
         uint8 canonicalAfter = MockPositionUUPSV2(address(mixedPosition)).canonicalAssetDecimals();
         uint8 uAssetAfter = MockPositionUUPSV2(address(mixedPosition)).uAssetDecimals();
         uint256 expectedAfter = 1e6 * 10 ** (uAssetAfter - canonicalAfter);
@@ -1209,6 +1207,13 @@ contract PositionPauseMatrixTest is PositionStackTestBase {
         vm.prank(owner);
         vm.expectRevert(ENFORCED_PAUSE);
         position.harvestWrapYield(address(sy), 0);
+
+        // Views stay usable while paused (previews and getters are not state-changing).
+        position.previewStake(1e18);
+        position.previewWrapStake(1e18);
+        position.SY();
+        position.syTotalStaking();
+
         vm.prank(owner);
         position.unpause();
         // Recovery probe: a fresh stake succeeds after unpause. drawUAsset(positionId) cannot
@@ -1255,16 +1260,17 @@ contract PositionPauseMatrixTest is PositionStackTestBase {
         assertEq(uAsset.allowance(user, address(position)), 1e18);
     }
 
-    function test_UAssetPause_CreditStillMints_AndRepayAfterUnpause() external {
+    function test_UAssetPause_RepayAfterUnpauseUsesBalanceAcquiredWhilePaused() external {
         // The recovery half needs a real matured position carrying uAsset debt: stake BEFORE the
         // pause (the mint inside stake would revert under the uAsset pause below), giving the
         // user 10e18 uAsset and the position 10e18 staked SY at the fixture's 1:1 rate.
         uint256 positionId = _stakeOne();
         vm.prank(owner);
         uAsset.pause();
+        // deal stands in for uAsset that arrived while paused (OFT inbound credit is not blocked
+        // by the uAsset pause); repay after unpause must accept that balance.
         uint256 beforeBal = uAsset.balanceOf(user);
         deal(address(uAsset), user, beforeBal + 10e18);
-        assertEq(uAsset.balanceOf(user), beforeBal + 10e18);
         vm.prank(owner);
         uAsset.unpause();
         vm.warp(block.timestamp + 31 days);

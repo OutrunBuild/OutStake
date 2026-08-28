@@ -68,12 +68,18 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
         _assertOutrunDeployer(nonce);
     }
 
-    function exposedDeployOutrunDeployer(uint256 nonce) external returns (address) {
-        return _deployOutrunDeployer(nonce);
+    function exposedAssertUAssetOmnichainConfig(
+        address uAsset,
+        uint32 endpointId,
+        bytes32 peer,
+        uint192 outboundRateLimit,
+        uint64 outboundRateWindow
+    ) external view {
+        _assertUAssetOmnichainConfig(uAsset, endpointId, peer, outboundRateLimit, outboundRateWindow);
     }
 
-    function exposedOutrunDeployerRecipe(uint256 nonce) external view returns (bytes32 salt, bytes memory initcode) {
-        return _outrunDeployerRecipe(nonce);
+    function exposedDeployOutrunDeployer(uint256 nonce) external returns (address) {
+        return _deployOutrunDeployer(nonce);
     }
 
     function exposedCanonicalCreate2Factory() external pure returns (address) {
@@ -151,6 +157,42 @@ contract OutstakeScriptUpgradeableTest is Test {
         _deployAndAssertUAsset("ETH", "Omnichain Universal Assets ETH", "UETH", 1);
         _deployAndAssertUAsset("USD", "Omnichain Universal Assets USD", "UUSD", 1);
         _deployAndAssertUAsset("BNB", "Omnichain Universal Assets BNB", "UBNB", 1);
+    }
+
+    /// @dev The post-deploy omnichain assertion must catch an owner-drifted remote peer: a peer
+    ///      that no longer matches the shared uAsset identity is a wiring break, not a config choice.
+    function testAssertUAssetOmnichainConfigRevertsWhenPeerDriftsAfterDeploy() external {
+        _deployAndAssertUAsset("ETH", "Omnichain Universal Assets ETH", "UETH", 1);
+        OutrunUniversalAssetsUpgradeable uAsset = OutrunUniversalAssetsUpgradeable(
+            outrunDeployer.getDeployed(
+                address(script), keccak256(abi.encodePacked("OmnichainUniversalAssetsETH", uint256(1)))
+            )
+        );
+        bytes32 expectedPeer = bytes32(uint256(uint160(address(uAsset))));
+
+        vm.prank(owner);
+        OutrunOFTUpgradeable(address(uAsset)).setPeer(40_245, bytes32(uint256(uint160(address(0xB0B)))));
+
+        vm.expectRevert(OutstakeScript.InvalidOmnichainConfig.selector);
+        script.exposedAssertUAssetOmnichainConfig(address(uAsset), 40_245, expectedPeer, 1_000_000 ether, 1 hours);
+    }
+
+    /// @dev Removing a remote outbound rate limit after deployment must also fail the assertion:
+    ///      the mesh was deployed with a per-eid limit, so its absence is a regression.
+    function testAssertUAssetOmnichainConfigRevertsWhenRateLimitIsRemovedAfterDeploy() external {
+        _deployAndAssertUAsset("ETH", "Omnichain Universal Assets ETH", "UETH", 1);
+        OutrunUniversalAssetsUpgradeable uAsset = OutrunUniversalAssetsUpgradeable(
+            outrunDeployer.getDeployed(
+                address(script), keccak256(abi.encodePacked("OmnichainUniversalAssetsETH", uint256(1)))
+            )
+        );
+        bytes32 expectedPeer = bytes32(uint256(uint160(address(uAsset))));
+
+        vm.prank(owner);
+        OutrunOFTUpgradeable(address(uAsset)).removeOutboundRateLimit(40_245);
+
+        vm.expectRevert(OutstakeScript.InvalidOmnichainConfig.selector);
+        script.exposedAssertUAssetOmnichainConfig(address(uAsset), 40_245, expectedPeer, 1_000_000 ether, 1 hours);
     }
 
     function testDeployUAssetRevertsWhenOwnerDoesNotMatchDeployer() external {
@@ -329,14 +371,6 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.exposedUpdateRouterLauncher();
 
         assertEq(router.memeverseLauncher(), address(launcher));
-    }
-
-    function testAssertOutrunDeployerPassesWhenOutrunDeployerMatchesExpectedAddress() external {
-        uint256 nonce = 1;
-
-        script.configure(owner, owner, _expectedOutrunDeployerAddress(nonce));
-
-        script.exposedAssertOutrunDeployer(nonce);
     }
 
     function testDeployOutrunDeployerMatchesAssertOutrunDeployer() external {
