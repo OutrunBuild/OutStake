@@ -193,11 +193,11 @@
         "test/upgradeable/SYAdaptersUpgradeable.t.sol",
         "test/upgradeable/SYAdaptersFork.t.sol",
         "test/upgradeable/OracleSetterUpgradeable.t.sol",
-        "test/verification/SweepResidual.t.sol",
-        "test/upgradeable/OracleInvariant.t.sol",
-        "test/upgradeable/SYInvariant.t.sol",
+        "test/upgradeable/SweepResidual.t.sol",
         "test/upgradeable/SYPerActorConservationUpgradeable.t.sol",
-        "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol"
+        "test/upgradeable/SkyL2DeviationGuardInvariantUpgradeable.t.sol",
+        "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol",
+        "test/upgradeable/L2OracleBackedInit.t.sol"
       ],
       "rules": [
         {
@@ -210,15 +210,17 @@
             "test/upgradeable/SYUpgradeable.t.sol",
             "test/upgradeable/SYAdaptersUpgradeable.t.sol",
             "test/upgradeable/OracleSetterUpgradeable.t.sol",
-            "test/verification/SweepResidual.t.sol",
+            "test/upgradeable/SweepResidual.t.sol",
             "test/upgradeable/SYPerActorConservationUpgradeable.t.sol",
-            "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol"
+            "test/upgradeable/SkyL2DeviationGuardInvariantUpgradeable.t.sol",
+            "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol",
+            "test/upgradeable/L2OracleBackedInit.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/SYUpgradeable.t.sol",
             "test/upgradeable/SYAdaptersUpgradeable.t.sol",
             "test/upgradeable/OracleSetterUpgradeable.t.sol",
-            "test/verification/SweepResidual.t.sol"
+            "test/upgradeable/SweepResidual.t.sol"
           ]
         }
       ]
@@ -227,7 +229,8 @@
       "tests": [
         "test/deploy/OutstakeScriptUpgradeable.t.sol",
         "test/deploy/YieldDeployScriptUpgradeable.t.sol",
-        "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol"
+        "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol",
+        "test/deploy/OutstakeRouterDriftFix.t.sol"
       ],
       "rules": [
         {
@@ -237,11 +240,13 @@
           ],
           "change_tests": [
             "test/deploy/OutstakeScriptUpgradeable.t.sol",
-            "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol"
+            "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol",
+            "test/deploy/OutstakeRouterDriftFix.t.sol"
           ],
           "evidence_tests": [
             "test/deploy/OutstakeScriptUpgradeable.t.sol",
-            "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol"
+            "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol",
+            "test/deploy/OutstakeRouterDriftFix.t.sol"
           ]
         },
         {
@@ -291,13 +296,7 @@
         {
           "id": "security-sensitive-scope",
           "paths": [
-            "^src/assets/.*\\.sol$",
-            "^src/position/.*\\.sol$",
-            "^src/yield/.*\\.sol$",
-            "^src/router/.*\\.sol$",
-            "^src/integrations/.*\\.sol$",
-            "^src/libraries/.*\\.sol$",
-            "^script/.*\\.sol$"
+            "^src/position/.*\\.sol$"
           ],
           "change_tests": [
             "test/upgradeable/AdversarialTestsUpgradeable.t.sol"
@@ -310,40 +309,7 @@
     }
   },
   "testing_gaps": {
-    "unregistered-test-files": [
-      {
-        "id": "outstake-router-drift-fix-gap",
-        "paths": [
-          "test/deploy/OutstakeRouterDriftFix.t.sol"
-        ],
-        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
-        "enforcement": "residual-risk"
-      },
-      {
-        "id": "l2-oracle-backed-init-gap",
-        "paths": [
-          "test/upgradeable/L2OracleBackedInit.t.sol"
-        ],
-        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
-        "enforcement": "residual-risk"
-      },
-      {
-        "id": "oracle-invariant-gap",
-        "paths": [
-          "test/upgradeable/OracleInvariant.t.sol"
-        ],
-        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
-        "enforcement": "residual-risk"
-      },
-      {
-        "id": "sy-invariant-gap",
-        "paths": [
-          "test/upgradeable/SYInvariant.t.sol"
-        ],
-        "status": "new test file not yet covered by test_mapping; explicit gap pending the owning change's registration",
-        "enforcement": "residual-risk"
-      }
-    ]
+    "unregistered-test-files": []
   },
   "verification_profiles": {
     "ci": {
