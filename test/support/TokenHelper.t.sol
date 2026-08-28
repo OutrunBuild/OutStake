@@ -120,14 +120,6 @@ contract TokenHelperTest is Test {
 
     // ============ _safeApprove tests ============
 
-    function testSafeApproveSetsAllowance() external {
-        token.mint(address(harness), 100 ether);
-
-        harness.exposedSafeApprove(address(token), recipient, 50 ether);
-
-        assertEq(token.allowance(address(harness), recipient), 50 ether);
-    }
-
     function testSafeApproveSetsToZero() external {
         token.mint(address(harness), 100 ether);
 

@@ -6,13 +6,8 @@ import {Test} from "forge-std/Test.sol";
 import {OutrunAsBNBSYUpgradeable} from "../../src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol";
 import {OutrunL2StakedUsdsSYUpgradeable} from "../../src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol";
 import {SYBaseUpgradeable} from "../../src/yield/SYBaseUpgradeable.sol";
-import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
-import {
-    MockToken,
-    MockListaStakeManager,
-    MockYieldProxy,
-    MockAsBnbMinter
-} from "../upgradeable/mocks/SYAdapterMocks.sol";
+import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
+import {MockToken, MockListaStakeManager, MockYieldProxy, MockAsBnbMinter} from "./mocks/SYAdapterMocks.sol";
 import {IYieldProxy} from "../../src/integrations/aster/interfaces/IYieldProxy.sol";
 
 /// @dev Partial mock: Aster minter that only consumes half of the slisBNB input.
@@ -33,14 +28,6 @@ contract MockPartialAsBnbMinter {
         rate = rate_;
     }
 
-    function mintAsBnb() external payable returns (uint256) {
-        if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
-        // native branch not partial for this test - consume full value
-        uint256 out = msg.value * 1e18 / rate;
-        MockToken(asBnb).mint(msg.sender, out);
-        return out;
-    }
-
     function mintAsBnb(uint256 amount) external returns (uint256) {
         if (IYieldProxy(yieldProxy).activitiesOnGoing()) return 0;
         // only pull half of the slisBNB - leave residue in SY
@@ -50,14 +37,6 @@ contract MockPartialAsBnbMinter {
         uint256 out = half * 1e18 / rate;
         MockToken(asBnb).mint(msg.sender, out);
         return out;
-    }
-
-    function convertToTokens(uint256 asBnbAmount) external view returns (uint256) {
-        return asBnbAmount * rate / 1e18;
-    }
-
-    function convertToAsBnb(uint256 tokenAmount) external view returns (uint256) {
-        return tokenAmount * 1e18 / rate;
     }
 }
 
@@ -76,10 +55,6 @@ contract MockPartialPSM3 {
 
     function getConversionRate() external view returns (uint256) {
         return rate * 1e9;
-    }
-
-    function setRateProvider(address rp) external {
-        rateProvider = rp;
     }
 
     function setRate(address shareToken_, uint256 rate_) external {

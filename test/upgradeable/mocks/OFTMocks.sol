@@ -9,9 +9,11 @@ import {
 import {OutrunOFTUpgradeable} from "../../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
 
 /// @dev Mock LayerZero V2 endpoint for testing OFT cross-chain transfers.
+///      Reports a configurable EID and records the delegate: deploy-time validation reads
+///      `eid()` and OApp initialization calls `setDelegate()` through ILayerZeroEndpointV2
+///      on whatever endpoint instance the contract under test is given.
 contract MockLzEndpoint {
     address internal delegate;
-    uint256 internal quoteNativeFee;
     uint32 public eid;
 
     constructor() {
@@ -27,11 +29,11 @@ contract MockLzEndpoint {
     }
 
     function quote(MessagingParams calldata, address) external view returns (MessagingFee memory fee) {
-        fee = MessagingFee({nativeFee: quoteNativeFee, lzTokenFee: 0});
+        fee = MessagingFee({nativeFee: 0, lzTokenFee: 0});
     }
 
     function send(MessagingParams calldata, address) external payable returns (MessagingFee memory) {
-        return MessagingFee({nativeFee: quoteNativeFee, lzTokenFee: 0});
+        return MessagingFee({nativeFee: 0, lzTokenFee: 0});
     }
 }
 

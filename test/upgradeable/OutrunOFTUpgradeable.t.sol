@@ -305,21 +305,6 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(canBeSent, 40e18);
     }
 
-    /// @dev Regression: a configured per-destination limit above the LayerZero uint64
-    ///      shared-decimals wire envelope must report the envelope-capped capacity
-    ///      (uint64.max * decimalConversionRate) rather than the raw configured limit, which
-    ///      could not be SD-encoded in a single send (AmountSDOverflowed on _toSD).
-    function testConfiguredLimitAboveEnvelopeReportsEnvelopeCappedAmount() external {
-        uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
-
-        vm.prank(owner);
-        oft.setOutboundRateLimit(DST_EID, type(uint192).max, 1 days);
-
-        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
-        assertEq(inFlight, 0);
-        assertEq(canBeSent, envelope);
-    }
-
     /// @dev Non-regression: a configured limit below the envelope reports the raw rate-limited
     ///      remaining capacity unchanged (no envelope cap or dust perturbation at this range).
     function testGetAmountCanBeSentBelowEnvelopePreservesRawCapacity() external {
@@ -331,8 +316,11 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(canBeSent, 40e18);
     }
 
-    /// @dev Consistency check: with a limit above the envelope, quoteOFT's maxAmountLD and
-    ///      getAmountCanBeSent's amountCanBeSent must both report the envelope-bounded capacity.
+    /// @dev Regression + consistency: a configured per-destination limit above the LayerZero
+    ///      uint64 shared-decimals wire envelope must report the envelope-capped capacity
+    ///      (uint64.max * decimalConversionRate) rather than the raw configured limit, which
+    ///      could not be SD-encoded in a single send (AmountSDOverflowed on _toSD); quoteOFT's
+    ///      maxAmountLD and getAmountCanBeSent's amountCanBeSent must agree on that capacity.
     function testQuoteOFTMatchesGetterWhenLimitAboveEnvelope() external {
         vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, type(uint192).max, 1 days);

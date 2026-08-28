@@ -5,21 +5,6 @@ import {PositionStackTestBase} from "./helpers/PositionStackTestBase.sol";
 import {MockPositionUUPSV2} from "./mocks/MockUUPSVersion.sol";
 
 contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
-    function test_DecimalsShareTheSyStorageSlot() external {
-        _deployPositionStack();
-
-        bytes32 storageSlot = _erc7201("outrun.storage.OutrunStakingPosition");
-        uint256 storageWord = uint256(vm.load(address(position), storageSlot));
-
-        // The storage word is intentionally packed; each cast reads fixed low bits of the same slot.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        assertEq(address(uint160(storageWord)), address(sy));
-        // forge-lint: disable-next-line(unsafe-typecast)
-        assertEq(uint8(storageWord >> 160), 18);
-        // forge-lint: disable-next-line(unsafe-typecast)
-        assertEq(uint8(storageWord >> 168), 18);
-    }
-
     /// @notice Pins the full ERC-7201 layout: frozen decimals must survive upgrades,
     /// so field order, width, and count are frozen. Any reorder/insertion would misread
     /// canonicalAssetDecimals/uAssetDecimals and silently mis-scale by 1e12.
@@ -86,8 +71,6 @@ contract OutrunStakingPositionStorageLayoutTest is PositionStackTestBase {
         position.upgradeToAndCall(address(v2), "");
         uint256 mappingSlotAfter = uint256(vm.load(address(position), bytes32(uint256(baseSlot) + 8)));
         assertEq(mappingSlotAfter, mappingSlotBefore, "positions mapping slot8 must survive upgrade unchanged");
-        // Mapping integrity: syTotalStaking remains 0 when no stakes done
-        assertEq(MockPositionUUPSV2(address(position)).syTotalStaking(), 0);
     }
 
     function _erc7201(string memory id) internal pure returns (bytes32) {

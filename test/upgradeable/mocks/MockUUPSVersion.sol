@@ -29,6 +29,7 @@ contract MockUAssetUUPSV2 is OutrunOFTUpgradeable, UUPSUpgradeable {
     }
 
     /// @notice Returns how many more uAsset the minter can mint before hitting its cap.
+    ///      Called through the proxy after upgrade, so post-upgrade minter-ledger reads keep working.
     function checkMintableAmount(address minter) external view returns (uint256 amountInMintable) {
         IUniversalAssets.MintingStatus storage status = _getOutrunUniversalAssetsStorage().mintingStatusTable[minter];
         uint256 mintingCap = status.mintingCap;
@@ -94,6 +95,7 @@ contract MockPositionUUPSV2 is UUPSUpgradeable {
     }
 
     /// @notice Returns the total SY staked across all positions and the wrap pool.
+    ///      Called through the proxy after upgrade, so post-upgrade state reads keep working.
     function syTotalStaking() public view returns (uint256) {
         return _getStorage().syTotalStaking;
     }

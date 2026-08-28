@@ -53,28 +53,21 @@ contract OutrunStakingPositionFuzzTest is Test {
 
         // Mint SY to users
         sy.mintShares(owner, 100_000e18);
-        sy.mintShares(keeper, 100_000e18);
         sy.mintShares(user1, 100_000e18);
         sy.mintShares(user2, 100_000e18);
 
         // Approve position to spend SY
         vm.prank(owner);
         sy.approve(address(position), type(uint256).max);
-        vm.prank(keeper);
-        sy.approve(address(position), type(uint256).max);
         vm.prank(user1);
         sy.approve(address(position), type(uint256).max);
         vm.prank(user2);
         sy.approve(address(position), type(uint256).max);
 
-        // Approve position to spend uAsset
+        // Approve position to spend uAsset (the keeper burns its own uAsset in keep* redeems)
         vm.prank(owner);
         uAsset.approve(address(position), type(uint256).max);
         vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(user1);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(user2);
         uAsset.approve(address(position), type(uint256).max);
     }
 
@@ -896,8 +889,6 @@ contract OutrunStakingPositionPropertyTest is Test {
     address internal owner = address(0xA11CE);
     address internal keeper = address(0xB0B);
     address internal revenuePool = address(0xFEE);
-    address internal user1 = address(0x1111);
-    address internal user2 = address(0x2222);
 
     uint256 internal constant MIN_STAKE = 1;
     uint256 internal constant MAX_STAKE = 10_000e18;
@@ -922,30 +913,17 @@ contract OutrunStakingPositionPropertyTest is Test {
         // directly (MockUAsset's owner is this contract, the deployer of the mock).
         uAsset.setMintingCap(address(this), type(uint256).max);
 
-        // Mint SY to users
+        // Mint SY for the owner (the only actor that stakes in this suite)
         sy.mintShares(owner, 100_000e18);
-        sy.mintShares(keeper, 100_000e18);
-        sy.mintShares(user1, 100_000e18);
-        sy.mintShares(user2, 100_000e18);
 
         // Approve position to spend SY
         vm.prank(owner);
         sy.approve(address(position), type(uint256).max);
-        vm.prank(keeper);
-        sy.approve(address(position), type(uint256).max);
-        vm.prank(user1);
-        sy.approve(address(position), type(uint256).max);
-        vm.prank(user2);
-        sy.approve(address(position), type(uint256).max);
 
-        // Approve position to spend uAsset
+        // Approve position to spend uAsset (the keeper burns its own uAsset in keep* redeems)
         vm.prank(owner);
         uAsset.approve(address(position), type(uint256).max);
         vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(user1);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(user2);
         uAsset.approve(address(position), type(uint256).max);
     }
 

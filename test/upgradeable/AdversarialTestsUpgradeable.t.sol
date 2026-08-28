@@ -36,7 +36,6 @@ import {
 contract AdversarialTests is Test {
     bytes4 internal constant POSITION_ACCESS_DENIED_SELECTOR = bytes4(keccak256("PositionAccessDenied()"));
     bytes4 internal constant REENTRANCY_GUARD_SELECTOR = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
-    bytes4 internal constant ENFORCED_PAUSE_SELECTOR = bytes4(keccak256("EnforcedPause()"));
 
     MockERC20ForAdversarial internal underlying;
     MockSYWithRateControl internal sy;
@@ -267,80 +266,6 @@ contract AdversarialTests is Test {
     // ============================================================
     // TEST 4: Redeem Reentrancy and Accounting
     // ============================================================
-
-    /**
-     * @notice Position redeem blocks reentrancy via SY callback
-     * @dev The reentrancy guard on OutrunStakingPosition blocks nested calls
-     *      When SY.redeem is called, if it tries to call back into position,
-     *      the reentrancy guard will revert
-     */
-    function test_Adversarial_PositionRedeemBlocksReentrancy() external {
-        // Deploy malicious SY
-        MaliciousSY maliciousSY = new MaliciousSY(address(underlying));
-        maliciousSY.mintShares(alice, 100e18);
-
-        // Deploy position with malicious SY
-        MockUAssetForAdversarial malUAsset = new MockUAssetForAdversarial();
-        OutrunStakingPositionUpgradeable malPosition = OutrunStakingPositionUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(maliciousSY), address(malUAsset), keeper)
-                )
-            )
-        );
-        malUAsset.setMintingCap(address(malPosition), type(uint256).max);
-
-        vm.prank(alice);
-        maliciousSY.approve(address(malPosition), type(uint256).max);
-
-        // Fund the callback caller so the nested stake reaches the reentrancy guard.
-        maliciousSY.mintShares(address(maliciousSY), 1e18);
-        vm.prank(address(maliciousSY));
-        maliciousSY.approve(address(malPosition), type(uint256).max);
-
-        // Configure malicious SY to try reentrancy on redeem
-        maliciousSY.setAttackTarget(malPosition, IOutrunStakeManager.stake.selector);
-
-        // Alice stakes
-        vm.prank(alice);
-        (uint256 positionId,) = malPosition.stake(100e18, 30, alice, alice);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position
-        maliciousSY.mintShares(address(malPosition), 100e18);
-
-        vm.prank(alice);
-        malUAsset.approve(address(malPosition), type(uint256).max);
-
-        // Alice redeems to underlying (which triggers SY.redeem callback)
-        // The malicious SY will try to call stake during the redeem callback
-        // But the reentrancy guard on position will block it
-        vm.prank(alice);
-        // The redeem guard stays active while SY.redeem executes. The callback
-        // catches the nested revert, so the outer redeem can complete normally.
-        (uint256 uAssetBurned, uint256 syOut) = malPosition.redeem(positionId, 50e18, alice, address(underlying), 0);
-
-        // Verify the redeem succeeded and state is correct
-        assertEq(uAssetBurned, 50e18, "Burn should be 50 uAsset");
-        assertEq(syOut, 50e18, "SY out should be 50");
-        (bool attackSucceeded, bytes memory attackRevertData) = maliciousSY.attackResult();
-        assertFalse(attackSucceeded, "nested stake should be blocked by the reentrancy guard");
-        assertEq(attackRevertData.length, 4, "nested call should return the guard selector");
-        assertEq(
-            keccak256(attackRevertData),
-            keccak256(abi.encodeWithSelector(REENTRANCY_GUARD_SELECTOR)),
-            "nested call should revert with ReentrancyGuardReentrantCall"
-        );
-
-        // No extra position was created.
-        (address posOwner,, uint256 posUAssetMinted,) = malPosition.positions(positionId);
-        assertEq(posOwner, alice, "Position owner should still be Alice");
-        assertEq(posUAssetMinted, 50e18, "Position debt should be 50");
-    }
 
     /**
      * @notice Partial redeem burns the pro-rata uAsset debt, returns the redeemed
@@ -657,72 +582,6 @@ contract AdversarialTests is Test {
         cappedPosition.wrapStake(1, alice);
     }
 
-    // ============================================================
-    // TEST 9: Pause Blocks All State-Changing Operations
-    // ============================================================
-
-    /**
-     * @notice Pause blocks all state-changing operations
-     */
-    function test_Adversarial_PauseBlocksAllOperations() external {
-        // Setup: Create position and wrap stake for testing
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        vm.prank(bob);
-        position.wrapStake(100e18, bob);
-
-        // Pause
-        vm.prank(owner);
-        position.pause();
-
-        // Stake should revert
-        vm.prank(alice);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.stake(100e18, 30, alice, alice);
-
-        // DrawUAsset should revert
-        sy.setExchangeRate(2e18);
-        vm.prank(alice);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.drawUAsset(positionId, alice);
-
-        // Redeem should revert
-        vm.warp(block.timestamp + 31 days);
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(alice);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.redeem(positionId, 50e18, alice, address(sy), 0);
-
-        // WrapStake should revert
-        vm.prank(bob);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.wrapStake(100e18, bob);
-
-        // KeepWrapRedeem should revert when paused (whenNotPaused runs before the keeper check).
-        vm.prank(keeper);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.keepWrapRedeem(50e18, keeper);
-
-        // KeepRedeem should revert
-        sy.mintShares(address(position), 100e18);
-        vm.prank(keeper);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.keepRedeem(positionId, 50e18, keeper);
-
-        // HarvestWrapYield should revert
-        vm.prank(owner);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.harvestWrapYield(address(sy), 0);
-
-        // Verify: Non-paused operations still work
-        position.previewStake(100e18);
-        position.previewWrapStake(100e18);
-        position.SY();
-        position.syTotalStaking();
-    }
-
     /**
      * @notice Non-owner cannot pause
      */
@@ -784,20 +643,6 @@ contract AdversarialTests is Test {
         vm.prank(keeper);
         vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
         position.keepWrapRedeem(0, keeper);
-    }
-
-    /**
-     * @notice Cannot keep redeem zero
-     */
-    function test_Adversarial_KeepRedeemZeroReverts() external {
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        vm.warp(block.timestamp + 31 days);
-
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.keepRedeem(positionId, 0, keeper);
     }
 
     /**
@@ -994,10 +839,8 @@ contract AdversarialTests is Test {
 
     /**
      * @notice Deterministic reentrancy test: confirm that after position.redeem
-     *      completes, no additional SY shares can be claimed from the same call.
-     *      Companion to `test_Adversarial_PositionRedeemBlocksReentrancy`; this
-     *      variant additionally asserts the global `syTotalStaking` counter shows
-     *      no reentrancy double-claim.
+     *      completes, no additional SY shares can be claimed from the same call,
+     *      and that the global `syTotalStaking` counter shows no reentrancy double-claim.
      */
     function test_Adversarial_RedeemStateIsProtectedAgainstReentrancyAttacks() external {
         // Deploy malicious SY

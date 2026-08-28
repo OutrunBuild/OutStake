@@ -31,6 +31,10 @@ contract Faucet is Ownable {
         tokenInfos[token].dailyLimit = dailyLimit;
     }
 
+    /// @notice Claim the daily drip of a registered token (testnet faucet entry).
+    /// @dev Testnet user entry point: no in-repo test or script invokes it; retained
+    ///      for the mock-token/genesis testnet scaffolding, same retention basis as
+    ///      `IWETH.sol::withdraw`.
     function claim(address token) public {
         uint256 dailyLimit = tokenInfos[token].dailyLimit;
         if (dailyLimit == 0) revert UnsupportedToken();
@@ -42,6 +46,8 @@ contract Faucet is Ownable {
         IMintable(token).mint(msg.sender, dailyLimit);
     }
 
+    /// @notice Claim the daily drip of multiple registered tokens in one call.
+    /// @dev Same retention basis as `claim` above: a testnet entry point, unused in-repo.
     function batchClaim(address[] calldata tokens) external {
         for (uint256 i = 0; i < tokens.length;) {
             claim(tokens[i]);

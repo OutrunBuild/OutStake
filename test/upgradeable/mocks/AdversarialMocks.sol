@@ -205,10 +205,6 @@ contract MaliciousSY is ERC20, IStandardizedYield {
         rate = 1e18;
     }
 
-    function setExchangeRate(uint256 newRate) external {
-        rate = newRate;
-    }
-
     function setAttackTarget(OutrunStakingPositionUpgradeable position, bytes4 selector) external {
         targetPosition = position;
         attackSelector = selector;
@@ -266,16 +262,6 @@ contract MaliciousSY is ERC20, IStandardizedYield {
                 // Record the result so the test can distinguish the guard from downstream failures.
                 (bool success, bytes memory revertData) = address(targetPosition)
                     .call(abi.encodeWithSelector(attackSelector, 1e18, uint128(30), receiver, receiver));
-                lastAttackSuccess = success;
-                lastAttackRevertData = revertData;
-            }
-            // Try to call drawUAsset during redeem callback
-            else if (attackSelector == IOutrunStakeManager.drawUAsset.selector) {
-                // Need a valid positionId - try with 1
-                // Record the result so adversarial tests can inspect the callback outcome.
-                // solhint-disable-next-line avoid-low-level-calls
-                (bool success, bytes memory revertData) =
-                    address(targetPosition).call(abi.encodeWithSelector(attackSelector, uint256(1), receiver));
                 lastAttackSuccess = success;
                 lastAttackRevertData = revertData;
             }

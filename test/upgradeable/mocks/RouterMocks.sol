@@ -31,10 +31,6 @@ contract RouterMockSY is ERC20, IStandardizedYield {
         depositRate = 1e18;
     }
 
-    function setExchangeRate(uint256 newRate) external {
-        rate = newRate;
-    }
-
     /// @notice Sets the token-to-SY conversion used by deposit and previewDeposit.
     /// @dev Kept separate from exchangeRate, which models the SY-to-uAsset conversion in the position mock.
     function setDepositRate(uint256 newRate) external {

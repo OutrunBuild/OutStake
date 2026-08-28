@@ -29,8 +29,6 @@ contract ReenteringAttacker {
 
     /// @notice Index of the first router entry whose nested call was not blocked; NO_FAILURE when all were blocked.
     uint256 public firstFailure = NO_FAILURE;
-    /// @notice Revert selector observed for the entry at `firstFailure` (diagnostic only).
-    bytes4 public capturedSelector;
 
     constructor(OutrunRouter router_, RouterMockSY sy_, ReentrantTokenMock token_, address position_) {
         router = router_;
@@ -91,7 +89,6 @@ contract ReenteringAttacker {
             bytes4 selector = bytes4(ret);
             if (selector != GUARD_SELECTOR) {
                 firstFailure = i;
-                capturedSelector = selector;
                 return;
             }
         }

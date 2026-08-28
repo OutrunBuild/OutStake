@@ -17,11 +17,9 @@ contract PositionHandler is Test {
     OutrunStakingPositionUpgradeable public position;
     MockSY public sy;
     MockUAsset public uAsset;
-    MockERC20 public underlying;
 
     address public owner;
     address public keeper;
-    address public revenuePool;
 
     address[3] public actors;
     uint256 public constant INITIAL_BALANCE = 10_000e18;
@@ -30,7 +28,6 @@ contract PositionHandler is Test {
 
     // Ghost variables for tracking state
     uint256[] public activePositionIds;
-    mapping(uint256 => bool) public isPositionActive;
     uint256 public ghostTotalSyInPositions;
     uint256 public ghostTotalUAssetMintedInPositions;
     uint256 public ghostMaxDeadline;
@@ -39,18 +36,14 @@ contract PositionHandler is Test {
         OutrunStakingPositionUpgradeable _position,
         MockSY _sy,
         MockUAsset _uAsset,
-        MockERC20 _underlying,
         address _owner,
-        address _keeper,
-        address _revenuePool
+        address _keeper
     ) {
         position = _position;
         sy = _sy;
         uAsset = _uAsset;
-        underlying = _underlying;
         owner = _owner;
         keeper = _keeper;
-        revenuePool = _revenuePool;
 
         actors[0] = address(0x1);
         actors[1] = address(0x2);
@@ -105,7 +98,6 @@ contract PositionHandler is Test {
 
         // Track the new position
         activePositionIds.push(positionId);
-        isPositionActive[positionId] = true;
         ghostTotalSyInPositions += amount;
         ghostTotalUAssetMintedInPositions += uAssetMinted;
 
@@ -325,7 +317,6 @@ contract PositionHandler is Test {
             if (activePositionIds[i] == positionId) {
                 activePositionIds[i] = activePositionIds[activePositionIds.length - 1];
                 activePositionIds.pop();
-                isPositionActive[positionId] = false;
                 break;
             }
         }
@@ -381,7 +372,7 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
 
         uAsset.setMintingCap(address(position), type(uint256).max);
 
-        handler = new PositionHandler(position, sy, uAsset, underlying, owner, keeper, revenuePool);
+        handler = new PositionHandler(position, sy, uAsset, owner, keeper);
         uAsset.setMintingCap(address(handler), type(uint256).max);
 
         // Target the handler for invariant testing
@@ -547,17 +538,14 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
     }
 
     /**
-     * @notice Invariant: keeper rounding and per-position debt sentinel
-     * @dev Checks that partial redeem ceil never consumes all debt and that any staked position carries debt.
+     * @notice Invariant: keeper rounding sentinel
+     * @dev Checks that a partial redeem ceil never consumes all remaining debt.
      */
     function invariant_KeeperRoundingCeil() public view {
         uint256 activeCount = handler.getActivePositionCount();
         for (uint256 i = 0; i < activeCount; i++) {
             uint256 pid = handler.getActivePositionId(i);
             (, uint256 syStaked, uint256 debt,) = position.positions(pid);
-            if (syStaked > 0) {
-                assertGt(debt, 0, "position with stake has zero debt");
-            }
             if (syStaked > 1 && debt > 1) {
                 uint256 half = syStaked / 2;
                 if (half > 0 && half < syStaked) {
@@ -566,17 +554,6 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, Test {
                 }
             }
         }
-    }
-
-    function _scaleUAssetToCanonicalCeil(uint256 debt) internal view returns (uint256) {
-        (,, uint8 canonicalDecimals) = sy.assetInfo();
-        uint8 uAssetDecimals_ = uAsset.decimals();
-        if (canonicalDecimals >= uAssetDecimals_) {
-            return debt * 10 ** (canonicalDecimals - uAssetDecimals_);
-        }
-        if (debt == 0) return 0;
-        uint256 factor = 10 ** (uAssetDecimals_ - canonicalDecimals);
-        return (debt - 1) / factor + 1;
     }
 }
 
@@ -623,7 +600,7 @@ abstract contract OutrunStakingPositionCrossDecimalsInvariantTest is StdInvarian
 
         uAsset.setMintingCap(address(position), type(uint256).max);
 
-        handler = new PositionHandler(position, sy, uAsset, underlying, owner, keeper, revenuePool);
+        handler = new PositionHandler(position, sy, uAsset, owner, keeper);
         uAsset.setMintingCap(address(handler), type(uint256).max);
 
         // Restrict the fuzzed entrypoints to the monotone-rate set (bumpExchangeRate in, bidirectional

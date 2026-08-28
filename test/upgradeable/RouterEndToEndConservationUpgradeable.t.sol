@@ -83,7 +83,7 @@ contract RouterEndToEndConservationUpgradeableTest is Test {
         assertEq(mintedUAsset, amount, "minted uAsset does not mirror the token amount");
 
         vm.warp(block.timestamp + uint256(lockupDays) * 1 days + 1);
-        // F-018 prerequisite: the owner must approve the position before repay burns their uAsset.
+        // Prerequisite: the owner must approve the position before repay burns their uAsset.
         uAsset.approve(address(position), mintedUAsset);
         uint256 amountSyOut = _syStakedOf(positionId);
         (, uint256 redeemedSy) = position.redeem(positionId, amountSyOut, user, address(sy), 0);

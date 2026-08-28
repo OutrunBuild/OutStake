@@ -13,9 +13,18 @@ error NotEnoughAvailableUserBalance();
 /// @notice Thrown when the computed scaled amount for a supply operation is zero.
 error ScaledAmountIsZero();
 
-/// @notice Minimal ERC-20 mock with a public `mint` helper.
+/// @notice Minimal ERC-20 mock with a public `mint` helper and configurable decimals.
+/// @dev The decimals argument is honored faithfully so cross-decimals swap paths are representable.
 contract MockToken is ERC20 {
-    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {}
+    uint8 private immutable tokenDecimals;
+
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
+        tokenDecimals = decimals_;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return tokenDecimals;
+    }
 
     function mint(address to, uint256 amount) public virtual {
         _mint(to, amount);
@@ -135,10 +144,6 @@ contract MockOracle {
         rate = rate_;
     }
 
-    function setExchangeRate(uint256 rate_) external {
-        rate = rate_;
-    }
-
     function getExchangeRate() external view returns (uint256) {
         return rate;
     }
@@ -149,24 +154,9 @@ contract MockOracle {
 /// Tests set a non-1e18 rate so preview and execution traverse genuinely different arithmetic.
 contract MockLiquidityPool {
     uint256 public shareRate = 1e18;
-    uint256 public totalPooledEtherOverride;
-    bool public usePooledOverride;
 
     function setShareRate(uint256 rate_) external {
         shareRate = rate_;
-    }
-
-    /// @notice Override total pooled ether for precise preview simulation tests.
-    function setTotalPooledEther(uint256 pooled_) external {
-        totalPooledEtherOverride = pooled_;
-        usePooledOverride = true;
-    }
-
-    function getTotalPooledEther() external view returns (uint256) {
-        if (usePooledOverride) return totalPooledEtherOverride;
-        // Synthetic pooled consistent with a large base shares (1M ether) at current rate.
-        // Keeps rate = pooled*1e18/shares, so preview simulation matches mock rate.
-        return 1_000_000 ether * shareRate / 1e18;
     }
 
     function amountForShare(uint256 shares) external view returns (uint256) {
@@ -253,14 +243,6 @@ contract MockWstETH is MockToken {
 
     function stEthPerToken() external view returns (uint256) {
         return stEthPerTokenRate;
-    }
-
-    function getWstETHByStETH(uint256 stEthAmount) external view returns (uint256) {
-        return stEthAmount * 1e18 / stEthPerTokenRate;
-    }
-
-    function getStETHByWstETH(uint256 wstEthAmount) external view returns (uint256) {
-        return wstEthAmount * stEthPerTokenRate / 1e18;
     }
 
     function wrap(uint256 stEthAmount) external returns (uint256) {
@@ -456,15 +438,12 @@ contract MockPSM3 {
     function setRate(address shareToken_, uint256 rate_) external {
         shareToken = shareToken_;
         rate = rate_;
-        // Keep SSR in sync with PSM rate so exchangeRate deviation guard does not spuriously trip in SY tests.
-        // Ray = rate * 1e9 (1e18 -> 1e27). Tests that need divergence can call setRateProvider afterwards.
+        // Keep the PSM's own provider in sync with the PSM rate so the deviation guard does not
+        // spuriously trip for tests that bind this provider; adapters that must see a divergent
+        // SSR rebind their own rate source after initialize instead of relying on this sync.
         if (rateProvider != address(0)) {
             try MockRateProvider(rateProvider).setRate(rate_ * 1e9) {} catch {}
         }
-    }
-
-    function setRateProvider(address rp) external {
-        rateProvider = rp;
     }
 
     function _convert(address tokenIn, address tokenOut, uint256 amountIn) internal view returns (uint256) {

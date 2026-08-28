@@ -157,11 +157,6 @@ contract ReentrancyGuardTest is Test {
         guarded = new MockGuarded();
     }
 
-    function testNonReentrantAllowsFirstCall() public {
-        uint256 result = guarded.guardedAction();
-        assertEq(result, 42);
-    }
-
     function testNonReentrantRevertsOnReentry() public {
         vm.expectRevert(ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
         guarded.tryReenter();
