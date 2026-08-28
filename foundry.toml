@@ -41,11 +41,11 @@ runs = 1024
 depth = 500
 
 [rpc_endpoints]
+sepolia = "${ETHEREUM_SEPOLIA_RPC}"
 bsc_testnet = "${BSC_TESTNET_RPC}"
 base_sepolia = "${BASE_SEPOLIA_RPC}"
-sepolia = "${ETHEREUM_SEPOLIA_RPC}"
 
-eth_mainnet = "${ETH_MAINNET_RPC}"
+eth_mainnet = "${ETHEREUM_MAINNET_RPC}"
 bsc_mainnet = "${BSC_MAINNET_RPC}"
 base_mainnet = "${BASE_MAINNET_RPC}"
 
