@@ -56,4 +56,11 @@ node_modules/
 .pi-glla/
 
 skills/
+# skill symlinks (git treats symlinks as files, so skills/ above doesn't match them)
+/.agents/skills
+/.zcode/skills
+/.claude/skills
+/.codex/skills
+/.pi/skills
+/.dsh/skills
 lcov.info
