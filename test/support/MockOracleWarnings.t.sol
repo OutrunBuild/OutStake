@@ -136,7 +136,7 @@ contract MockOracleWarningsTest is Test {
     function test_OracleGraceBoundaryEqualValueIsRejected() external {
         MockAggregator priceFeed = new MockAggregator(8);
         MockAggregator sequencer = new MockAggregator(0);
-        OutrunExchangeOracleAdapter adapter =
+        OutrunExchangeOracleAdapter boundaryAdapter =
             new OutrunExchangeOracleAdapter(address(priceFeed), 1 days, address(sequencer), 1 hours);
 
         vm.warp(10 days);
@@ -145,11 +145,11 @@ contract MockOracleWarningsTest is Test {
         // Recovery recorded exactly one grace period ago: elapsed == grace must still revert.
         sequencer.setLatestRoundData(0, block.timestamp - 1 hours, block.timestamp - 1 hours);
         vm.expectRevert(IExchangeRateOracle.SequencerGracePeriodNotOver.selector);
-        adapter.getExchangeRate();
+        boundaryAdapter.getExchangeRate();
 
         // One second past the grace window the answer is accepted.
         sequencer.setLatestRoundData(0, block.timestamp - 1 hours - 1, block.timestamp - 1 hours - 1);
-        assertEq(adapter.getExchangeRate(), 1e18, "answer past grace window was rejected");
+        assertEq(boundaryAdapter.getExchangeRate(), 1e18, "answer past grace window was rejected");
     }
 
     function testExchangeOracleAdapterNormalizes8DecimalAnswerTo18Scale() external {
