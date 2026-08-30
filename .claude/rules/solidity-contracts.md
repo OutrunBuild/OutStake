@@ -67,7 +67,7 @@ Prefer custom errors: `error InsufficientBalance();` + `revert InsufficientBalan
 
 ## Project specifics
 - Compiler: Solidity `0.8.35`, `via_ir = true`, `optimizer_runs = 200`, `evm_version = prague`. Verify deployments use exactly these settings.
-- No `[fmt]` or `[lint]` override in `foundry.toml` → `forge fmt` defaults (`line_length = 120`, `tab_width = 4`); `forge lint` runs its default rule set. Apply the naming table above regardless (immutables here are mixedCase by convention).
+- `foundry.toml` sets no `[fmt]` override → `forge fmt` defaults (`line_length = 120`, `tab_width = 4`). Its `[lint]` section narrows `forge lint`: path `ignore` plus `exclude_lints` for rules that misfire on verified codebase conventions; site-specific suppressions on otherwise-useful rules use inline `// forge-lint: disable-next-line(...)` with a local reason. Apply the naming table above regardless (immutables here are mixedCase by convention).
 - "Stack too deep": pack variables into structs, split large functions, or rely on `via_ir` (already enabled) as a last resort.
 - On surgical edits, follow the file's existing conventions; do not rename or reorder unrelated code.
 - Before you ship: `forge test -vvvv`, `forge lint`, `forge fmt --check`; `forge taint src/<Contract>.sol` for untrusted-data flows; production keys in keystore/HW (never plaintext, never Anvil defaults); keep `.env` out of VCS.
