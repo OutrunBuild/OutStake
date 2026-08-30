@@ -1,0 +1,23 @@
+{
+  "lib/ds-test": {
+    "rev": "e282159d5170298eb2455a6c05280ab5a73a4ef0"
+  },
+  "lib/forge-std": {
+    "rev": "77041d2ce690e692d6e03cc812b57d1ddaa4d505"
+  },
+  "lib/layerzerolabs/devtools": {
+    "rev": "128b697838f4b0fd53ae748093fd66cc409ae5c4"
+  },
+  "lib/layerzerolabs/lz-evm-protocol-v2": {
+    "rev": "9c741e7f9790639537b1710a203bcdfd73b0b9ac"
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "rev": "7bf4727aacdbfaa0f36cbd664654d0c9e1dc52bf"
+  },
+  "lib/solidity-bytes-utils": {
+    "rev": "f4413cd6137b78403e3a1156bee6aceab46b46fa"
+  },
+  "lib/solmate": {
+    "rev": "89365b880c4f3c786bdd453d4b8e8fe410344a69"
+  }
+}

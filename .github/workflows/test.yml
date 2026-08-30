@@ -19,7 +19,7 @@ jobs:
       # would make the same commit's gate results drift across time. This env
       # is also part of the forge build cache key, so a forge version bump
       # invalidates the cache instead of restoring stale artifacts.
-      FORGE_VERSION: "v1.7.1"
+      FORGE_VERSION: "v1.8.1"
     steps:
       - uses: actions/checkout@v5
         with:

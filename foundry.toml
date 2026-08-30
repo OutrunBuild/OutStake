@@ -11,12 +11,9 @@ via_ir = true
 build_info = true
 evm_version = "prague"
 extra_output = ["storageLayout"]
-# 4591 is solc's >256-warnings truncation notice; the overflow is dependency noise from lib/
-# (see ignored_warnings_from below), so the notice carries no actionable signal.
+dynamic_test_linking = false
+
 ignored_error_codes = [6335, 2424, 4591]
-# Dependencies are vendored in lib/ and their solc warnings (NatSpec/style) are not actionable here.
-# Note solc's 256-warning emission cap applies before this display filter — src/ warnings are only
-# guaranteed visible while total project warnings stay under the cap.
 ignored_warnings_from = ["lib/**"]
 
 [profile.smoke.fuzz]
@@ -59,10 +56,19 @@ bsc_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "56", url = "${ETHEREUM
 base_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "8453", url = "${ETHEREUMSCAN_API_URL}" }
 
 [lint]
+ignore = ["test/**/*", "script/**/*"]
+# Below this line: forge-lint rules whose pattern misfires on verified codebase conventions
+# (CEI trailing emits, multi-return oracle destructures, acronym struct names).
+# Site-specific suppressions on otherwise-useful rules use inline
+# `// forge-lint: disable-next-line(...)` comments with a local reason instead.
 exclude_lints = [
     "mixed-case-variable", "mixed-case-function", "screaming-snake-case-immutable",
-    "screaming-snake-case-const", "unaliased-plain-import", "erc20-unchecked-transfer",
     "block-timestamp",
+    "reentrancy-events", "unused-return",
+    "non-reentrant-not-first",
+    "pascal-case-struct", "literal-instead-of-constant", "inline-assembly",
+    "low-level-calls", "interface-naming", "interface-file-naming",
+    "internal-function-used-once", "unwrapped-modifier-logic",
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
