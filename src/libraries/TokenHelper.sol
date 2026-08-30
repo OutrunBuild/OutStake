@@ -59,6 +59,8 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
         if (amount == 0) return;
         if (token == NATIVE) {
             // Native transfers require a low-level call for contract recipients; production callers guard reentrancy.
+            // Destination `to` is always the caller-designated recipient of its own funds, never an arbitrary sink.
+            // forge-lint: disable-next-line(arbitrary-send-eth)
             (bool success,) = to.call{value: amount}("");
             if (!success) revert NativeTransferFailed();
         } else {

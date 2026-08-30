@@ -35,6 +35,9 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
     /// @param _sequencerGracePeriod Grace period after sequencer recovery before oracle answers are trusted.
     /// @dev Captures raw oracle decimals at construction. If the underlying oracle later changes its decimals
     /// (which Chainlink does not), this adapter won't track the change — that's by design for simplicity.
+    // A zero _sequencerUptimeFeed is the supported sentinel that disables the optional sequencer check
+    // in _validateSequencer; it is not a misconfigured address.
+    // forge-lint: disable-next-line(missing-zero-check)
     constructor(address _oracle, uint256 _maxStaleness, address _sequencerUptimeFeed, uint256 _sequencerGracePeriod) {
         if (_maxStaleness == 0) revert InvalidStaleness();
         if (_oracle == address(0)) revert InvalidOracle();

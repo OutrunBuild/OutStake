@@ -104,6 +104,8 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         OutrunRateLimiterStorage storage $ = _getOutrunRateLimiterStorage();
         uint256 numConfigs = rateLimitConfigs.length;
         unchecked {
+            // uint256 i zero-initializes by language default; an explicit "= 0" adds no information.
+            // forge-lint: disable-next-line(uninitialized-local)
             for (uint256 i; i < numConfigs; ++i) {
                 RateLimit storage rl = $.rateLimits[rateLimitConfigs[i].dstEid];
                 // Checkpoint with the old limit/window before replacing them; amount == 0 settles existing in-flight
@@ -182,6 +184,9 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
         if (rl.window == 0) return;
         (uint256 currentAmountInFlight, uint256 amountCanBeSent) =
             _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
+        // Fail-closed rate limiting is the intended semantics; the only in-loop call site passes
+        // amount == 0 (pure checkpoint), so this revert cannot fire during batch configuration.
+        // forge-lint: disable-next-line(require-revert-in-loop)
         if (amount > amountCanBeSent) revert RateLimitExceeded();
         // casting to uint192 is safe because currentAmountInFlight + amount is bounded by
         // max(rl.limit, the stored amountInFlight), and both are uint192. On the outflow path the
@@ -193,6 +198,8 @@ abstract contract OutrunRateLimiterUpgradeable is Initializable {
             // forge-lint: disable-next-line(unsafe-typecast)
             rl.amountInFlight = uint192(currentAmountInFlight + amount);
         }
+        // uint64 safely holds Unix timestamps until year 2555.
+        // forge-lint: disable-next-line(unsafe-typecast)
         rl.lastUpdated = uint64(block.timestamp);
     }
 

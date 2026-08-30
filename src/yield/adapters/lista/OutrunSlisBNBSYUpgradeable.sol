@@ -45,6 +45,8 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
         if (tokenIn == NATIVE) {
             address _yieldBearingToken = yieldBearingToken();
             uint256 beforeBalance = _selfBalance(_yieldBearingToken);
+            // Recipient is the initializer-validated Lista StakeManager, not a user-supplied address.
+            // forge-lint: disable-next-line(arbitrary-send-eth)
             IListaStakeManager(stakeManager()).deposit{value: amountDeposited}();
             uint256 afterBalance = _selfBalance(_yieldBearingToken);
             amountSharesOut = afterBalance - beforeBalance;

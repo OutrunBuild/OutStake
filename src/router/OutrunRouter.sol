@@ -112,6 +112,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
         uint256 amountInNative = tokenIn == NATIVE ? amountInput : 0;
         _approveExact(tokenIn, SY, amountInput);
+        // SY passed the trusted-registry check above; native value only reaches registered SY implementations.
+        // forge-lint: disable-next-line(arbitrary-send-eth)
         amountInSYOut = IStandardizedYield(SY).deposit{value: amountInNative}(receiver, tokenIn, amountInput, minSyOut);
     }
 

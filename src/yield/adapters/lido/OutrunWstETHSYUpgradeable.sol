@@ -50,6 +50,8 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             // `getSharesByPooledEth`, matching _previewDeposit and avoiding the extra
             // getPooledEthByShares->wrap round-trip that lost 1-2 wei.
             uint256 before = IERC20(_yieldBearingToken).balanceOf(address(this));
+            // Recipient is the wstETH contract itself (the storage-configured yield token), not a user-supplied address.
+            // forge-lint: disable-next-line(arbitrary-send-eth)
             (bool success,) = _yieldBearingToken.call{value: amountDeposited}("");
             if (!success) revert WstETHStakeFailed();
             amountSharesOut = IERC20(_yieldBearingToken).balanceOf(address(this)) - before;

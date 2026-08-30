@@ -167,6 +167,9 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
         } catch {
             revert RateProviderCallFailed();
         }
+        // rate is always assigned on this path: the try branch assigns it and the catch reverts;
+        // the zero check catches a provider that returns 0.
+        // forge-lint: disable-next-line(uninitialized-local)
         if (rate == 0) revert RateProviderCallFailed();
         // sUSDS 18, USDS 18: 1 sUSDS = rate/1e27 USDS => 1e18 * rate / 1e27
         uint256 ssrRate = (1 ether * rate) / 1e27;
