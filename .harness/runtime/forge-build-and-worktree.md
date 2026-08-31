@@ -20,3 +20,10 @@ Read this file before any `forge` invocation and before any work under `.worktre
 - For routine code/test edits, run a non-`--force` build through the wrapper (`bash script/harness/forge-serialize.sh build`). When unsure, try without `--force` first.
 - Serialize every `forge build` / `forge compile` through `bash script/harness/forge-serialize.sh <forge args...>` (e.g. `bash script/harness/forge-serialize.sh build`). The wrapper takes an exclusive flock on `${TMPDIR:-/tmp}/outstake-forge.lock` and blocks until any other forge build/compile finishes, then `exec`s the real `forge`. Never run `forge build` / `forge compile` directly — concurrent compiles corrupt the incremental cache and waste the 12-15 min rebuild budget. This rule also applies to any `forge` invocation that triggers compilation; when in doubt, route through the wrapper.
 - The wrapper call blocks until forge exits, so a queued build looks silent for minutes. Before invoking the wrapper, tell the user you are about to run a serialized forge build/compile and may queue behind another one (up to ~12-15 min per build ahead). For long builds prefer `run_in_background: true` and poll output so the user sees the wrapper's 60s heartbeat live. If the wrapper reports it is waiting on the lock (line starts `forge-serialize: ... waiting`), tell the user the call is queued normally — do not present the wait as a hang or an error.
+
+## Post-build forge-lint Baseline Check
+
+- For `build` / `compile` subcommands the wrapper injects `--no-lint` and, after a successful compile, runs `script/harness/forge-lint-baseline.sh check`.
+- Any forge-lint finding beyond `script/harness/forge-lint-baseline.json` FAILS the wrapped invocation (exit 1, findings listed). Fix the finding, or re-snapshot via `regen` as an explicit, git-reviewed acceptance decision.
+- The check runs under the already-held flock and invokes plain `forge lint` directly (no wrapper recursion).
+- Unwrapped direct `forge build` prints the full lint report — the wrapper is the quiet, enforced path.

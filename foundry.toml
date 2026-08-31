@@ -57,18 +57,11 @@ base_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "8453", url = "${ETHER
 
 [lint]
 ignore = ["test/**/*", "script/**/*"]
-# Below this line: forge-lint rules whose pattern misfires on verified codebase conventions
-# (CEI trailing emits, multi-return oracle destructures, acronym struct names).
-# Site-specific suppressions on otherwise-useful rules use inline
-# `// forge-lint: disable-next-line(...)` comments with a local reason instead.
-exclude_lints = [
-    "mixed-case-variable", "mixed-case-function", "screaming-snake-case-immutable",
-    "block-timestamp",
-    "reentrancy-events", "unused-return",
-    "non-reentrant-not-first",
-    "pascal-case-struct", "literal-instead-of-constant", "inline-assembly",
-    "low-level-calls", "interface-naming", "interface-file-naming",
-    "internal-function-used-once", "unwrapped-modifier-logic",
-]
+severity = ["high", "med", "low"]
+# All detectors are active; accepted findings — including formerly inline-suppressed
+# sites — live in script/harness/forge-lint-baseline.json. Only NEW findings fail:
+# script/harness/forge-serialize.sh checks after every wrapped build/compile, and the
+# gate checks on changed-file runs. Unwrapped direct `forge build` prints the full
+# lint report — use the wrapper.
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
