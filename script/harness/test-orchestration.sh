@@ -337,6 +337,12 @@ if [ "${1-}" = "fmt" ] || [ "${1-}" = "build" ]; then
     exit 0
 fi
 
+# The gate runs `forge lint --json` through the forge-lint baseline check both
+# directly and via the build wrapper; empty successful output means no findings.
+if [ "${1-}" = "lint" ]; then
+    exit 0
+fi
+
 if [ "${1-}" = "test" ] && [ "${2-}" = "--list" ] && [ "${3-}" = "--match-path" ]; then
     case "${4-}" in
         test/upgradeable/OracleSetterUpgradeable.t.sol)
@@ -667,6 +673,7 @@ jq -e '
 ' "$contract_fast_record" >/dev/null
 grep -Fqx "test --list --match-path test/upgradeable/OracleSetterUpgradeable.t.sol" "$contract_fast_capture/forge_calls"
 grep -Fqx "test --list --match-path test/support/TokenHelper.t.sol" "$contract_fast_capture/forge_calls"
+grep -Fqx "lint --json" "$contract_fast_capture/forge_calls"
 grep -Eq '^test --match-contract ' "$contract_fast_capture/forge_calls"
 if grep -Eq '^test --match-path ' "$contract_fast_capture/forge_calls"; then
     echo "fast targeted tests should execute through --match-contract when validation succeeds" >&2
