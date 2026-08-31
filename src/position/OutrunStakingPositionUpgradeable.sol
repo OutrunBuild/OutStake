@@ -299,7 +299,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             syStaked: amountInSY,
             UAssetMinted: mintedUAsset,
             // Safe: deadline256 was checked to fit in uint128 immediately above.
-            // forge-lint: disable-next-line(unsafe-typecast)
             deadline: uint128(deadline256)
         });
 
@@ -457,7 +456,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             // _assetToSyUp(wrapUAssetDebt) <= syWrapStaking (floor <= ceil at the same exchange rate), and
             // syTotalStaking >= syWrapStaking keeps the total ledger above the same bound.
             // Accounting aggregate, not access control; the KeepWrapRedeem event below announces this delta.
-            // forge-lint: disable-next-line(missing-events-access-control)
             $.syTotalStaking -= amountInSY;
             $.syWrapStaking -= amountInSY;
             $.wrapUAssetDebt -= amountInUAsset;
@@ -537,7 +535,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             // No underflow: amountInSY was derived above from syWrapStaking (amountInSY <= syWrapStaking),
             // and syTotalStaking >= syWrapStaking, so both subtractions stay non-negative.
             // Accounting aggregate, not access control; the HarvestWrapYield event below announces this delta.
-            // forge-lint: disable-next-line(missing-events-access-control)
             $.syTotalStaking -= amountInSY;
             $.syWrapStaking -= amountInSY;
         }
@@ -564,21 +561,18 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     function setMinStake(uint256 minStake_) external onlyOwner {
-        // forge-lint: disable-next-line(missing-events-access-control)
         outrunStakingPositionStorage.minStake = minStake_;
         emit SetMinStake(minStake_);
     }
 
     function setRevenuePool(address revenuePool_) external onlyOwner {
         if (revenuePool_ == address(0)) revert ZeroInput();
-        // forge-lint: disable-next-line(missing-events-access-control)
         outrunStakingPositionStorage.revenuePool = revenuePool_;
         emit SetRevenuePool(revenuePool_);
     }
 
     function setKeeper(address keeper_) external onlyOwner {
         if (keeper_ == address(0)) revert ZeroInput();
-        // forge-lint: disable-next-line(missing-events-access-control)
         outrunStakingPositionStorage.keeper = keeper_;
         emit SetKeeper(keeper_);
     }
@@ -738,7 +732,6 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
             // Safe: remainingSY and remainingUAsset bounds were checked immediately above; for the ledger,
             // syTotalStaking = sum(position.syStaked) + syWrapStaking >= syStaked >= syRedeemed.
             // Accounting aggregate, not access control; callers announce syRedeemed in their Redeem event.
-            // forge-lint: disable-next-line(missing-events-access-control)
             $.syTotalStaking -= syRedeemed;
             remainingSY = syStaked - syRedeemed;
             remainingUAsset = positionUAssetMinted - UAssetBurned;

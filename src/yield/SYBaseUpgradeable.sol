@@ -19,7 +19,6 @@ abstract contract SYBaseUpgradeable is
     UUPSUpgradeable
 {
     /// @custom:storage-location erc7201:outrun.storage.SYBase
-    // forge-lint: disable-next-line(pascal-case-struct)
     struct SYBaseStorage {
         // The external token that actually accrues yield (e.g., aToken for Aave, wstETH for Lido, weETH for EtherFi).
         address yieldBearingToken;

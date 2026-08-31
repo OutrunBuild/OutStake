@@ -113,7 +113,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 amountInNative = tokenIn == NATIVE ? amountInput : 0;
         _approveExact(tokenIn, SY, amountInput);
         // SY passed the trusted-registry check above; native value only reaches registered SY implementations.
-        // forge-lint: disable-next-line(arbitrary-send-eth)
         amountInSYOut = IStandardizedYield(SY).deposit{value: amountInNative}(receiver, tokenIn, amountInput, minSyOut);
     }
 
@@ -334,7 +333,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         _approveExact(uAsset, launcher, mintedUAsset);
         // (4) Call launcher genesis with the staked uAsset.
         // mintedUAsset is bounded by type(uint128).max immediately before this cast.
-        // forge-lint: disable-next-line(unsafe-typecast)
         IMemeverseLauncher(launcher).genesis(verseId, uint128(mintedUAsset), genesisUser);
         // (5) Post-condition: the uAsset balance must return to the pre-stake snapshot and the launcher
         // allowance must be zero, else revert GenesisUAssetNotConsumed.

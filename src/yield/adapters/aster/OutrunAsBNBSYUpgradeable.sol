@@ -89,7 +89,6 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
         // Reverts with specific error if yield proxy has ongoing activities (cooldown period).
         if (tokenIn == NATIVE) {
             // Recipient is the storage-configured Aster asBNB minter, not a user-supplied address.
-            // forge-lint: disable-next-line(arbitrary-send-eth)
             amountSharesOut = IAsBnbMinter(_minter).mintAsBnb{value: amountDeposited}();
             if (amountSharesOut == 0) _revertOnZeroShares();
             return amountSharesOut;

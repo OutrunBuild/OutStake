@@ -16,7 +16,6 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 ///      and the omnichain OutrunOFTUpgradeable/uAsset contracts.
 abstract contract OutrunERC20Upgradeable is Initializable, ContextUpgradeable, IERC20, IERC20Metadata, IERC20Errors {
     /// @custom:storage-location erc7201:outrun.storage.OutrunERC20
-    // forge-lint: disable-next-line(pascal-case-struct)
     struct OutrunERC20Storage {
         mapping(address account => uint256) balances;
         mapping(address account => mapping(address spender => uint256)) allowances;

@@ -197,7 +197,6 @@ abstract contract OutrunOFTUpgradeable is
     ///         but without checked overflow because floor(a / r) * r <= a always holds.
     function _removeDust(uint256 _amountLD) internal view virtual override returns (uint256 amountLD) {
         unchecked {
-            // forge-lint: disable-next-line(divide-before-multiply)
             return (_amountLD / decimalConversionRate) * decimalConversionRate;
         }
     }

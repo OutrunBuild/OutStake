@@ -62,7 +62,6 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         if (tokenIn == NATIVE) {
             // Route native ETH through EtherFi's DepositAdapter which handles staking and mints weETH.
             // Recipient is the initializer-set EtherFi DepositAdapter, not a user-supplied address.
-            // forge-lint: disable-next-line(arbitrary-send-eth)
             amountSharesOut = IDepositAdapter(depositAdapter()).depositETHForWeETH{value: amountDeposited}(address(0));
         } else if (tokenIn == eETH()) {
             // Wrap existing eETH into weETH via the weETH contract.

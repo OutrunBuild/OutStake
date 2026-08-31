@@ -37,7 +37,6 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
     /// (which Chainlink does not), this adapter won't track the change — that's by design for simplicity.
     // A zero _sequencerUptimeFeed is the supported sentinel that disables the optional sequencer check
     // in _validateSequencer; it is not a misconfigured address.
-    // forge-lint: disable-next-line(missing-zero-check)
     constructor(address _oracle, uint256 _maxStaleness, address _sequencerUptimeFeed, uint256 _sequencerGracePeriod) {
         if (_maxStaleness == 0) revert InvalidStaleness();
         if (_oracle == address(0)) revert InvalidOracle();
@@ -71,7 +70,6 @@ contract OutrunExchangeOracleAdapter is IExchangeRateOracle {
         }
         // Normalize: (rawAnswer * SYUtils.ONE) / _rawScale.
         // Example: raw=1.05e8 (8 decimals), fixed 1e18 scale -> 1.05e8 * 1e18 / 1e8 -> 1.05e18.
-        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 rate = (uint256(answer) * SYUtils.ONE) / _rawScale;
         // A feed with more than 18 decimals and a small answer normalizes to zero; fail closed with a
         // named error instead of leaking rate == 0 (downstream divide-by-zero) to position accounting.

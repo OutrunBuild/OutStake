@@ -13,7 +13,6 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     // Abstract contracts cannot use the `layout at` syntax (solc error 7587), so this base
     // sets its ERC-7201 location the classic way — same pattern as SYBaseUpgradeable.
     /// @custom:storage-location erc7201:outrun.storage.OutrunL2OracleBackedSY
-    // forge-lint: disable-next-line(pascal-case-struct)
     struct OutrunL2OracleBackedSYStorage {
         // Oracle reports the current L1 exchange rate (canonical asset per SY).
         // Needed because the L2 token balance is static — the oracle makes the rate
