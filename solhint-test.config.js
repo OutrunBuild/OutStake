@@ -18,6 +18,9 @@ module.exports = {
         "no-console": "off",
         "one-contract-per-file": "off",
         // Test revert strings are self-describing failure diagnostics; the 32-char limit is a prod gas concern.
-        "reason-string": "off"
+        "reason-string": "off",
+        // Test handlers and mocks intentionally write state after external calls (invariant ghost
+        // models, callback simulations); test scope has no deployed reentrancy surface.
+        "reentrancy": "off",
     }
 };

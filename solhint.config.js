@@ -22,4 +22,3 @@ module.exports = {
         "var-name-mixedcase": "off"
     }
 };
-// test dispatch
