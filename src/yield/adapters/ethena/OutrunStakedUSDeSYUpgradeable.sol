@@ -42,7 +42,9 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         // Branch 1: deposit USDe into the ERC4626 sUSDe vault.
         // Branch 2: deposit sUSDe directly 1:1.
         if (tokenIn == _usde) {
-            _safeApproveInf(_usde, _yieldBearingToken);
+            // Exact per-call approval: the vault deposit pulls only this deposit's USDe amount, so
+            // no standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(_usde, _yieldBearingToken, amountDeposited);
             amountSharesOut = IERC4626(_yieldBearingToken).deposit(amountDeposited, address(this));
         } else {
             amountSharesOut = amountDeposited;
@@ -61,7 +63,10 @@ contract OutrunStakedUSDeSYUpgradeable layout at erc7201("outrun.storage.OutrunS
 
     /// @notice Returns the USDe amount for 1 sUSDe using ERC4626 convertToAssets.
     /// @return res The amount of USDe equivalent to 1 sUSDe (scaled by 1e18).
+    /// @dev Fail-closed backing reconciliation: reverts with InsufficientBacking when this adapter's
+    ///      own sUSDe balance falls below the outstanding SY supply (see _revertIfBackingBelowShares).
     function exchangeRate() public view override returns (uint256 res) {
+        _revertIfBackingBelowShares();
         return IERC4626(yieldBearingToken()).convertToAssets(1 ether);
     }
 

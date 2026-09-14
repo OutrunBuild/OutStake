@@ -56,7 +56,9 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             amountSharesOut = IERC20(_yieldBearingToken).balanceOf(address(this)) - before;
         } else if (tokenIn == _stETH) {
             // Wrap existing stETH into wstETH at current rate.
-            _safeApproveInf(_stETH, _yieldBearingToken);
+            // Exact per-call approval: the wrap pulls only this deposit's stETH amount, so no
+            // standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(_stETH, _yieldBearingToken, amountDeposited);
             amountSharesOut = IWstETH(_yieldBearingToken).wrap(amountDeposited);
         } else {
             // 1:1, already the yield-bearing token.
@@ -83,7 +85,10 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
 
     /// @notice Returns the current exchange rate: stETH per 1 wstETH, scaled by 1e18.
     /// @return res wstETH.stEthPerToken(), which grows as Lido validators earn staking rewards.
+    /// @dev Fail-closed backing reconciliation: reverts with InsufficientBacking when this adapter's
+    ///      own wstETH balance falls below the outstanding SY supply (see _revertIfBackingBelowShares).
     function exchangeRate() public view override returns (uint256 res) {
+        _revertIfBackingBelowShares();
         return IWstETH(yieldBearingToken()).stEthPerToken();
     }
 

@@ -37,6 +37,7 @@ abstract contract SYBaseUpgradeable is
     error SYSweepInvalidToken(address token);
     error SYSweepZeroAddress();
     error SYSweepZeroAmount();
+    error InsufficientBacking(uint256 residentBacking, uint256 outstandingShares);
 
     constructor() {
         _disableInitializers();
@@ -250,6 +251,21 @@ abstract contract SYBaseUpgradeable is
         view
         virtual
         returns (uint256 amountTokenOut);
+
+    /// @notice Fails closed when the adapter's own yield-bearing-token balance no longer backs the
+    ///      outstanding SY supply.
+    /// @dev Nominal 1:1 backing reconciliation, fail-closed. SYBase mints 1 SY per 1 yield-bearing-token
+    ///      unit, so for adapters in the nominal 1:1 domain the adapter's own yield-bearing-token balance
+    ///      is the full backing of the outstanding shares. Only adapters meeting that criterion may call
+    ///      this; scaled-share domains (balances that grow with a liquidity index) must not, as balance
+    ///      there is not the backing measure. Snapshot semantics: only the current balance is checked,
+    ///      never any rate value. Precondition: the yield-bearing token is a standard (non-fee-on-transfer)
+    ///      token, so a nominal transfer equals the received amount.
+    function _revertIfBackingBelowShares() internal view {
+        uint256 outstandingShares = totalSupply();
+        uint256 residentBacking = _selfBalance(yieldBearingToken());
+        if (residentBacking < outstandingShares) revert InsufficientBacking(residentBacking, outstandingShares);
+    }
 
     /// @notice Returns all tokens accepted for deposit by this SY adapter.
     /// @return res Array of token addresses accepted for deposit.

@@ -41,7 +41,9 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
         address _yieldBearingToken = yieldBearingToken();
         // Branch 1: deposit USDS into the ERC4626 sUSDS vault to mint sUSDS shares. Branch 2: deposit sUSDS directly 1:1.
         if (tokenIn == _usds) {
-            _safeApproveInf(_usds, _yieldBearingToken);
+            // Exact per-call approval: the vault deposit pulls only this deposit's USDS amount, so
+            // no standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(_usds, _yieldBearingToken, amountDeposited);
             amountSharesOut = IERC4626(_yieldBearingToken).deposit(amountDeposited, address(this));
         } else {
             amountSharesOut = amountDeposited;
@@ -66,7 +68,10 @@ contract OutrunStakedUsdsSYUpgradeable layout at erc7201("outrun.storage.OutrunS
 
     /// @notice Returns the current exchange rate: USDS per 1 sUSDS, scaled by 1e18.
     /// @return res The ERC4626 convertToAssets(1 ether) rate, which grows as Sky savings yield accrues.
+    /// @dev Fail-closed backing reconciliation: reverts with InsufficientBacking when this adapter's
+    ///      own sUSDS balance falls below the outstanding SY supply (see _revertIfBackingBelowShares).
     function exchangeRate() public view override returns (uint256 res) {
+        _revertIfBackingBelowShares();
         return IERC4626(yieldBearingToken()).convertToAssets(1 ether);
     }
 

@@ -71,6 +71,7 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
     /// @notice Returns the current exchange rate: BNB per 1 slisBNB, scaled by 1e18.
     /// @return res StakeManager.convertSnBnbToBnb(1 ether), which grows as Lista staking yield accrues.
     function exchangeRate() public view override returns (uint256 res) {
+        _revertIfBackingBelowShares();
         return IListaStakeManager(stakeManager()).convertSnBnbToBnb(1 ether);
     }
 

@@ -84,23 +84,26 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     }
 
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
-        address _minter = asBnbMinter();
         // Branch 1 (NATIVE): Mint asBNB from native BNB via the Aster Minter.
         // Reverts with specific error if yield proxy has ongoing activities (cooldown period).
         if (tokenIn == NATIVE) {
             // Recipient is the storage-configured Aster asBNB minter, not a user-supplied address.
+            address _minter = asBnbMinter();
             amountSharesOut = IAsBnbMinter(_minter).mintAsBnb{value: amountDeposited}();
             if (amountSharesOut == 0) _revertOnZeroShares();
             return amountSharesOut;
         }
         // Branch 2 (SLIS_BNB): Mint asBNB from slisBNB via the Aster Minter.
         if (tokenIn == slisBnb()) {
+            address _minter = asBnbMinter();
             address _slisBnb = slisBnb();
             // Capture slisBNB balance before external call to enforce full consumption.
             // _transferIn already moved amountDeposited into this contract, so before
             // includes the user's deposit plus any prior stranded balance.
             uint256 slisBalanceBefore = _selfBalance(_slisBnb);
-            _safeApproveInf(_slisBnb, _minter);
+            // Exact per-call approval: the mint pulls only this deposit's slisBNB amount, so no
+            // standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(_slisBnb, _minter, amountDeposited);
             amountSharesOut = IAsBnbMinter(_minter).mintAsBnb(amountDeposited);
             if (amountSharesOut == 0) _revertOnZeroShares();
             // Enforce that the minter fully consumed the input: any partial fill would
@@ -132,6 +135,7 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     /// @notice Returns the current exchange rate: BNB per 1 asBNB, scaled by 1e18.
     /// @return res BNB value of 1 asBNB (asBNB→slisBNB via Minter, then slisBNB→BNB via StakeManager).
     function exchangeRate() public view override returns (uint256 res) {
+        _revertIfBackingBelowShares();
         uint256 slisBnbPerShare = IAsBnbMinter(asBnbMinter()).convertToTokens(1 ether);
         return IListaStakeManager(stakeManager()).convertSnBnbToBnb(slisBnbPerShare);
     }

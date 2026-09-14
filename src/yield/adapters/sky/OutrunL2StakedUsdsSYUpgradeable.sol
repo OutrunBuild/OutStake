@@ -97,7 +97,6 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     error RateProviderCallFailed();
 
     error PSM3IncompleteConsumption(uint256 expectedConsumed, uint256 actualConsumed);
-    error InsufficientBacking(uint256 residentBacking, uint256 outstandingShares);
 
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         address _yieldBearingToken = yieldBearingToken();
@@ -144,20 +143,15 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     /// @return res SSR-derived rate (sUSDS 18 -> USDS 18 via rate/1e27) with PSM deviation guard.
     /// @dev Accounting uses independent RateProvider and reverts with RateProviderCallFailed if none is configured
     ///      (fail-closed, no PSM fallback). If PSM quote deviates from SSR by more than maxDeviationBps, reverts
-    ///      to fail-closed (prevents pool-imbalance or stale-oracle pollution of position mint/liquidation).
-    ///      Also reverts with InsufficientBacking when the adapter's own sUSDS balance falls below the
-    ///      outstanding SY supply (backing reconciliation, fail-closed).
+    ///      to fail-closed (prevents pool-imbalance or stale-oracle pollution of position minting).
+    ///      Also runs the shared fail-closed backing reconciliation (SYBaseUpgradeable.sol::
+    ///      _revertIfBackingBelowShares) and reverts with InsufficientBacking when the adapter's own
+    ///      sUSDS balance falls below the outstanding SY supply.
     function exchangeRate() public view override returns (uint256 res) {
         address _yieldBearingToken = yieldBearingToken();
-        // Backing reconciliation, checked before any rate source is read (fail-closed): SYBase mints
-        // 1 SY per 1 sUSDS unit, so this adapter's own sUSDS balance is the full backing of the
-        // outstanding shares. If funds ever leave outside deposit/redeem, quoting a rate would let
-        // staking mint unbacked shares at par, so the quote must revert instead. Snapshot semantics:
-        // only the current balance is checked here, never the rate value itself. Precondition: sUSDS
-        // is a standard (non-fee-on-transfer) token, so a nominal transfer equals the received amount.
-        uint256 outstandingShares = totalSupply();
-        uint256 residentBacking = _selfBalance(_yieldBearingToken);
-        if (residentBacking < outstandingShares) revert InsufficientBacking(residentBacking, outstandingShares);
+        // Backing reconciliation runs before any rate source is read (fail-closed); the assertion's
+        // scope, snapshot semantics, and preconditions live with the shared base helper.
+        _revertIfBackingBelowShares();
 
         address rp = rateProvider();
         if (rp == address(0)) revert RateProviderCallFailed();

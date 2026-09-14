@@ -64,7 +64,9 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
             // Track scaled balance before/after because aToken balance changes with the liquidity index.
             IAToken aToken = IAToken(yieldBearingToken());
             uint256 scaledBefore = aToken.scaledBalanceOf(address(this));
-            _safeApproveInf(_underlying, _pool);
+            // Exact per-call approval: the pool supply pulls only this deposit's underlying amount,
+            // so no standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(_underlying, _pool, amountDeposited);
             IAaveV3Pool(_pool).supply(_underlying, amountDeposited, address(this), 0);
             amountSharesOut = aToken.scaledBalanceOf(address(this)) - scaledBefore;
         } else {
@@ -80,7 +82,7 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     ///      and depends on available liquidity in the Aave reserve; high utilization, reserve pause/freeze, or insufficient liquidity will fail-closed and revert until recovery.
     ///      The `tokenOut == yieldBearingToken()` (aToken) branch is a liquidity-independent escape hatch (`_transferOut`), always available.
     ///      The upper-layer `OutrunStakingPositionUpgradeable.redeem` inherits the same external dependency when `tokenOut==underlying` is requested;
-    ///      `keepRedeem`/`keepWrapRedeem` always settle in SY (aToken) without calling `withdraw`, and are unaffected by this dependency.
+    ///      its direct-SY output (and every collateral payout that settles in SY/aToken) skips `withdraw` and is unaffected by this dependency.
     ///      Operational/integration recommendation: monitor reserve-level liquidity and pause state (utilization threshold alerts); have positions request YBT for redemption first, and only exit to underlying via a second `SY.redeem(..., underlying)` through the Router at final settlement.
     /// @param receiver address to receive the redeemed tokens
     /// @param tokenOut the asset being redeemed (underlying or aToken)
@@ -112,9 +114,10 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     /// Divide by 1e9 to get the standard 1e18-scaled exchange rate.
     /// @dev Truncation: RAY->WAD is integer division (floor, remainder <1e9 Ray).
     ///      i.e. <1 wei per 1e18 unit and relative <1e-18 at index ~1e27. Bias is
-    ///      conservative - covering the same uAsset debt needs marginally more SY, never
-    ///      less - and negligible. Half-up would need coordinated Position change and is
-    ///      not adopted.
+    ///      conservative and negligible; no external coordination is required.
+    ///      Half-up is not adopted: half-up rounds up only at >= 0.5 fractional
+    ///      part, while the canonical asset -> SY up formula always rounds toward
+    ///      ceiling — different strategies on different domains.
     /// @return exchange rate in 1e18 precision
     function exchangeRate() public view override returns (uint256) {
         address _underlying = underlying();

@@ -66,7 +66,9 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
         } else if (tokenIn == eETH()) {
             // Wrap existing eETH into weETH via the weETH contract.
             address _yieldBearingToken = yieldBearingToken();
-            _safeApproveInf(eETH(), _yieldBearingToken);
+            // Exact per-call approval: the wrap pulls only this deposit's eETH amount, so no
+            // standing grant remains even if a misdirected transfer strands transit tokens in the SY.
+            _safeApprove(eETH(), _yieldBearingToken, amountDeposited);
             amountSharesOut = IWeETH(_yieldBearingToken).wrap(amountDeposited);
         } else {
             // Already in weETH form, 1:1 deposit.
