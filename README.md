@@ -54,17 +54,21 @@ Repository layout:
 
 - `src/assets/{base,interfaces,omnichain}`
 - `src/position/{interfaces}` plus `OutrunStakingPositionUpgradeable.sol`
+- `src/psm/{interfaces}` plus `OutrunPSMUpgradeable.sol`
+- `src/usr/{interfaces}` plus `OutrunUSRVaultUpgradeable.sol`
 - `src/yield/{interfaces,adapters/{aave,aster,ethena,etherfi,lido,lista,sky}}` plus `SYBaseUpgradeable.sol`, `OutrunL2OracleBackedSYUpgradeable.sol`, `OutrunL2StakedTokenSYUpgradeable.sol`
 - `src/router/{interfaces}` plus `OutrunRouter.sol`
 - `src/integrations/{aave,aster,etherfi,lido,lista,sky}`
-- `src/libraries/{oracle}`
-- `test/{deploy,support,upgradeable}`
+- `src/libraries/...`（明细见 `docs/ARCHITECTURE.md` §1.8 底层库，以文件树与 `.harness/policy.json` 为准）
+- `test/{deploy,psm,support,upgradeable,usr}`
 - `script/{deploy,deploy/deployment,harness,lib,ops}`
 - `.harness/{runtime,schemas}` and `docs/`
 
 ## Integration Notes — Self-Issued Tokens: Weird-ERC20 Disclosure
 
 Third-party integrators (DEXs, vaults, bridges, memeverse, or any external protocol) must not assume standard ERC20 behavior when integrating the self-issued token family: `uAsset` (`OutrunUniversalAssetsUpgradeable` / `OutrunOFTUpgradeable`) and SY shares (`SYBaseUpgradeable` family). The six behaviors below are intentional by design, documented as the product truth in `docs/spec/common-foundations.md`, but summarized here for external visibility so integrations do not rely on `totalSupply` or transfer-amount invariants that do not hold.
+
+Integration entry points (genesis): new uAsset supply is handed to the Memeverse launcher through two gates. Path A is the router-side PSM gate — `OutrunRouter.sol::genesisByPSM` (reserve token -> PSM 1:1 face-value mint of uAsset; no position, no debt; router-side full-consumption post-assertion). Path B is a physically gated value-parity genesis position: `OutrunStakingPositionUpgradeable.sol::stakeForGenesis` is the native SP entry — the position's minted uAsset is minted to the SP itself and atomically delivered to the launcher within the same transaction (exact approve + full-consumption post-assertion, `GenesisUAssetNotConsumed` rollback), with no discount or LTV-style scaling segment (collateral value passes SY -> canonical asset -> uAsset at parity). The router's `genesisByToken` / `genesisBySY` are thin-forwarding convenience entries (token -> SY swap leg kept on `genesisByToken`); any EOA or contract may call `SP.stakeForGenesis` directly — the router is not a required path (`mintSYFromToken` + a direct `stakeForGenesis` remains the equivalent two-step combination). Supply-side context: PSM (`OutrunPSMUpgradeable`) provides reserve-backed 1:1 mint/redeem per uAsset family, and USR (`OutrunUSRVaultUpgradeable`) provides ERC4626 savings vaults (suETH/suUSD/suBNB). The position layer no longer exposes keeper / harvest / wrap surfaces, and v1 has no liquidation path — positions are exited only via `OutrunStakingPositionUpgradeable.sol::redeem`. Cross-repo wiring constraints for Memeverse/POLend (18-decimals family rule, no-callback ERC20 semantics, pause linkage matrix, maxReserve checks, anchor-supply reconciliation) are specified in `docs/spec/protocol.md` (「跨仓库接线约束（Memeverse/POLend）」).
 
 | # | Weird-ERC20 pattern | Carries | Location | Integrator impact / required handling |
 |---|---|---|---|---|

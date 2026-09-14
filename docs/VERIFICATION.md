@@ -36,7 +36,7 @@ Diff evidence must not be created as persistent repository files. Prefer `GATE_D
 | Command | fast | full / ci | Condition |
 |---|---|---|---|
 | `forge fmt --check` | yes | yes | changed Solidity files |
-| `npx solhint` | yes | yes | changed Solidity files |
+| `npx solhint` | yes | yes | changed Solidity files (`src/**` with `solhint.config.js`; `script/**` with `solhint-script.config.js`; `test/**` with `solhint-test.config.js`) |
 | `forge build` | yes | yes | always |
 | `forge test --match-path` | yes | no | changed/mapped targeted tests |
 | `forge test -vvv` | no | yes | full / ci |
@@ -59,6 +59,8 @@ Completion or pass claims require fresh output from the exact gate profile used 
 - `npm run test:router`: router unit, router fuzz, router proxy integration, and router-position scenario coverage.
 - `npm run test:yield`: SY unit, SY adapter, and oracle setter coverage.
 - `npm run test:assets`: universal assets and OFT coverage.
+- `npm run test:psm`: PSM peg-stability module coverage (`OutrunPSMUpgradeable` swap/fee/cap/reserve).
+- `npm run test:usr`: USR vault coverage (`OutrunUSRVaultUpgradeable` accrual/cap/parameter).
 - `npm run test:fork`: fork-only SY adapter coverage.
 - `npm run test:invariant`: position invariant coverage.
-- `npm run test:release`: unit layer plus invariant and fork layers under the release Foundry profile.
+- `npm run test:release`: unit layer (including PSM and USR) plus invariant and fork layers under the release Foundry profile.

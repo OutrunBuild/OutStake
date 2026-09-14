@@ -25,7 +25,7 @@
 - 把"审阅建议"直接写成仓库规则
 - 在没有人工确认的情况下改变资金流约束
 - 在没有人工确认的情况下改变权限边界
-- 在没有人工确认的情况下扩大 keeper、revenuePool、owner 或其他 privileged role 的职责
+- 在没有人工确认的情况下扩大 owner（四 setter 与 pause/UUPS）、uAsset minter 台账、genesis launcher 门或其他 privileged role 的职责
 
 ## 3. 必须升级为决策点的改动
 
@@ -62,7 +62,7 @@
 - "为了更安全，把协议规则改成更保守的资金流约束"
 - "为了未来扩展，先预留一套新的状态机"
 - "为了用户体验，把延迟路径改成即时路径"
-- "为了统一实现，顺手扩大 keeper / revenuePool / owner 职责"
+- "为了统一实现，顺手扩大 owner（四 setter 与 pause/UUPS）/ uAsset minter 台账 / genesis launcher 门职责"
 
 这些都属于产品规则变化，不是纯安全修复。
 

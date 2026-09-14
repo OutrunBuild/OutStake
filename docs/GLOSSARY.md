@@ -3,38 +3,47 @@
 - **uAsset (Universal Asset)**：统一债务与流通资产层代币，按 minter 维度的 mint cap 约束铸造，通过 repay 路径回收对应债务。
 - **SY (Standardized Yield)**：标准化收益份额代币，将不同外部收益资产包装为统一的 deposit / redeem / preview / exchangeRate 接口。
 - **SY Adapter**：针对特定外部收益协议（Aave、Lido、Etherfi 等）的 SY 适配器实现，负责将协议份额映射到统一的 SY 份额语义。
-- **OutrunStakingPositionUpgradeable**：当前仓位管理合约，维护锁仓仓位账本与公共 wrap 池，支持 stake、draw、redeem、keepRedeem、wrapStake、keepWrapRedeem、harvestWrapYield。
+- **OutrunStakingPositionUpgradeable**：仓位管理合约（已落地）：v1 收益背书凭证层账本（genesis-only、面值铸造、0% 利率默认、无清算），支持 stakeForGenesis（唯一铸造入口，面值开仓）、redeem（任意时刻按比例双腿销债）与参数 setter 族（setDuty/setGenesisLauncher/setMinStake/setProtocolTreasury）。
 - **OutrunRouter**：聚合路由入口，把 token <-> SY <-> position/uAsset 的组合路径收敛为单次调用。
 - **Underlying**：SY adapter 对应的基础资产，如 USDS（Sky）、USDC（Aave）、USDE（Ethena）。
 - **Yield Bearing Token**：SY adapter 对应的收益产生型代币，如 sUSDS、aUSDC、wstETH。
-- **Canonical Asset**：adapter 对外声明的"真实底层资产"元数据（地址 + 精度）。跨链收益族 L2 adapter（`OutrunL2OracleBackedSYUpgradeable` 派生系及 `OutrunL2WrappableWstETHSYUpgradeable`）指向 Ethereum 上的 canonical underlying 而非 L2 token；L2 原生协议族（如 Sky PSM3 的 `OutrunL2StakedUsdsSYUpgradeable`）canonical 为 L2 本地资产。
+- **Canonical Asset**：adapter 对外声明的"真实底层资产"元数据（地址 + 精度）。跨链收益族 L2 adapter（`OutrunL2OracleBackedSYUpgradeable` 派生系）指向 Ethereum 上的 canonical underlying 而非 L2 token；L2 原生协议族（如 Sky PSM3 的 `OutrunL2StakedUsdsSYUpgradeable`）canonical 为 L2 本地资产。
 - **exchangeRate()**：SY 的汇率函数，返回 asset per SY。用于将 SY 份额数量与资产值双向换算。
 - **SYUtils.syToAsset**：按 exchangeRate 将 SY 份额换算为资产值（向下取整）。
-- **SYUtils.assetToSy**：按 exchangeRate 将资产值换算为 SY 份额（向下取整）。
-- **SYUtils.assetToSyUp**：按 exchangeRate 将资产值换算为 SY 份额（向上取整）。
-- **Position**：锁仓仓位记录，包含 owner（仓位控制权）、syStaked（质押 SY 数量）、UAssetMinted（已铸造 uAsset 债务）、deadline。
-- **uAssetDebt**：stake/wrapStake 铸出的初始 uAsset 债务单位（uAsset decimals 口径，非 SY 单位）：质押的 SY 数量（stake/wrapStake 入口即 `amountInSY`）先按 exchangeRate 经 SYUtils.syToAsset 折算成 canonical asset 价值，再经 canonical→uAsset 精度重缩放得到（`OutrunStakingPositionUpgradeable.sol::_syToAsset` 两段换算）；它是 `stake` 与 `wrapStake` 共用的初始债务定价结果（locked position 场景即 position 初始 `UAssetMinted` 的取值，wrap 池场景累加进 `wrapUAssetDebt`），亦即单位模型中的 `uAssetDebtUnits`；locked position 场景下该值由 `Stake` 事件的 `mintedUAsset` 字段携带。
-- **mintedUAsset**：调用级铸出量标识符（`OutrunStakingPositionUpgradeable.sol::stake` / `::drawUAsset` / `::wrapStake` 的返回值与 `Stake`/`DrawUAsset`/`WrapStake` 事件字段（`IOutrunStakeManager.sol` 事件字段））：本次调用实际 mint 的 uAsset 数量（uAsset decimals 口径增量）。stake/wrapStake 场景数值上等于 `uAssetDebt`；drawUAsset 场景为升值差额 `currentValueInUAsset - positionUAssetMinted`。与 storage 域总债务 `position.UAssetMinted`（`Position` 结构体字段/`IOutrunStakeManager.sol::positions` 返回）分属两域、刻意异名。
-- **Wrap Pool**：公共 wrap 池，不建立独立 positionId，维护全池聚合账务（syTotalStaking、syWrapStaking、wrapUAssetDebt）；退出由 keeper 经 keepWrapRedeem 托管，无协议内自助赎回。
-- **syTotalStaking**：position 合约中所有 SY 质押总量（含锁仓仓位与 wrap 池）。
-- **syWrapStaking**：wrap 池中的 SY 本金量。
-- **wrapUAssetDebt**：wrap 池的 uAsset 总债务。
-- **drawUAsset**：提取仓位升值部分对应的 uAsset 债务。仅在仓位锁定期内（`block.timestamp < deadline`）可用；到期后 revert `LockTimeExpired`。
-- **keepRedeem**：keeper-only 到期仓位代偿赎回入口（`OutrunStakingPositionUpgradeable.sol::keepRedeem`，非 keeper revert `PermissionDenied`）；权限分区语义见 `docs/spec/access-control.md`。
-- **keepWrapRedeem**：keeper-only wrap 池兑付入口（`OutrunStakingPositionUpgradeable.sol::keepWrapRedeem`，非 keeper revert `PermissionDenied`；池抵押不足 revert `WrapPoolUndercollateralized`，全有或全无）；权限分区语义见 `docs/spec/access-control.md`。
-- **harvestWrapYield**：owner-only wrap 池超额收益收割入口（`OutrunStakingPositionUpgradeable.sol::harvestWrapYield`，输出至 `revenuePool`）；权限分区语义见 `docs/spec/access-control.md`。
+- **canonical asset -> SY（down 公式）**：按 exchangeRate 将资产值换算为 SY 份额（向下取整）；v1 随清算路径删除失去 SP 侧最后消费者（原唯一消费链 `_assetToSy` → `_liquidationSplit`），对应 down/up 换算仅为 `docs/spec/common-foundations.md` 单位模型的内联公式，非 `SYUtils` 库成员（库内仅保留 `SYUtils.syToAsset`）。
+- **canonical asset -> SY（up 公式）**：按 exchangeRate 将资产值换算为 SY 份额（向上取整）。
+- **Position**：仓位记录（已落地），包含 owner（仓位控制权，redeem 权）、syStaked（质押 SY 数量）、principalDebt（本金债务，uAsset decimals 口径的铸账本金）、accruedInterest（已结算未支付利息）、lastRate（最近利息结算时的累计率快照）——五字段（v1 删除 `rateMultiplier`）；无 deadline 字段（开放期限）。
+- **面值铸造（value-parity mint）**：v1 铸造语义——`mintedUAsset = floor₂(syStaked × SY.exchangeRate())`（SY → canonical → uAsset 两段 down，无 LTV 缩放、无乘数）：铸出量 = 抵押按汇率折算价值 × 100%。注意是价值平价不是单位平价：汇率 1.15 时存 1 sUSDS 铸 1.15 UUSD。资本效率 100%，背书由取整方向构造性成立；生息敞口 100% 留在抵押方。
+- **背书不变式**：v1 核心锚点——对任意活动仓位 `positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)`（两段 down 构造严格 ≤），聚合形态 `amountInMinted(SPx) ≤ Σ collateralValue`（各仓按其铸造时点汇率计）；汇率单调不降假设下背书率随时间单调改善（LST 削罚例外属可吸收形态）。真源见 `docs/spec/position/accounting.md` §10.3。
+- **CDP (Collateralized Debt Position)**：抵押债务仓位模型——质押 SY 作为抵押、按面值（价值平价）铸出 uAsset 债务；开放期限（无到期门）、无增借入口，减借经 partial redeem；v1 无 LTV、无清算（唯一铸造入口 `stakeForGenesis`，出清经 owner `redeem`）。
+- **LTV (Loan-to-Value)**（v1 移除）：仓位债务与抵押价值之比的度量族；v1 无 LTV 参数、无清算触发判定，该概念仅存于 v2 路线存档（重开自由借贷时的候选机制）。
+- **铸造 LTV（mintLtv）（v1 移除）**：原 per-SP 铸造缩放参数（默认 90%）；v1 面值铸造无缩放段，参数、setter 与联动约束整体删除。
+- **清算线（liquidationLtv）（v1 移除）**：原清算触发阈值；v1 无清算，参数、setter 与棘轮/联动约束整体删除。
+- **清算溢价（liquidationPremium）（v1 移除）**：原清算人报酬系数；v1 无清算，参数、setter 与梯子约束整体删除。
+- **CollSurplus（v1 移除）**：原清算后剩余抵押的待领账目；v1 无清算即无剩余，struct、storage 字段、`claimCollSurplus()`、事件与错误整体删除。
+- **duty**：per-SP 每秒率（RAY 1e27 域，治理可调，`1e27`=零费哨兵；无全局 base，单 `duty` per-SP）：v1 接受域 `[1e27, DUTY_CAP]`、全族默认 `1e27`（零费：`rate` 永不前移、债务冻结、背书率单调上升）；守卫 `duty < 1e27`（sub-RAY 即负利率，含 0，保 `rate` 单调不减）以 `ZeroInput` 拒绝，越上限以 `DutyCap` 拒绝（`DUTY_CAP = 1000000004431822129783699001`，年化 15% 等效每秒率；`BorrowRateBelowResolution` 已废除）；`BorrowRateCap` 更名 `DutyCap`；`borrowRate()` 视图更名 `duty()`；变更分段生效（旧 `duty` 结算到当前时刻后新 `duty` 前瞻）；加息换算式 `duty = 1e27*(1+年化)^(1/31536000)` 向下取整。
+- **genesisRateMultiplier（v1 移除）**：原 Genesis 折扣利率系数（默认 0.5、`0 < m ≤ 8e17`，`stakeForGenesis` 开仓快照锁定）；v1 随折扣机制整体删除（存储参数、setter、视图、`SetGenesisRateMultiplier` 事件、`RateMultiplierBounds` 错误、`Position.rateMultiplier` 字段、`Stake` 事件的 `rateMultiplier` 字段与 `StakeForGenesis` 事件的 `genesisRateMultiplier` 字段一并删除）。kill switch 唯一形态为 `setGenesisLauncher(address(0))`（下条）。
+- **genesisLauncher**：SP 侧 genesis launcher 地址参数（依赖级别类似 `protocolTreasury`），非 initialize 参数——SP 部署默认零地址＝`stakeForGenesis` 入口禁用（`GenesisLauncherNotSet`），部署后由 owner 经 `OutrunStakingPositionUpgradeable.sol::setGenesisLauncher` 布线（接受任意地址含零；置零＝禁用入口的 kill switch）；emit `SetGenesisLauncher(oldLauncher, newLauncher)`；部署须与 router 侧 `memeverseLauncher` registry 对齐同址（`SP.genesisLauncher() == router.memeverseLauncher()`）。
+- **rate**：per-SP 累计因子（RAY 1e27 域，init=`1e27`），按复利整段闭式惰性增长（`rate = rmul(rpow(duty, dt), rate)`，`dt = block.timestamp − rateLastSettledAt`，timestamp 锚定；`rpow` 系 Maker assembly 版（内步 round-half-up），`rmul` 单次截断）；SP 存累计 `rate`，仓位存 `lastRate` 快照；pending 利息=`principalDebt × (rateNow − lastRate) / 1e27`（RAY 域单次除法，v1 无乘数）；v1 零费默认（`duty = 1e27`）下 `rate` 恒 `1e27`、利息永不 accrue；USR 不动。
+- **协议金库（protocolTreasury）**：owner-settable 地址参数（V1 = 部署期金库地址），redeem 利息腿的唯一去向（应计利息等值 uAsset transfer 到账，不 burn、不进 minter 台账；v1 零费默认下利息腿恒 0，参数为未来加息保留）；禁止为改去向升级合约。
+- **uAssetDebt**：SY 抵押折算出的 uAsset 计价债务单位（uAsset decimals 口径，非 SY 单位）：SY 数量先按 exchangeRate 经 SYUtils.syToAsset 折算成 canonical asset 价值，再经 canonical→uAsset 精度重缩放得到（`OutrunStakingPositionUpgradeable.sol::_syToAsset` 两段 down 换算）；亦即单位模型中的 `uAssetDebtUnits`。v1 面值铸造下 `stakeForGenesis` 的实际铸出量 = 该值（无缩放），故 `mintedUAsset ≤ uAssetDebt`。
+- **mintedUAsset**：调用级铸出量标识符（`Stake` / `StakeForGenesis` 事件字段；`stakeForGenesis` 返回 positionId，铸出量经事件携带）：本次调用实际 mint 的 uAsset 数量（uAsset decimals 口径），数值上等于两段 down 面值换算结果 `floor₂(syStaked × exchangeRate())`，并写入该仓初始 `principalDebt`。与 storage 域债务字段 `principalDebt`（`Position` 结构体字段/`IOutrunStakeManager.sol::positions` 返回）分属两域、刻意异名。
 - **NATIVE**：address(0) 的别名，用于统一标识 chain native coin（如 ETH、BNB）。
-- **Position Owner**：锁仓仓位的拥有者，拥有 drawUAsset 和 redeem 权限。注意：仓位 owner 和初始 uAsset receiver 可以是不同地址。
-- **Keeper**：由 owner 经 `OutrunStakingPositionUpgradeable.sol::setKeeper` 设置的单一地址，仅有 `keepRedeem` 与 `keepWrapRedeem` 权限、无 `harvestWrapYield` 权限；部署布线见 `docs/deployment.md`「Keeper/Harvest 权限分区与活性布线」节。
-- **Revenue Pool**：接收 wrap 池超额收益的地址。
+- **Position Owner**：CDP 仓位的拥有者，拥有 redeem 权限（任意时刻，无到期门）。
+- **PSM (Peg Stability Module)**：uAsset 的储备兑换供给路径：每个 `(uAsset, reserveToken)` 配对一个 `OutrunPSMUpgradeable` 实例，共四实例（UUSD 拆 USDC-PSM 与 USDT-PSM 两实例，UETH/UBNB 各一），储备资产与对应 uAsset 按固定 1:1 面值双向兑换，经 uAsset 储备铸烧路径（`reserveMint`/`reserveBurn`）供给、豁免 minter 债务台账；完整规格见 `docs/spec/psm/peg-stability-module.md`。
+- **USR (Universal Asset Savings Rate)**：uAsset 的储蓄层：每个 uAsset 族一个 `OutrunUSRVaultUpgradeable` 实例（suETH/suUSD/suBNB，ERC4626），存入对应 uAsset、份额价格按治理族利率按秒增长（timestamp 锚定）；硬预算 fail-safe（禁 mint 计息、余额不足自动暂停计息）、无回收入口；完整规格见 `docs/spec/usr/usr-vaults.md`。
 - **Minter**：在 uAsset 合约中被 owner 授予 mintingCap 的地址，可在额度内铸造 uAsset。
 - **mintingCap**：minter 的铸造上限。
 - **amountInMinted**：minter 的已铸造债务。OFT 跨链铸烧不触碰此台账。
 - **repay**：冲减 minter 自身的 amountInMinted，同时从目标账户转移 uAsset 并 burn。
 - **Memeverse**：Genesis 使用的外部 launch platform；router 只保存 launcher 地址并调用其 `genesis` 接口。
 - **Verse**：由 Memeverse launcher 管理的 launch target；本地 API 不展开其内部属性。
-- **verseId**：launcher 分配并解释的目标 Verse opaque ID（本地不展开含义的标识）；有效值规则由 launcher 负责，`OutrunRouter.sol::genesisByToken` 与 `OutrunRouter.sol::genesisBySY` 原样转发它，不负责校验。
-- **Genesis**：通过 `OutrunRouter.sol::genesisByToken` 或 `OutrunRouter.sol::genesisBySY` 创建 locked position，将生成的 uAsset 授权并交给 `IMemeverseLauncher.sol::genesis` 的集成路径。
+- **verseId**：launcher 分配并解释的目标 Verse opaque ID（本地不展开含义的标识）；有效值规则由 launcher 负责，`OutrunRouter.sol::genesisByPSM`、`::genesisByToken` 与 `::genesisBySY` 原样转发它，不负责校验；杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM` 亦原样转发，但先经 Memeverse 侧 `marketUAsset(verseId)` 做 verse ↔ uAsset 配对复读（见「杠杆创世门（POLend 利息门）」词条）。
+- **Genesis**：把新供给的 uAsset 原子地交给 `IMemeverseLauncher.sol::genesis` 的集成路径，双门三入口：路径 A（PSM 门）与路径 B（CDP 门，面值/价值平价铸出，token/SY 双计价入口，SP 原生物理门 + router 薄转发），完整规格见 `docs/spec/router/router-and-user-flows.md` §6/§7。
+- **Genesis 路径 A（PSM 门）**：`OutrunRouter.sol::genesisByPSM` 入口——reserve token 经 `IPSM.mint` 按 1:1 面值铸 uAsset（`tin` 折减）后全额交 launcher；走 PSM 储备铸烧供给行（豁免 minter 债务台账），无 CDP 仓位、无债务、无锁定系数；PSM 地址经 owner 的 `psmForUAsset` registry 按 uAsset 查表。
+- **Genesis 路径 B（CDP 门）**：SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`——SY 开放期限 CDP 开仓（面值/价值平价铸出、uAsset 铸给 SP 自身）后交易内全额交 launcher（精确 approve + 后置断言，借出量与 genesis 消费量严格相等）；`genesisUser` 为 position owner 并承担仓位债务。router 双计价入口 `OutrunRouter.sol::genesisByToken`（token 计价正门，token 先经 `SY.deposit` 换成 SY）/ `OutrunRouter.sol::genesisBySY`（SY 计价入口）为薄转发便利层——任意 EOA/合约可直接调 SP（组合性，router 非必经）。
+- **stakeForGenesis**：`OutrunStakingPositionUpgradeable.sol::stakeForGenesis(amountInSY, positionOwner, verseId, minUAssetMinted)`——v1 唯一铸造入口（`nonReentrant` + `whenNotPaused`，无许可）：面值（价值平价）铸出量数学（两段 down，无 LTV 缩放），uAsset 铸给 SP 自身后经精确 approve 原子交 `genesisLauncher.genesis(verseId, uint128(minted), positionOwner)`，后置断言余额回基线且 allowance 归零（否则 `GenesisUAssetNotConsumed` 整笔回滚）；`verseId` 原样转发；创建后的仓位即普通仓位（redeem 双腿销债、按 duty 域计息——v1 零费默认，无锁仓）。
+- **杠杆创世门（POLend 利息门）**：`OutrunRouter.sol::leveragedGenesisByPSM`——双门（路径 A / 路径 B）之外的第三 genesis 入口：reserve token 经 PSM 按 1:1 面值铸 uAsset 后，全额作为 Memeverse `verseId` 的杠杆创世利息交 `POLend.leveragedGenesis`（POLend 从 router 拉款、借出额度记 `genesisUser`、返回 `borrowedAmount` 单一真源）；无 CDP 仓位、无 genesis 交付 launcher；`polend` 地址经 owner `setPolend` 登记（测试期 setter，生产冻结 immutable），`verseId` ↔ `uAsset` 配对经 Memeverse 侧 `marketUAsset(verseId)` 复读；完整规格见 `docs/spec/router/router-and-user-flows.md`「杠杆创世门」节。
 - **OFT (Omnichain Fungible Token)**：基于 LayerZero 的跨链代币标准，OutrunOFT 继承 OFTCore 实现跨链铸烧。
 - **_toSD**：将本地精度数量压缩到 uint64 共享精度的转换函数，溢出时回退 AmountSDOverflowed。
 - **_debit**：OFT 源链侧 burn 本地 token 的函数，且不触碰 minter 债务台账。
@@ -44,9 +53,10 @@
 - **ERC1967Proxy**：当前 upgradeable implementation 使用的 proxy 部署壳，部署时携带 initializer calldata 并把 proxy address 作为产品地址。
 - **UUPS**：当前 upgradeable implementation 使用的 upgrade pattern；upgrade authority 位于 implementation 的 `_authorizeUpgrade(address)`，由 owner 控制。
 - **SYBaseUpgradeable**：当前所有 SY adapters 的共享 upgradeable base，统一持有 UUPS authority。
-- **Multisig Owner**：upgradeable product 的单一 protocol owner；部署期 owner 取值约束见 `docs/deployment.md`「关键约束」；无 timelock、无新增 governance module。
+- **Multisig Owner**：upgradeable product 的单一 protocol owner；部署期 owner 取值约束见 `docs/deployment.md`「关键约束」，主网前按其「治理操作 timelock 评估提示」收敛为 timelock/multisig（timelock 处于产品合约外治理层）；产品合约内无 timelock、无新增 governance module。
 - **Initializer**：upgradeable variant 替代 constructor 的初始化入口；通过 proxy deployment 调用一次，写入 owner 与原构造依赖。
-- **exchangeRateOracle**：oracle-backed SY upgradeable variants 中存储 oracle adapter 地址的 mutable storage 字段，通过 owner-only `setExchangeRateOracle(address)` 更新。
+- **exchangeRateOracle**：oracle-backed SY upgradeable variants 中存储 oracle adapter 地址的 mutable storage 字段，通过 owner-only `setExchangeRateOracle(address)` 更新（换指针保留已存 rate anchor）。
+- **锚点偏差熔断（rate-anchor deviation breaker）**：`OutrunL2OracleBackedSYUpgradeable` 基类对经 `exchangeRateOracle` 读回 conversion rate 的链上带界拦截（fail-closed）。锚点（rate anchor）为最近被接受的读数；带（band）为 `[anchor × (1e4 − maxDropBps)/1e4, anchor × (1e4 + min(riseBpsPerHour × elapsedSeconds / 3600, maxRiseCapBps))/1e4]`（下行无时间额度、上行自锚点 timestamp 起按秒连续累计）；cap（`maxRiseCapBps`，默认 200 bps）为自最近一次锚点写入起的单窗口上行额度封顶（每次带内 commit 重定带基准，累计锚点漂移无 cap，锚点永不超出真实 oracle 读数）。带外读数 revert `RateDeviationExceeded`，`stakeForGenesis` / `previewStake` fail-closed、`redeem` SY 直出不受影响；锚点经 permissionless `commitRateAnchor()` 带内推进、owner `resetRateAnchor()` 显式重同步；语义真源见 `docs/spec/yield/oracles-and-integrations.md`「边界」。
 - **OutrunExchangeOracleAdapter**：非 upgradeable、可重部署的薄 oracle adapter，经 `latestRoundData()` 读取并做精度归一化；完整校验语义与错误面以 `docs/spec/yield/oracles-and-integrations.md` 为准。
 - **OutrunOFTUpgradeable**：当前 custom OFT base，使用 LayerZero 官方 `OFTCoreUpgradeable` / `OAppUpgradeable` 路径并保留自定义 ERC20 metadata/decimals；需要自定义 metadata/decimals 时不继承默认 `OFTUpgradeable`。
 - **ReentrancyGuardTransient**：当前 upgradeable helper 使用的 vendored OpenZeppelin transient reentrancy guard（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`，经 `TokenHelper.sol` 继承）；部署链需要支持 EIP-1153 transient storage。

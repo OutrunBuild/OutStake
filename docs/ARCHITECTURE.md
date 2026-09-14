@@ -10,18 +10,41 @@
 - `src/assets/omnichain/OutrunOFTUpgradeable.sol`
 - `src/assets/omnichain/OutrunRateLimiterUpgradeable.sol`（共享 OFT outbound rate-limit 抽象基类）
 - `src/assets/interfaces/IUniversalAssets.sol`
-- uAsset 统一债务与流通资产层，维护按 minter 维度的 mint cap / 已铸造债务 / mint / repay 路径，并继承 ERC20 / pause / OFT 跨链铸烧能力。
+- uAsset 统一债务与流通资产层，维护按 minter 维度的 mint cap / 已铸造债务 / mint / repay 路径，以及 PSM 消费的储备铸烧路径（`OutrunUniversalAssetsUpgradeable.sol::setReserveMinter` 登记、`::reserveMint` / `::reserveBurn` 铸烧，豁免 minter 债务台账），并继承 ERC20 / pause / OFT 跨链铸烧能力。
 - state-bearing uAsset 使用 `Upgradeable` 后缀变体并通过 `ERC1967Proxy` + UUPS 部署。
 - `OutrunUniversalAssetsUpgradeable` 直接继承 `UUPSUpgradeable`；其自定义 `OutrunOFTUpgradeable` 基于 LayerZero 官方 `OFTCoreUpgradeable` / `OAppUpgradeable` 路径，保留自定义 ERC20 metadata/decimals，不在需要自定义 metadata/decimals 时继承默认 `OFTUpgradeable`。
 
-### 1.2 仓位层
+### 1.2 仓位层（v1 收益背书凭证层：genesis-only、面值铸造、0% 利率默认、无清算）
 
 - `src/position/OutrunStakingPositionUpgradeable.sol`
 - `src/position/interfaces/IOutrunStakeManager.sol`
-- 管理锁仓仓位、可追加 uAsset 债务、到期赎回、keeper 代偿赎回、公共 wrap 池与 wrap 收益 harvest。
-- `OutrunStakingPositionUpgradeable` 作为 UUPS implementation 部署在 `ERC1967Proxy` 后；`SY`、`uAsset`、keeper、revenuePool 等依赖由 initializer 写入 storage。
+- v1 产品定义：SP = **Memeverse 专用、按面值铸造、零利息、无清算的收益背书凭证层**。唯一铸造入口 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（SP 原生物理门：铸出 uAsset 交易内全额交 SP 侧 `genesisLauncher`，后置断言强制全额消费）；自由借贷入口 `stake` 不存在。
+- 面值铸造（价值平价）：`mintedUAsset = floor₂(syStaked × SY.exchangeRate())`（两段 down，无 LTV 缩放、无利率乘数）——背书不变式 `positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)` 由取整方向构造成立。
+- 计息为 duty 域 virtual accrual（`rate = rmul(rpow(duty, dt), rate)`，timestamp 锚定）；v1 全族默认 `duty = 1e27` 零费（`rate` 永不前移、债务冻结、背书率单调上升），`setDuty` 保留（接受域 `[1e27, DUTY_CAP]`）。
+- 无清算：链上不设清算、LTV 或再融资机制；`OutrunStakingPositionUpgradeable.sol::redeem` 任意时刻按比例双腿销债（本金腿 burn 并冲销 minter 台账、利息腿转协议金库——v1 零费下恒 0）是唯一出清通道。
+- **oracle fail-closed 栈为铸造侧唯一链上防线**：v1 无 LTV/清算后，汇率虚高时面值铸造即超铸——正性/round 完整性/新鲜度/sequencer/归一化非零校验 + SY 基类锚点偏差熔断 + `ZeroExchangeRate` 单点守卫是背书完整性的唯一链上守卫（关键级上调，见 `docs/spec/yield/oracles-and-integrations.md`）。
+- **`mintingCap` 为唯一供给刹车**：uAsset minter 台账的 cap 直接限总供给，原「背书保护」（LTV）职责并入；背书由价值平价铸造构造保证。风险按五层瀑布承接（见 §7 风险模型）。
+- `OutrunStakingPositionUpgradeable` 作为 UUPS implementation 部署在 `ERC1967Proxy` 后；`SY`、`uAsset`、`protocolTreasury`（协议金库，利息腿接收方）等依赖由 initializer 写入 storage。
+- 行为规格真源：`docs/spec/position/accounting.md`（账务、计息、背书不变式与错误/事件真源）、`docs/spec/position/state-machines.md`（状态机与暂停矩阵）。
 
-### 1.3 收益层
+### 1.3 PSM 层（锚定兑换供给路径，现状：单实例单储备已落地（四实例 + (uAsset, reserveToken) 配对绑定））
+
+- `src/psm/OutrunPSMUpgradeable.sol`
+- `src/psm/interfaces/IPSM.sol`
+- 每个 (uAsset, reserve) 配对一个实例（现状即单实例单储备，共四实例）：UUSD 拆为 USDC-PSM 与 USDT-PSM 两实例，UETH / UBNB 各一原生实例，共四实例，每实例绑定单一储备（UETH / UBNB 为 NATIVE 哨兵），以绑定储备与对应 uAsset 按固定 1:1 面值双向兑换（`OutrunPSMUpgradeable.sol::mint` / `::redeem`，只操作绑定储备），为 uAsset 提供独立于 CDP 的锚定供给来源。
+- 铸 / 烧经 uAsset 储备铸烧路径（`reserveMint` / `reserveBurn`），豁免 minter 债务台账；兑换费率与 `stockCap` 口径以行为规格真源为准；PSM 自身不设 pause、无 owner 提取面——计费结余经无许可 `OutrunPSMUpgradeable.sol::sweepFees` 提取至部署期 immutable 绑定的 `feeRecipient`。
+- 行为规格真源：`docs/spec/psm/peg-stability-module.md`。
+
+### 1.4 USR 层（储蓄金库）
+
+- `src/usr/OutrunUSRVaultUpgradeable.sol`
+- `src/usr/interfaces/IUSRVault.sol`
+- 每个 uAsset 族一个 ERC4626 vault 实例（suETH / suUSD / suBNB，share 即该族 suToken）：存入对应 uAsset、随存随取，share 价格按治理设定的族利率（`usrRate`，取值边界与默认值以行为规格真源为准）按秒增长（timestamp 锚定）。
+- 硬预算 fail-safe：禁 mint 计息，owner 计息注资唯一入口是 `OutrunUSRVaultUpgradeable.sol::fund`，利息预算由余额超出份额负债的部分支撑；无 sweep、无回收函数，入池资金仅存款人可经 ERC4626 提款取出。
+- USR vault 不是 uAsset 的 minter 或储备 minter，无需任何 uAsset 侧登记。
+- 行为规格真源：`docs/spec/usr/usr-vaults.md`。
+
+### 1.5 收益层
 
 当前 yield adapter 路径以 `find src/yield -type f` 和 `.harness/policy.json` 分类为准；本节列出当前收益层 product adapter、共享 base 与 interface 源文件。
 
@@ -33,7 +56,6 @@
 - `src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol`
 - `src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol`
 - `src/yield/adapters/lido/OutrunL2WstETHSYUpgradeable.sol`
-- `src/yield/adapters/lido/OutrunL2WrappableWstETHSYUpgradeable.sol`
 - `src/yield/adapters/sky/OutrunStakedUsdsSYUpgradeable.sol`
 - `src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol`
 - `src/yield/OutrunL2StakedTokenSYUpgradeable.sol`
@@ -41,18 +63,20 @@
 - `src/yield/interfaces/IStandardizedYield.sol`
 - SY 份额层抽象，把外部收益资产包装为统一的 deposit / redeem / preview / exchangeRate 接口。
 - 所有当前 SY adapter product surface 都通过 `ERC1967Proxy` + UUPS 部署，包括 Lido 相关 adapter。`SYBaseUpgradeable` 统一继承 `UUPSUpgradeable`，具体 SY adapter 通过该 base 取得 upgrade authority，不重复继承 UUPS。
-- oracle-backed SY upgradeable variants 使用 mutable `exchangeRateOracle` storage 与 `setExchangeRateOracle(address)` onlyOwner 入口；`OutrunExchangeOracleAdapter` 自身仍是非 upgradeable、可重部署 helper。
+- oracle-backed SY upgradeable variants 使用 mutable `exchangeRateOracle` storage 与 `setExchangeRateOracle(address)` onlyOwner 入口（换指针保留已存 rate anchor）；基类 `OutrunL2OracleBackedSYUpgradeable` 同一 ERC-7201 storage 另持锚点偏差熔断状态（rate anchor 值 + anchor timestamp + 三个熔断参数 `maxDropBps`/`riseBpsPerHour`/`maxRiseCapBps`）：`commitRateAnchor()` 为 permissionless 带内推进入口，`resetRateAnchor()` / `setRateBreakerParams(...)` 为 owner-only（语义真源 `docs/spec/yield/oracles-and-integrations.md`「边界」锚点偏差熔断条目）；`OutrunExchangeOracleAdapter` 自身仍是非 upgradeable、可重部署 helper。
 
-### 1.4 路由层
+### 1.6 路由层
 
 - `src/router/OutrunRouter.sol`
 - `src/router/interfaces/IOutrunRouter.sol`
 - `src/router/interfaces/IMemeverseLauncher.sol`
-- 把 token <-> SY <-> staking position/uAsset 组合为单次入口，并承载 memeverseLauncher genesis 集成。
-- `OutrunRouter` 不进入 upgradeable product surface；仍保持非 upgradeable、可重部署 helper，并通过参数或配置调用 proxy-backed uAsset / SY / position。
-- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。registry 为 owner 持续 live 能力，不随主网上线冻结移除（见 `docs/spec/protocol.md`「router」）。
+- `src/router/interfaces/IPOLendGenesis.sol`
+- 把 token <-> SY <-> CDP 仓位、PSM 兑换组合为单次入口，并承载 memeverseLauncher genesis 集成。
+- genesis 为双路径：路径 A（PSM 门）`OutrunRouter.sol::genesisByPSM` 以 reserve token 经 PSM 1:1 面值铸 uAsset 后全额交 launcher（无仓位、无债务，router 侧后置断言）；路径 B（CDP 门）双计价入口——`OutrunRouter.sol::genesisByToken`（token 计价正门）/ `OutrunRouter.sol::genesisBySY`——为薄转发便利层，转发至 SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（面值/价值平价铸出，uAsset 铸给 SP 自身、交易内全额交 launcher，SP 侧后置断言；任意 EOA/合约可直调 SP，router 非必经）。自由质押入口（`stakeFromToken`/`stakeFromSY`）随 v1 genesis-only 决策删除。
+- `OutrunRouter` 不进入 upgradeable product surface；仍保持非 upgradeable、可重部署 helper，并通过参数或配置调用 proxy-backed uAsset / SY / position / PSM。
+- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair，`OutrunRouter.sol::setPsmForUAsset` 登记路径 A 的 `(uAsset, reserveToken) -> PSM` 配对绑定（现状即配对三参登记）；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。registry 为 owner 持续 live 能力，不随主网上线冻结移除（见 `docs/spec/protocol.md`「router」）。
 
-### 1.5 集成与 Oracle 层
+### 1.7 集成与 Oracle 层
 
 - `src/integrations/aave/interfaces/IAToken.sol`
 - `src/integrations/aave/interfaces/IAaveV3Pool.sol`
@@ -61,35 +85,35 @@
 - `src/integrations/etherfi/interfaces/IDepositAdapter.sol`
 - `src/integrations/etherfi/interfaces/ILiquidityPool.sol`
 - `src/integrations/etherfi/interfaces/IWeETH.sol`
-- `src/integrations/lido/interfaces/IL2StETH.sol`
 - `src/integrations/lido/interfaces/IStETH.sol`
 - `src/integrations/lido/interfaces/IWstETH.sol`
 - `src/integrations/lista/interfaces/IListaStakeManager.sol`
 - `src/integrations/sky/interfaces/IPSM3.sol`
 - `src/libraries/oracle/OutrunExchangeOracleAdapter.sol`
 - 外部协议最小 interface 与 adapter 调用封装；oracle adapter 的校验语义与错误面以 `docs/spec/yield/oracles-and-integrations.md` 为准。
-- `OutrunExchangeOracleAdapter` 不部署在 proxy 后；需要更换 oracle normalization 规则时部署新 adapter，再由 oracle-backed SY proxy 的 owner 更新 `exchangeRateOracle`。
+- `OutrunExchangeOracleAdapter` 不部署在 proxy 后；需要更换 oracle normalization 规则时部署新 adapter，再由 oracle-backed SY proxy 的 owner 更新 `exchangeRateOracle`——换指针保留已存 rate anchor，换入源仍须对旧锚点通过带界；owner 采纳量级合法不同的新源走显式 `resetRateAnchor()`。
 - 后续执行 adapter / integration 相关任务时，以 `find src -type f` 得到的当前文件树和 `.harness/policy.json` 分类为准；本文件提供架构背景，不覆盖实际文件存在性与 harness surface 分类。
 
-### 1.6 底层库
+### 1.8 底层库
 
 - `src/libraries/TokenHelper.sol`
 - `src/libraries/SYUtils.sol`
 - `src/libraries/AaveAdapterLib.sol`
 - `src/libraries/ArrayLib.sol`
 - `src/libraries/AutoIncrementIdUpgradeable.sol`
+- `src/libraries/GenesisGateLib.sol`
 - `src/libraries/WadRayMath.sol`
-- 跨业务域共享的 token 传输、汇率换算、重入保护、数组操作、ID 生成、错误定义等基础工具。
+- 跨业务域共享的 token 传输、汇率换算、重入保护、数组操作、ID 生成、genesis 物理门守恒断言、错误定义等基础工具。`GenesisGateLib.sol` 为两条 genesis 路径共用的安全承载闸门（`assertFullConsumption`，见 §2.8/§3）。
 - 当前 helper 中 `TokenHelper.sol` 继承 vendored OpenZeppelin `ReentrancyGuardTransient.sol`（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`），该 guard 使用 EIP-1153 transient storage；部署目标链必须支持 EIP-1153。
 
-### 1.7 Upgradeable deployment model
+### 1.9 Upgradeable deployment model
 
 当前 state-bearing product 使用 UUPS + `ERC1967Proxy`：
 
-- proxy-backed：`OutrunUniversalAssetsUpgradeable`、`OutrunStakingPositionUpgradeable`、全部 SY adapter upgradeable variants。
+- proxy-backed：`OutrunUniversalAssetsUpgradeable`、`OutrunStakingPositionUpgradeable`、`OutrunPSMUpgradeable`、`OutrunUSRVaultUpgradeable`、全部 SY adapter upgradeable variants。
 - non-upgradeable / redeployable：`OutrunRouter`、`OutrunExchangeOracleAdapter`、interfaces、pure libraries、外部协议 interface。
 - deployment flow：部署 implementation，编码 initializer calldata，部署 `ERC1967Proxy(implementation, initData)`，把 proxy address 作为产品地址写入后续 wiring。
-- owner：单一 protocol owner 为 multisig（部署期 owner 取值约束见 `docs/deployment.md`「关键约束」）；无 timelock、无新增 governance module。
+- owner：单一 protocol owner 为 multisig（部署期 owner 取值约束见 `docs/deployment.md`「关键约束」），主网前按其「治理操作 timelock 评估提示」收敛为 timelock/multisig（timelock 处于产品合约外治理层）；产品合约内无 timelock、无新增 governance module。
 - upgrade authority：每个 UUPS product 的 `_authorizeUpgrade(address)` 由 `onlyOwner` 保护，只暴露 UUPS base 的 `upgradeToAndCall`。
 - initializer boundary：构造参数迁移到 `initialize(...)` / `__..._init(...)`，implementation constructor 禁用 initializers。LayerZero endpoint 与 local decimals 是 `OutrunOFTUpgradeable` 继承官方 upgradeable OFT/OApp 路径所需的 implementation-level constructor 参数，每个 endpoint / local-decimal 配置部署一个 implementation。
 ## 2. 关键资金流
@@ -102,33 +126,30 @@ owner 先登记 trusted SY；用户授权 router -> router 校验 SY registry ->
 
 router 路径先校验 trusted SY，再把 SY 转入 SY 合约地址（直调路径份额留在调用者账户、不转入）-> 调用 `SYBaseUpgradeable.sol::redeem`（该 SY 实例须由 owner 将当前 router 配置为 trusted router caller）-> adapter `_redeem` 先把目标 token 交付给 receiver -> 随后 burn SY 份额（router 路径从 `address(this)` 烧、直调路径从 `msg.sender` 烧）。非 trusted caller 传入 `burnFromInternalBalance=true` 会回退；`false` 直兑路径保持 caller 余额扣除。重入安全由 `redeem` 的 `nonReentrant` 保证。
 
-### 2.3 Token / SY -> Locked Stake
+### 2.3 Token / SY -> CDP 开仓（自由质押路径，已随 v1 genesis-only 决策删除）
 
-用户授权 -> router 校验 `trustedSYForSP` 与当前 `SP.SY()` -> 调用 SY 转换 -> position.stake() -> 拉取 SY -> 按 exchangeRate 折算 uAssetDebt -> 写入 position -> uAsset.mint(uAssetReceiver, uAssetDebt)。
+`stakeFromToken` / `stakeFromSY` 与 SP 自由借贷入口 `stake()` 随 v1 删除；CDP 开仓唯一入口为 genesis 路径 B 的 SP 原生物理门（§2.8）。
 
-### 2.4 Token / SY -> Wrap Stake
+### 2.4 CDP redeem（任意时刻按比例双腿销债）
 
-用户授权 -> router 校验 `trustedSYForSP` 与当前 `SP.SY()` -> SY 转换 -> position.wrapStake() -> 拉取 SY -> 按 exchangeRate 折算 -> 增加 syTotalStaking / syWrapStaking / wrapUAssetDebt -> uAsset.mint(uAssetReceiver, uAssetDebt)。
+position owner 授权 uAsset -> `OutrunStakingPositionUpgradeable.sol::redeem` -> 本金腿经 `uAsset.repay` burn 并冲销 minter 台账、利息腿 transfer 给 `protocolTreasury` -> 减记 `syStaked`（full redeem 删除仓位）-> 输出 SY（直转）或经 `SY.redeem` 换目标 token。partial redeem 按比例双腿、不得清空本金留 SY。
 
-### 2.5 Wrap Redeem
+### 2.5 JIT 清算与 CollSurplus 领回（已随 v1 无清算决策删除）
 
-keeper 授权自有 uAsset -> position.keepWrapRedeem() -> uAsset.repay() 烧掉 keeper 的 uAsset -> 换算 SY（健康池按 exchangeRate 面值；不足池 revert WrapPoolUndercollateralized）-> 减少池账务 -> 直付 SY 给 receiver（keeper-only，不经 SY.redeem）。
+v1 链上不设清算、LTV 或再融资机制；仓位出清唯一通道为 owner `redeem`（§2.4）。风险承接见 §7 风险模型。
 
-### 2.6 Position Redeem (到期)
+### 2.6 PSM 双向兑换（reserve <-> uAsset，现状即单实例单储备）
 
-position owner 授权 uAsset -> position.redeem() -> 按比例计算 UAssetBurned -> 减少 syTotalStaking、position.syStaked 与 position.UAssetMinted -> uAsset.repay() burn -> 输出 SY 或目标 token。
+用户带 reserve（ERC20 approve 或 NATIVE `msg.value`）-> `OutrunPSMUpgradeable.sol::mint` -> PSM 拉入 reserve、经 `uAsset.reserveMint` 铸出 uAsset 给用户；反向前用户对 PSM approve uAsset -> `OutrunPSMUpgradeable.sol::redeem` -> 经 `uAsset.reserveBurn` 销毁并付出 reserve（费率折算与 `stockCap` 约束口径以行为规格真源 `docs/spec/psm/peg-stability-module.md` 为准）。mint 豁免 minter 债务台账。
 
-### 2.7 Keeper Redeem
+### 2.7 USR 存取（uAsset <-> suToken）
 
-keeper 授权 uAsset -> position.keepRedeem() -> keeper 的 uAsset burnt -> 按 keeperPrincipalSY 与 syRedeemed 分账 -> keeper 收 principal，owner 收 excess。
+uAsset 持有人 -> `OutrunUSRVaultUpgradeable` ERC4626 `deposit` / `mint`（资产转入步）-> 按当前指数铸 suToken 份额；`withdraw` / `redeem` 按份额与当前指数结算付出 uAsset。owner 经 `OutrunUSRVaultUpgradeable.sol::fund` 注资计息预算、`::setUsrRate` 设族利率（计息指数口径、付出边界与参数边界以行为规格真源 `docs/spec/usr/usr-vaults.md` 为准）。
 
-### 2.8 Harvest Wrap Yield
+### 2.8 Genesis 双路径（新供给 uAsset 全额交 launcher）
 
-owner 调用 harvestWrapYield -> 计算 wrap 池盈余（syWrapStaking > OutrunStakingPositionUpgradeable.sol::_assetToSyUp(wrapUAssetDebt)，uAsset -> canonical asset 与 canonical asset -> SY 两段均向上取整，口径见 docs/spec/position/accounting.md §9）-> 减少 syTotalStaking / syWrapStaking -> 盈余转 revenuePool。
-
-### 2.9 Genesis
-
-用户入金 -> router 创建 locked position -> uAsset mint 给 router -> router 授权并调用 memeverseLauncher.genesis() -> launcher 拉走 uAsset。
+- 路径 A（PSM 门）：用户带 reserve token -> `OutrunRouter.sol::genesisByPSM` -> router 校验 `psmForUAsset` registry -> PSM 铸出 uAsset 给 router -> router 精确 approve 并调用 `launcher.genesis`，launcher 拉走全额铸出量，router 侧后置断言余额回基线且 allowance 归零；无仓位、无债务。
+- 路径 B（CDP 门，双计价入口，薄转发便利层）：用户带 token（`OutrunRouter.sol::genesisByToken`，token 计价正门，router 先经 `SY.deposit` 换 SY）或 SY（`OutrunRouter.sol::genesisBySY`）-> router 校验 `trustedSYForSP`、拉入资产并精确 approve 给 SP -> 转发 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`——SP 侧原生物理门完成开 CDP 仓位（`genesisUser` 为 position owner、面值/价值平价铸出）、uAsset 铸给 SP 自身、对 SP 侧 `genesisLauncher` 精确 approve、`launcher.genesis` 原子交款与后置断言（余额回铸出前基线且 allowance 归零，否则 `GenesisUAssetNotConsumed` 整笔回滚）；router 在路径 B 不触碰 uAsset，任意 EOA/合约也可绕过 router 直接调用 `stakeForGenesis`（组合性）。
 
 ## 3. 系统架构图
 
@@ -163,9 +184,37 @@ OutrunStakingPositionUpgradeable (concrete)
   ⟶ OwnableUpgradeable                 ← openzeppelin-upgradeable
   ⟶ UUPSUpgradeable                    ← openzeppelin-upgradeable
   依赖:
-    → IUniversalAssets (uAsset)          mint / repay
+    → IUniversalAssets (uAsset)          mint / repay（本金腿 burn + 台账冲销）
     → IStandardizedYield (SY)            exchangeRate / redeem
+    → IMemeverseLauncher                 genesis（stakeForGenesis 物理门交款）
     → SYUtils
+    → GenesisGateLib                     assertFullConsumption（genesis 物理门全额消费断言，SP/Router 双路径共用）
+```
+
+#### PSM 继承链
+
+```
+OutrunPSMUpgradeable (concrete)
+  ⟶ IPSM (interface)
+  ⟶ TokenHelper
+  ⟶ OwnableUpgradeable                 ← openzeppelin-upgradeable
+  ⟶ UUPSUpgradeable                    ← openzeppelin-upgradeable
+  依赖:
+    → IUniversalAssets (uAsset)          reserveMint / reserveBurn（储备铸烧，豁免 minter 台账）
+    → IERC20 (reserve tokens)            transferFrom / transfer / decimals
+```
+
+#### USR vault 继承链
+
+```
+OutrunUSRVaultUpgradeable (concrete)
+  ⟶ IUSRVault (interface)
+  ⟶ TokenHelper
+  ⟶ ERC4626Upgradeable                  ← openzeppelin-upgradeable
+  ⟶ OwnableUpgradeable                 ← openzeppelin-upgradeable
+  ⟶ UUPSUpgradeable                    ← openzeppelin-upgradeable
+  依赖:
+    → ERC20（资产 uAsset）              transfer / transferFrom / balanceOf（偿付封顶读余额）
 ```
 
 #### Router 依赖扇出
@@ -176,9 +225,12 @@ OutrunRouter (concrete)
   ⟶ Ownable                            ← openzeppelin
   依赖:
     → IStandardizedYield               deposit / redeem / preview*
-    → IOutrunStakeManager              stake / wrapStake / preview*
-    → IMemeverseLauncher               genesis
+    → IOutrunStakeManager              stakeForGenesis / preview*
+    → IPSM                             mint（路径 A 与杠杆创世门，经 `OutrunRouter.sol::_psmMintForRouter` 共用）
+    → IMemeverseLauncher               genesis（仅路径 A genesisByPSM）
+    → IPOLendGenesis                   leveragedGenesis / marketUAsset（杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`）
     → TokenHelper
+    → GenesisGateLib                   assertFullConsumption（genesis 物理门全额消费断言，SP/Router 双路径共用）
 ```
 
 #### SY Adapter 统一结构
@@ -209,55 +261,55 @@ OutrunExchangeOracleAdapter
 #### 3.2.1 合约调用关系
 
 ```
-  User (EOA / ECA)
-  approve(router / position / SY, ...)
+  User (EOA / ECA) / Owner (multisig)
+  approve(router / position / SY / PSM / USR vault, ...)
        │
-   ├────┬────────────┬────────────────┐
-   ▼    ▼            ▼                ▼
-+--------+  +--------------+  +-------------+  +------------------+
-| Router |  | SYBase +     |  | Outrun      |  | IMemeverse       |
-|        |  | Adapters     |  | StakingPos  |  | Launcher         |
-|        |  |              |  |             |  | (external)       |
-|mintSY  |  | deposit      |  | stake       |  |                  |
-|redeemSy|  | redeem       |  | drawUAsset  |  | genesis          |
-|stake   |  | preview*     |  | redeem      |  └──────────────────┘
-|wrapStk |  | exchangeRate |  | wrapStake   |
-|        |  └──────┬───────┘  │ keepWrapRdm │
-|genesis │         │          │ keepRedeem  |
-+───┬────┘         │          │ harvest     │
-    │              │          │ preview*    │
-    └──────────────┘          └─────┬─┬───┬─┘
-                                    │ │   └───────┐
-                 deposit/redeem mint│ │repay      │
-                                    │ │     redeem│
-                                    ▼ ▼           ▼
-                          +----------------┐  +────────────┐
-                          | OutrunUniversal|  | SY token   |
-                          | Assets (uAsset)|  | ·redeem    |
-                          |                |  └────────────┘
-                          | ·mint          |
-                          |   (minter cap) ├──────► OutrunOFT
-                          | ·repay         |             │
-                          └────────────────┘      _debit / _credit
-                                                         │
-                                               LayerZero Endpoint (external)
+   ├────────┬─────────────┬──────────────┬───────────┬───────────┬─────────────────┐
+   ▼        ▼             ▼              ▼           ▼           ▼                 ▼
++--------+ +-----------+ +------------+ +---------+ +---------+ +--------------+ +-----------+
+| Router | | SYBase +  | | Outrun     | | Outrun  | | Outrun  | | IMemeverse   | |  LayerZero |
+|        | | Adapters  | | StakingPos | | PSM     | | USR     | | Launcher     | |  Endpoint  |
+|mintSY  | | deposit   | | stakeFor-  | | mint    | | Vault   | | (external)   | | (external) |
+|redeemSy| | redeem    | | Genesis    | | redeem  | | deposit | | genesis      | +-----------+
+|genesis | | preview*  | | redeem     | | quote*  | | redeem  | +--------------+
+|  A/B   | | exchange- | |            | |         | | fund /  |
+|        | | Rate      | |            | |         | | setUsr- |
+|        | |           | |            | |         | | Rate    |
++---┬----+ +-----┬-----+ +-----┬------+ +----┬----+ +----┬----+
+    │            │             │           │           │
+    └────────────┴──────┬──────┴───────────┴─────────────┴──┘
+                        ▼
+            +---------------------------+
+            | OutrunUniversalAssets     |
+            | (uAsset, per 族)          |
+            | ·mint      (minter cap)   ├──► OutrunOFT _debit / _credit ──► LayerZero
+            | ·repay                    |
+            | ·reserveMint / reserveBurn│            (PSM 储备路径，豁免台账)
+            | ·setReserveMinter /       │
+            |  setMintingCap (owner)    │
+            +---------------------------+
 ```
 
-本图为调用主干摘要，非穷举：Router→Position（`stakeFromToken`/`stakeFromSY` → `stake`/`wrapStake`）与 Router→Launcher（`genesisByToken`/`genesisBySY` → `launcher.genesis`）等编排调用未画出，完整调用清单见 §3.2.2 表与 §3.1 依赖扇出。
+本图为调用主干摘要，非穷举：Router→Position（`genesisBySY`/`genesisByToken` → `stakeForGenesis`）、Router→PSM（`genesisByPSM` → `IPSM.mint`）与 Position→Launcher（`stakeForGenesis` → `launcher.genesis`；Router 仅路径 A `genesisByPSM` 直调 launcher）等编排调用未画出，完整调用清单见 §3.2.2 表与 §3.1 依赖扇出。
 
 #### 3.2.2 调用关系说明
 
 | Caller | Callee | 入口 |
 | --- | --- | --- |
 | Router | SY | `mintSYFromToken` → `SY.deposit`；`redeemSyToToken` → `SY.redeem` |
-| Router | Position | `stakeFromToken`/`stakeFromSY` → `stake`/`wrapStake` |
-| Router | Launcher | `genesisByToken`/`genesisBySY` → `launcher.genesis` |
-| Position | uAsset | `stake`/`wrapStake`/`drawUAsset` → `mint`；`redeem`/`keepRedeem`/`keepWrapRedeem` → `repay` |
-| Position | SY | `redeem`/`harvestWrapYield` → `SY.redeem`（非 SY tokenOut 时经 adapter 兑换） |
+| Router | PSM | `genesisByPSM` → `IPSM.mint`（路径 A，经 `psmForUAsset` registry 寻址） |
+| Router | POLend | `leveragedGenesisByPSM` → `marketUAsset` 复读校验 + `leveragedGenesis`（杠杆创世门，经 `polend` 登记寻址，全额拉款） |
+| Router | Position | `genesisBySY`/`genesisByToken` → `stakeForGenesis`（路径 B 双入口薄转发，面值 CDP 开仓） |
+| Router | Launcher | `genesisByPSM` → `launcher.genesis`（仅路径 A；router 侧精确 approve 后全额消费） |
+| Position | Launcher | `stakeForGenesis` → `launcher.genesis`（路径 B；SP 侧精确 approve 后全额消费，后置断言） |
+| Position | uAsset | `stakeForGenesis` → `mint`；`redeem` 本金腿 → `repay` |
+| Position | SY | `redeem` → `SY.redeem`（非 SY tokenOut 时经 adapter 兑换） |
+| PSM | uAsset | `mint` → `reserveMint`；`redeem` → `reserveBurn`（豁免 minter 债务台账） |
+| 用户 / Owner | USR vault | ERC4626 `deposit`/`mint`/`withdraw`/`redeem`（公开）；`fund`/`setUsrRate`（owner-only） |
 | Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`；redeem → `withdraw`/`unwrap`/`redeem`/`swapExactIn`/`wrap`；或 1:1 直付 |
 | OutrunOFT | LayerZero | `_toSD` 编码消息；`_debit` burn 本链；`_credit` mint 远端 |
 
-Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut` 约束 token -> SY，`minUAssetMinted` 约束 stake / wrap stake 输出，`minTokenOut` 约束 redeem 输出。
+Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut` 约束 token -> SY，`minUAssetMinted` 约束 genesis 路径 B 输出，`minTokenOut` 约束 redeem 输出；PSM 路径输出确定性（面值 1:1 减费率），无 minOut 参数。
 
 ### 3.3 资金流方向
 
@@ -266,7 +318,7 @@ Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut
 方向标注: `token/token → SY` 表示资金从调用者流入 SY。
 
 ```
-入金路径 (资金流向协议):
+入金路径 (token -> SY):
 
   User tokenIn  ──approve──► Router ──transferFrom──► Router
                                                          │
@@ -280,50 +332,50 @@ Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut
                                                          ▼
                                                    User receives SY
 
-锁定 Stake (资金从 SY → uAsset):
+CDP 开仓 (SY -> uAsset，v1 唯一入口 stakeForGenesis，面值/价值平价):
 
-  SY ──transferFrom──► Position ──exchangeRate──► uAssetDebt
+  SY ──transferFrom──► Position ──exchangeRate 两段 down 面值──► mintedUAsset
                                                         │
-                                                   mint uAsset
+                                                   mint uAsset（minter 台账 +principalDebt，铸给 SP 自身）
                                                         ▼
-                                                 uAssetReceiver receives uAsset
+                                                  launcher.genesis 交易内全额消费
 
-Wrap Stake (资金进入共享池):
+CDP 赎回（双腿销债）:
 
-  SY ──transferFrom──► Position
-    → syTotalStaking  += amountInSY
-    → syWrapStaking   += amountInSY
-    → wrapUAssetDebt  += uAssetDebt
-    → mint uAsset to uAssetReceiver
+  Position owner uAsset ──approve──► Position
+    → 本金腿 repay(burn) + 冲销 minter 台账
+    → 利息腿 transfer → protocolTreasury（v1 零费下恒 0）
+    → 输出 SY（直转）或经 SY.redeem → token to receiver
 
-赎回路径 (资金流出协议):
+（JIT 清算资金流随 v1 无清算决策删除；仓位出清唯一通道为 owner redeem）
 
-  User uAsset ──approve──► Position
-    → reduce syTotalStaking / position.syStaked / position.UAssetMinted
-    → repay(burn)
-    → transfer SY or external redeem → token to receiver
+PSM 兑换（储备 ↔ uAsset，面值 1:1 减费率）:
 
-  Keeper uAsset ──approve──► Position ──repay(burn)──► Position (keepWrapRedeem)
-    → reduce syTotalStaking / syWrapStaking / wrapUAssetDebt
-    → transfer SY directly to receiver (undercollateralized pool reverts WrapPoolUndercollateralized)
+  reserve（ERC20 / NATIVE）──mint──► PSM ──reserveMint──► uAsset to 用户
+  uAsset ──approve + redeem──► PSM ──reserveBurn──► reserve to 用户
 
-Keeper 代偿:
+USR 存取:
 
-  Keeper uAsset ──approve──► Position ──repay(burn)
-    → keeperPrincipalSY → keeper (receiver)
-    → ownerExcessSY     → position owner
+  uAsset ──deposit──► USR vault ──按 accrualIndex 铸份额──► suToken
+  suToken ──redeem──► USR vault ──按 accrualIndex 结算──► uAsset（余额为硬边界）
+  Owner uAsset ──approve + fund──► USR vault（计息注资，只进不出）
 
-Harvest:
+Genesis 双路径（新供给 uAsset 全额交 launcher）:
 
-  Position syWrapStaking (surplus) ──► revenuePool
+  路径 A: reserve ──genesisByPSM──► PSM.mint ──reserveMint──► uAsset(router) ──► launcher.genesis
+          （无仓位、无债务；router 侧后置断言全额消费；PSM 行供给）
+  路径 B: token ──genesisByToken──► SY.deposit ──SY──► SP.stakeForGenesis ──mint──► uAsset(SP) ──► launcher.genesis
+          SY ────genesisBySY───► SP.stakeForGenesis ──mint──► uAsset(SP) ──► launcher.genesis
+          （router 薄转发、不触碰 uAsset；genesisUser 承担 CDP 债务，面值铸出；SP 侧后置断言全额消费；CDP 行供给）
 ```
 
 ### 3.4 设计约束
 
 - Router **不承担**独立资金池角色，所有资金来自调用者（caller-funded pull 模式）。
-- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`。
-- 用户也**可直接调用** `SYBaseUpgradeable.sol::deposit`/`redeem` 与 Position.stake/wrapStake，无需经过 Router；直兑 `redeem(..., false)` 从调用者余额烧份额。`redeem(..., true)` 只对每个 SY 实例 owner 配置的 trusted router caller 开放；wrap 池赎回为 keeper-only `keepWrapRedeem`，不经 Router。
-- uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造。
+- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`；路径 A 的寻址 registry 为 `OutrunRouter.sol::setPsmForUAsset`（按 `(uAsset, reserveToken)` 配对，现状即配对三参登记），撤销置零地址只阻断 `genesisByPSM` 的该配对。
+- 用户也**可直接调用** `SYBaseUpgradeable.sol::deposit`/`redeem`、`OutrunStakingPositionUpgradeable.sol::stakeForGenesis`/`redeem`、`OutrunPSMUpgradeable.sol::mint`/`redeem` 与 USR vault 的 ERC4626 公开面，无需经过 Router；直兑 `redeem(..., false)` 从调用者余额烧份额，`redeem(..., true)` 只对每个 SY 实例 owner 配置的 trusted router caller 开放。
+- uAsset 供给共三条路径：CDP（position 层，经 `mint`/`repay` 记 minter 台账）、PSM（储备铸烧路径，豁免台账）、POLend（Memeverse 侧杠杆创世，不在本仓库实现）；三行对账式见 `docs/spec/position/accounting.md` §10.2，跨仓库接线约束见 `docs/spec/protocol.md`「跨仓库接线约束（Memeverse/POLend）」。
+- uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造；储备铸烧路径不受 mintingCap 约束，受储备 minter 登记表（`setReserveMinter`）约束，PSM 侧 kill switch 为撤销该登记。
 - Position 合约本身必须先在 uAsset 上被授予 mintingCap，才能继续铸造。
 
 ## 4. 文档分层（Doc Layering）
@@ -342,8 +394,10 @@ Harvest:
 2. Product Truth 层（当前规则真源）
    - `docs/spec/protocol.md`（系统目标与模块边界）
    - `docs/spec/router/router-and-user-flows.md`（完整路由路径分析）
-   - `docs/spec/position/state-machines.md`（状态机）
-   - `docs/spec/position/accounting.md`（账务规则）
+   - `docs/spec/position/state-machines.md`（状态机与暂停矩阵）
+   - `docs/spec/position/accounting.md`（账务规则、背书不变式与三行对账式）
+   - `docs/spec/psm/peg-stability-module.md`（PSM 行为规格）
+   - `docs/spec/usr/usr-vaults.md`（USR 行为规格）
    - `docs/spec/access-control.md`（权限边界）
    - `docs/spec/yield/yield-adapters.md`（adapter 行为与缺口）
    - `docs/spec/yield/oracles-and-integrations.md`（外部集成边界）
@@ -371,19 +425,45 @@ Harvest:
 2. `docs/ARCHITECTURE.md`（本文件，先建立层次与边界，5 分钟）
 3. `docs/GLOSSARY.md`（术语定义基线，3 分钟）
 4. `docs/spec/protocol.md`（系统目标与模块边界；用户流程见 `docs/spec/router/router-and-user-flows.md`，8 分钟）
-5. `docs/spec/position/state-machines.md`（7 个状态机，8 分钟）
-6. `docs/spec/position/accounting.md`（4 层账务规则，8 分钟）
+5. `docs/spec/position/state-machines.md`（stakeForGenesis / redeem 状态机与暂停矩阵，8 分钟）
+6. `docs/spec/position/accounting.md`（账务与计息规则，含背书不变式与三行对账式，8 分钟）
 7. `docs/spec/access-control.md`（权限边界清单，5 分钟）
 8. `docs/spec/router/router-and-user-flows.md`（完整路由路径与边界，10 分钟）
-9. `docs/spec/yield/yield-adapters.md`（8 组 adapter 实现与缺口，10 分钟）
-10. `docs/TRACEABILITY.md` + `docs/VERIFICATION.md`（证据追溯与验证路径）
+9. `docs/spec/psm/peg-stability-module.md` + `docs/spec/usr/usr-vaults.md`（两条非 CDP 供给/储蓄路径，10 分钟）
+10. `docs/spec/yield/yield-adapters.md`（全部 adapter 族实现与缺口，10 分钟）
+11. `docs/TRACEABILITY.md` + `docs/VERIFICATION.md`（证据追溯与验证路径）
 
 ## 6. 当前已知边界提醒
 
-- uAsset 按 minter 独立记账，不是全局总债务池。
+- uAsset 按 minter 独立记账，不是全局总债务池；PSM 储备铸烧与 OFT 跨链均不触碰 minter 债务台账。
 - Router 当前是 pull 模式，不会消费 pre-funded 余额代替调用者出资。
-- Genesis 当前走的是 locked stake 路径，不是 wrap stake 路径。
-- Wrap 池按 principal debt 记账，不会因为汇率上涨自动给用户补发更多 uAsset。
-- 11 个 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
-- Oracle adapter 是精度归一化器，校验语义与错误面以 `docs/spec/yield/oracles-and-integrations.md` 为准；不实现 deviation bounds 或 fallback。
+- Genesis 为双路径：路径 A（`OutrunRouter.sol::genesisByPSM`）无仓位无债务，路径 B（`OutrunRouter.sol::genesisByToken`/`::genesisBySY` 双计价入口，薄转发至 SP 原生 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`）为 CDP 开仓、`genesisUser` 承担债务；两路径铸出量与 launcher 消费量严格相等——路径 A 全额消费断言在 router 侧，路径 B 断言在 SP 侧。
+- Position 层无 keeper / harvest / wrap / 自由借贷 / 清算面（已随 v1 删除）；v1 无清算即无清算活性依赖面，仓位出清唯一通道为 owner `redeem`（SY 直出 oracle 无关）。
+- CDP 债务按 virtual accrual 按秒复利计息（timestamp 锚定）；v1 全族默认 `duty = 1e27` 零费下 `rate` 恒 `1e27`、债务冻结；加息（`duty > 1e27`）后 SP 暂停期间 `rate` 仍按秒复利增长（暂停是入口熔断，不是计息冻结）。
+- 全部 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
+- Oracle adapter 是精度归一化器（语义以 `docs/spec/yield/oracles-and-integrations.md` 为准）；不实现 deviation bounds；不实现 fallback。v1 无 LTV/清算后，oracle fail-closed 栈是 SP 铸造侧唯一链上防线（背书完整性守卫，见 §1.2 与 §7）。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。
+
+## 7. 风险模型（v1 正式声明）
+
+**链上不设保险、清算或再融资机制。** 风险按五层瀑布承接，逐层强度诚实声明：
+
+| 层 | 承接范围 | 强度评估 |
+| --- | --- | --- |
+| 1. 集成准入标准 | 事前唯一防线 | 标准与裁决见下。已知小例外：LST 削罚可使汇率小幅回撤（历史 ≤1% 量级，Lido/Lista 国库有自补先例）——非黑天鹅形态，模型可吸收，但每个 LST 集成须单独评估 |
+| 2. 发行方自救 | 中型事故 | 梯队发行方有真实恢复先例（被盗追回、保险基金、国库回补）；非保证，作为等待期的事故消化方 |
+| 3. 协议资金桥接 | 等待期流动性缺口 | 时序风险：v1 协议收入未起量，桥接能力 = 金库存量，前期薄 |
+| 4. 收入年金 | 长期坏账 | v1 为政策承诺（协议后续收入优先处理坏账）；v1 已建收入源 = PSM 点差（tin/tout），Memeverse 生态收入属跨仓范围；v2 可编码为收入路由硬优先级 |
+| 5. 脱钩社会化 | 终局 | 全部层级耗尽后接受 uAsset 脱钩，持有人承担全部损失，协议后续收入继续用于处理坏账 |
+
+集成准入标准与裁决表（准入标准三要素：(i) 发行方梯队——背景、管理规模、事故应对历史；(ii) 汇率行为尽调——历史最大回撤 + 回补机制；(iii) oracle 栈兼容（现有 fail-closed 全集）。尽调清单与复审触发条件见 `docs/deployment.md` 运行手册）：
+
+| 家族 | v1 处置 |
+| --- | --- |
+| Aave / Sky / Ethena / Lido / Lista | 准入（人类已拍板名单） |
+| EtherFi | 剔除——多链覆盖论据不成立（独占链仅 Blast/Mode 低活动链）；UETH 族 SY 收敛为 wstETH（Lido，8 链）+ aWETH（Aave，22 链）。adapter 代码保留为 v2 候选：获 A+ 风险评级 + 主要链部署后按标准复评。aWETH 形态当前不在部署脚本布线路径内，UETH 族部署守卫白名单（`SPDefaults.sol::assertFamilySY`）现为 wstETH 单符号，aWETH 接线批次须同批扩白名单（UBNB 双符号分支现已是真实双符号准入，非模板） |
+| Aster | 原始评估剔除——准入标准 (i) 不达标（TGE 2025-09，市场考验 <1 年）、(ii) 未验证（高 APY 收益资产无压力周期回撤数据）、(iii) 规模不足（USDF 铸造 ~112.8M）。2026-09 人类再裁决：asBNB 重新准入 v1——UBNB 族双符号（slisBNB+asBNB），adapter 挂名义 1:1 背书对账守卫后随守卫覆盖接入，初始小 mintingCap 起步 |
+
+回锚双管道（脱钩不是单行道）：uAsset 折价 → genesis 借款人买折价 uAsset 还债赎 SY（债赎套利，`redeem` SY 直出保证该通道 oracle 无关）；uAsset 溢价 → PSM 储备放出。借款人与非借款人两条锚定管道并存。
+
+治理救济工具（已存在，无需新增）：`pause`、UUPS 升级、`transferMinterDebt`（修账验收流程已有）、`setMintingCap`/`revokeMinter`（SP 退役路径已有）、PSM 储备。链下恢复 playbook、背书率监控口径与集成复审触发条件见 `docs/deployment.md` 运行手册。
