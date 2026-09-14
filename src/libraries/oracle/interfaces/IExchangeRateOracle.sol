@@ -14,24 +14,28 @@ pragma solidity ^0.8.35;
 interface IExchangeRateOracle {
     /// @notice Returns the current exchange rate, scaled by 1e18 (asset per SY), for SY accounting.
     /// @dev Implementations MUST return a 1e18-scaled value: position accounting converts amounts against the
-    ///      rate with a hardcoded 1e18 (SYUtils.ONE) — `syAmount * exchangeRate / 1e18` for SY-to-asset and
-    ///      `assetAmount * 1e18 / exchangeRate` for asset-to-SY — so any other scale silently breaks stake/wrap
-    ///      accounting. This interface does not add freshness, bounds, fallback, or multi-source guarantees.
+    ///      rate with a hardcoded 1e18 (SYUtils.ONE) — `syAmount * exchangeRate / 1e18` for SY-to-asset —
+    ///      so any other scale silently breaks stake
+    ///      minting. This interface does not add freshness, bounds, fallback, or multi-source guarantees of
+    ///      its own — freshness is adapter-layer enforcement (per-feed initial value set at construction,
+    ///      runtime-adjustable by the owner via setMaxStaleness); this
+    ///      interface only declares the named-error revert surface implementers share.
     /// @return The current exchange rate value (1e18-scaled).
     function getExchangeRate() external view returns (uint256);
 
     /// @dev Reverts when the underlying oracle answer is non-positive.
     error InvalidOracleAnswer();
     /// @dev Reverts when the normalized exchange rate truncates to zero — a non-standard feed whose
-    ///      decimals exceed 18 and whose answer is too small to survive normalization.
+    /// decimals exceed 18 and whose answer is too small to survive normalization.
     error ZeroNormalizedRate();
-    /// @dev Reverts when the answer's `updatedAt` is zero, older than the configured staleness window, or ahead
+    /// @dev Reverts when the latest round was not answered (`answeredInRound < roundId`), when the answer's
+    /// `updatedAt` is zero, older than the configured staleness window, or ahead
     /// of the current block timestamp (feed clock ahead of the chain).
     error StaleOracleAnswer();
     /// @dev Reverts when the L2 sequencer uptime feed reports the sequencer as down. Per the Chainlink
-    ///      convention a non-zero answer means DOWN — `answer == 0` means UP (the inverse of the naive guess).
+    /// convention a non-zero answer means DOWN — `answer == 0` means UP (the inverse of the naive guess).
     error SequencerDown();
     /// @dev Reverts during the post-recovery grace window, or when recovery cannot yet be verified
-    ///      (`startedAt == 0` never recorded, or `startedAt` ahead of chain time).
+    /// (`startedAt == 0` never recorded, or `startedAt` ahead of chain time).
     error SequencerGracePeriodNotOver();
 }

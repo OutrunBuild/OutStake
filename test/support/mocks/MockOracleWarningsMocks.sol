@@ -13,6 +13,8 @@ contract MockAggregator {
     int256 internal latestOracleAnswer;
     uint256 internal latestOracleUpdatedAt;
     uint256 internal latestOracleStartedAt;
+    uint80 internal latestRoundId = 1;
+    uint80 internal latestAnsweredInRound = 1;
     uint8 internal immutable decimalsValue;
 
     constructor(uint8 decimals_) {
@@ -41,6 +43,16 @@ contract MockAggregator {
         latestOracleUpdatedAt = updatedAt;
     }
 
+    /// @dev Writes answer, timestamps, and the round-identity pair exactly as given. Unanswered-round
+    /// tests pass answeredInRound < roundId (round ids default to 1 in the other setters, so existing
+    /// scenarios keep roundId == answeredInRound).
+    function setLatestRoundData(int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) external {
+        latestOracleAnswer = answer;
+        latestOracleStartedAt = startedAt;
+        latestOracleUpdatedAt = updatedAt;
+        latestAnsweredInRound = answeredInRound;
+    }
+
     function decimals() external view returns (uint8) {
         return decimalsValue;
     }
@@ -50,6 +62,6 @@ contract MockAggregator {
         view
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
-        return (1, latestOracleAnswer, latestOracleStartedAt, latestOracleUpdatedAt, 1);
+        return (latestRoundId, latestOracleAnswer, latestOracleStartedAt, latestOracleUpdatedAt, latestAnsweredInRound);
     }
 }

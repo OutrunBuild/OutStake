@@ -15,6 +15,7 @@ import {OracleSetterMockToken, OracleSetterMockOracle, RevertingOracle} from "./
 interface IOracleBackedSYUpgradeable {
     function exchangeRateOracle() external view returns (address);
     function setExchangeRateOracle(address newOracle) external;
+    function resetRateAnchor() external;
     function exchangeRate() external view returns (uint256);
 }
 
@@ -74,8 +75,13 @@ contract OracleSetterUpgradeableTest is Test {
         assertEq(sy.exchangeRate(), 1.1e18);
 
         OracleSetterMockOracle newOracle = new OracleSetterMockOracle(1.7e18);
-        vm.prank(owner);
+        vm.startPrank(owner);
         sy.setExchangeRateOracle(address(newOracle));
+        // 1.7e18 sits far outside the deviation band around the 1.1e18 anchor, so adopting the
+        // new source's magnitude requires the explicit owner reset (the swap alone keeps the
+        // old anchor and `exchangeRate()` would revert with RateDeviationExceeded).
+        sy.resetRateAnchor();
+        vm.stopPrank();
 
         assertEq(sy.exchangeRate(), 1.7e18);
     }
@@ -164,10 +170,19 @@ contract OracleSourceSwapHandler is Test {
 
     /// @notice Swaps the SY's oracle source to the candidate selected by the seed. The setter is
     ///     owner-only on the SY side, so the handler pranks the owner.
+    /// @dev Each fixed-rate candidate sits far outside the deviation band of the previous
+    ///     anchor, so the documented adoption flow continues with the owner's explicit anchor
+    ///     reset. A reverting source cannot be adopted (the reset reads the oracle), so its swap
+    ///     keeps the previous anchor and the SY mirrors that source's revert instead.
     function swapOracle(uint256 indexSeed) external {
         uint256 index = indexSeed % oracles.length;
+        address next = oracles[index];
         vm.prank(owner);
-        sy.setExchangeRateOracle(oracles[index]);
+        sy.setExchangeRateOracle(next);
+        try IOracleLike(next).getExchangeRate() returns (uint256) {
+            vm.prank(owner);
+            sy.resetRateAnchor();
+        } catch {}
     }
 }
 

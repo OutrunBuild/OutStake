@@ -17,6 +17,7 @@ contract MockOracleWarningsTest is Test {
         bytes4(keccak256("SequencerGracePeriodNotOver()"));
     bytes4 internal constant ZERO_NORMALIZED_RATE_SELECTOR = bytes4(keccak256("ZeroNormalizedRate()"));
     bytes4 internal constant INVALID_STALENESS_SELECTOR = bytes4(keccak256("InvalidStaleness()"));
+    bytes4 internal constant NOT_OWNER_SELECTOR = bytes4(keccak256("NotOwner()"));
 
     address internal owner = address(0xA11CE);
 
@@ -75,6 +76,15 @@ contract MockOracleWarningsTest is Test {
     function testExchangeOracleAdapterRevertsWhenLatestRoundDataIsStale() external {
         vm.warp(10 days);
         aggregator.setLatestRoundData(1.1 ether, block.timestamp - 2 days - 1);
+
+        vm.expectRevert(STALE_ORACLE_ANSWER_SELECTOR);
+        adapter.getExchangeRate();
+    }
+
+    function testExchangeOracleAdapterRevertsWhenLatestRoundIsUnanswered() external {
+        // updatedAt stays fresh on purpose: only the round-completeness gate may fire here,
+        // proving the carried-forward answer is rejected even inside the staleness window.
+        aggregator.setLatestRoundData(1.1 ether, block.timestamp, block.timestamp, 0);
 
         vm.expectRevert(STALE_ORACLE_ANSWER_SELECTOR);
         adapter.getExchangeRate();
@@ -223,10 +233,66 @@ contract MockOracleWarningsTest is Test {
         new OutrunExchangeOracleAdapter(address(aggregator), 0, address(0), 0);
     }
 
+    function testExchangeOracleAdapterConstructorAcceptsCeilingBoundary() external {
+        OutrunExchangeOracleAdapter ceilingAdapter =
+            new OutrunExchangeOracleAdapter(address(aggregator), 30 days, address(0), 0);
+
+        assertEq(ceilingAdapter.maxStaleness(), 30 days);
+    }
+
+    function testExchangeOracleAdapterConstructorRevertsWhenMaxStalenessIsAboveCeiling() external {
+        vm.expectRevert(INVALID_STALENESS_SELECTOR);
+        new OutrunExchangeOracleAdapter(address(aggregator), 30 days + 1, address(0), 0);
+    }
+
     function testExchangeOracleAdapterRevertsWhenOracleIsZero() external {
         bytes4 invalidOracleSelector = bytes4(keccak256("InvalidOracle()"));
         vm.expectRevert(invalidOracleSelector);
         new OutrunExchangeOracleAdapter(address(0), 2 days, address(0), 0);
+    }
+
+    // setUp deploys the adapter from the test contract, so the test contract is the owner;
+    // any other caller must be rejected.
+    function testExchangeOracleAdapterSetMaxStalenessRevertsWhenCallerIsNotOwner() external {
+        vm.prank(address(0xBAD));
+        vm.expectRevert(NOT_OWNER_SELECTOR);
+        adapter.setMaxStaleness(1 days);
+    }
+
+    function testExchangeOracleAdapterOwnerSetsValidMaxStaleness() external {
+        vm.expectEmit(false, false, false, true);
+        emit OutrunExchangeOracleAdapter.SetMaxStaleness(2 days, 5 days);
+        adapter.setMaxStaleness(5 days);
+
+        assertEq(adapter.maxStaleness(), 5 days);
+    }
+
+    function testExchangeOracleAdapterSetMaxStalenessRevertsWhenZero() external {
+        vm.expectRevert(INVALID_STALENESS_SELECTOR);
+        adapter.setMaxStaleness(0);
+    }
+
+    function testExchangeOracleAdapterSetMaxStalenessRevertsWhenAboveCeiling() external {
+        vm.expectRevert(INVALID_STALENESS_SELECTOR);
+        adapter.setMaxStaleness(30 days + 1);
+    }
+
+    function testExchangeOracleAdapterSetMaxStalenessAcceptsCeilingBoundary() external {
+        adapter.setMaxStaleness(30 days);
+
+        assertEq(adapter.maxStaleness(), 30 days);
+    }
+
+    function testExchangeOracleAdapterWidenedWindowAcceptsPreviouslyStaleAnswer() external {
+        vm.warp(10 days);
+        // Age of 3 days is outside the construction window (2 days) but inside the widened one.
+        aggregator.setLatestRoundData(1.1 ether, block.timestamp - 3 days);
+
+        vm.expectRevert(STALE_ORACLE_ANSWER_SELECTOR);
+        adapter.getExchangeRate();
+
+        adapter.setMaxStaleness(4 days);
+        assertEq(adapter.getExchangeRate(), 1.1 ether);
     }
 }
 

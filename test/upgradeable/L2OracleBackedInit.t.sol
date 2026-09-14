@@ -1,23 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.35;
 
-import {Test} from "forge-std/Test.sol";
+import {UAssetHelper} from "./helpers/UAssetHelper.sol";
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {L2AssetValidation} from "../../script/lib/L2AssetValidation.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
-import {MockLzEndpoint} from "./mocks/OFTMocks.sol";
 import {PositionMockToken, PositionMockOracle} from "./mocks/PositionMocks.sol";
+import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
 
 contract L2ValidationHarness {
     function validateOracleBacked(address a, uint8 d, address o) external pure {
         L2AssetValidation.validateL2OracleBackedParams(a, d, o);
-    }
-
-    function validateWrappable(address a, uint8 d, address stETH) external pure {
-        L2AssetValidation.validateL2WrappableParams(a, d, stETH);
     }
 }
 
@@ -25,13 +21,12 @@ contract L2ValidationHarness {
 /// @notice Validates that L2 oracle-backed SY `underlyingAssetOnEthDecimals` must be cross-checked
 /// off-chain against L1 truth before broadcast. L2 cannot call `IERC20Metadata.decimals()` on L1 without
 /// a bridge, so a typo (e.g. 18 vs 6) is silently cached by `OutrunStakingPositionUpgradeable.initialize`
-/// as `canonicalAssetDecimals` and mis-scales `wrapUAssetDebt` / `syToAsset` by `10**|delta|` (1e12 for 6↔18).
+/// as `canonicalAssetDecimals` and mis-scales `principalDebt` / `syToAsset` by `10**|delta|` (1e12 for 6↔18).
 /// This suite proves: (1) `L2AssetValidation` fail-fasts known-family and bounds errors at deploy time,
 /// and (2) the downstream Position mis-scale is deterministic and 1e12 for the 6↔18 case.
-contract L2OracleBackedInitTest is Test {
+contract L2OracleBackedInitTest is UAssetHelper {
     address internal owner = address(0xA11CE);
-    address internal revenuePool = address(0xFEE);
-    address internal keeper = address(0xC0FFEE);
+    address internal treasury = address(0xFEE);
     PositionMockToken internal token;
     PositionMockOracle internal oracle;
     address internal L1_STETH = 0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84;
@@ -51,11 +46,6 @@ contract L2OracleBackedInitTest is Test {
             abi.encodeWithSelector(L2AssetValidation.L2InvalidDecimalsForKnownAsset.selector, L1_STETH, 18, 6)
         );
         h.validateOracleBacked(L1_STETH, 6, address(oracle));
-
-        vm.expectRevert(
-            abi.encodeWithSelector(L2AssetValidation.L2InvalidDecimalsForKnownAsset.selector, L1_STETH, 18, 6)
-        );
-        h.validateWrappable(L1_STETH, 6, address(token));
     }
 
     function test_RevertWhen_DecimalsZeroOrOutOfRange() external {
@@ -79,7 +69,6 @@ contract L2OracleBackedInitTest is Test {
     function test_PassWhen_KnownAssetCorrect() external {
         L2ValidationHarness h = new L2ValidationHarness();
         h.validateOracleBacked(L1_STETH, 18, address(oracle));
-        h.validateWrappable(L1_STETH, 18, address(token));
     }
 
     // --- Integration: assetInfo -> Position canonicalAssetDecimals caching ---
@@ -156,19 +145,11 @@ contract L2OracleBackedInitTest is Test {
     // --- helpers ---
 
     function _deployPosition(address sy, uint8 uAssetDecimals) internal returns (OutrunStakingPositionUpgradeable) {
-        MockLzEndpoint endpoint = new MockLzEndpoint();
-        OutrunUniversalAssetsUpgradeable uAsset = OutrunUniversalAssetsUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunUniversalAssetsUpgradeable(uAssetDecimals, address(endpoint))),
-                abi.encodeCall(OutrunUniversalAssetsUpgradeable.initialize, ("UAsset", "UAST", owner))
-            )
-        );
+        OutrunUniversalAssetsUpgradeable uAsset = _deployUAsset(owner, uAssetDecimals);
         OutrunStakingPositionUpgradeable pos = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize, (owner, 1, revenuePool, sy, address(uAsset), keeper)
-                )
+                SPTestDefaults.spInitCall(owner, sy, address(uAsset), treasury)
             )
         );
         vm.prank(owner);
