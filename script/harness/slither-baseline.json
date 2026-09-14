@@ -390,6 +390,15 @@
       "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
       "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"switch_expr_41716_112_91__rpow_asm_0 = n % 2\" ",
       "key": "weak-prng|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"switch_expr_41716_112_91__rpow_asm_0 = n % 2\" "
+    },
+    {
+      "id": "200eea4965a73d5b183431dbac409b5fe2f570912178097efb7ec844fecfe819",
+      "check": "weak-prng",
+      "impact": "High",
+      "confidence": "Medium",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L727-L758",
+      "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"switch_expr_42103_112_91__rpow_asm_0 = n % 2\" ",
+      "key": "weak-prng|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"switch_expr_42103_112_91__rpow_asm_0 = n % 2\" "
     }
   ]
 }
