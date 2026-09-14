@@ -130,81 +130,24 @@ contract TokenHelperTest is Test {
         assertEq(token.allowance(address(harness), recipient), 0);
     }
 
-    // ============ _safeApproveInf tests ============
+    function testSafeApproveUSDTLikeResetsToZeroAndRetries() external {
+        MockUSDTLikeToken usdtLike = new MockUSDTLikeToken("Tether USD", "USDT", 18);
 
-    function testSafeApproveInfSetsToMax() external {
-        token.mint(address(harness), 100 ether);
+        // Zero -> non-zero is accepted directly by tokens with USDT-style approval rules.
+        harness.exposedSafeApprove(address(usdtLike), recipient, 50 ether);
+        assertEq(usdtLike.allowance(address(harness), recipient), 50 ether);
 
-        // Current allowance is 0, which is < LOWER_BOUND_APPROVAL
-        harness.exposedSafeApproveInf(address(token), recipient);
+        // The token rejects non-zero -> non-zero changes: forceApprove's fallback resets the
+        // allowance to zero and retries, so the final allowance still lands on the new value.
+        harness.exposedSafeApprove(address(usdtLike), recipient, 100 ether);
+        assertEq(usdtLike.allowance(address(harness), recipient), 100 ether);
 
-        assertEq(token.allowance(address(harness), recipient), type(uint256).max);
-    }
-
-    function testSafeApproveInfSkipsWhenSufficient() external {
-        token.mint(address(harness), 100 ether);
-
-        // Set allowance to a value >= LOWER_BOUND_APPROVAL
-        harness.exposedSafeApprove(address(token), recipient, harness.exposedLowerBoundApproval());
-
-        uint256 allowanceBefore = token.allowance(address(harness), recipient);
-        assertEq(allowanceBefore, harness.exposedLowerBoundApproval());
-
-        // Should skip since allowance is already >= LOWER_BOUND_APPROVAL
-        harness.exposedSafeApproveInf(address(token), recipient);
-
-        // Allowance should remain unchanged
-        assertEq(token.allowance(address(harness), recipient), allowanceBefore);
-    }
-
-    function testSafeApproveInfSetsToMaxWhenBelowLowerBound() external {
-        token.mint(address(harness), 100 ether);
-
-        // Set allowance to a value < LOWER_BOUND_APPROVAL
-        harness.exposedSafeApprove(address(token), recipient, 100 ether);
-        assertEq(token.allowance(address(harness), recipient), 100 ether);
-
-        // Should set to max since current < LOWER_BOUND_APPROVAL
-        harness.exposedSafeApproveInf(address(token), recipient);
-
-        assertEq(token.allowance(address(harness), recipient), type(uint256).max);
-    }
-
-    function testSafeApproveInfSkipsForNative() external {
-        // Should return immediately for native token without any approval
-        harness.exposedSafeApproveInf(address(0), recipient);
-        // No assertion needed, just ensure no revert
-    }
-
-    function testSafeApproveInfWhenAllowanceZeroIssuesSingleMaxApprove() external {
-        MockUSDTLikeToken usdt = new MockUSDTLikeToken("USDT", "USDT", 6);
-        usdt.mint(address(harness), 1_000e6);
-
-        // Current allowance is 0 (< LOWER_BOUND_APPROVAL); must approve(max) directly with no approve(0).
-        harness.exposedSafeApproveInf(address(usdt), recipient);
-
-        assertEq(usdt.approveLogLength(), 1);
-        assertEq(usdt.approveLog(0), type(uint256).max);
-        assertEq(usdt.allowance(address(harness), recipient), type(uint256).max);
-    }
-
-    function testSafeApproveInfWhenAllowanceBelowLowerBoundIssuesZeroThenMax() external {
-        MockUSDTLikeToken usdt = new MockUSDTLikeToken("USDT", "USDT", 6);
-        usdt.mint(address(harness), 1_000e6);
-
-        // Set a non-zero allowance below LOWER_BOUND_APPROVAL (0 -> non-zero succeeds on USDT-like token).
-        uint256 initialAllowance = 100e6;
-        harness.exposedSafeApprove(address(usdt), recipient, initialAllowance);
-        assertEq(usdt.allowance(address(harness), recipient), initialAllowance);
-
-        // Non-zero -> non-zero must fail (USDT behavior); so only the reset-to-zero path is USDT-safe.
-        harness.exposedSafeApproveInf(address(usdt), recipient);
-
-        assertEq(usdt.approveLogLength(), 3);
-        assertEq(usdt.approveLog(0), initialAllowance);
-        assertEq(usdt.approveLog(1), 0);
-        assertEq(usdt.approveLog(2), type(uint256).max);
-        assertEq(usdt.allowance(address(harness), recipient), type(uint256).max);
+        // Call sequence for the rejected change: only the reset-to-zero and the retry succeed;
+        // the reverted first attempt never lands in the mock's approve log.
+        assertEq(usdtLike.approveLogLength(), 3);
+        assertEq(usdtLike.approveLog(0), 50 ether);
+        assertEq(usdtLike.approveLog(1), 0);
+        assertEq(usdtLike.approveLog(2), 100 ether);
     }
 
     // ============ _selfBalance tests ============
@@ -231,12 +174,5 @@ contract TokenHelperTest is Test {
     function testSelfBalanceZeroERC20() external {
         uint256 balance = harness.exposedSelfBalance(address(token));
         assertEq(balance, 0);
-    }
-
-    // ============ LOWER_BOUND_APPROVAL constant test ============
-
-    function testLowerBoundApprovalValue() external {
-        // Anchor the production constant (exposed via the harness) to its intended value
-        assertEq(harness.exposedLowerBoundApproval(), type(uint96).max / 2);
     }
 }

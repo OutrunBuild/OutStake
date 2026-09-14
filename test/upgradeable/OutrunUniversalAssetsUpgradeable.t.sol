@@ -3,8 +3,11 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {OFTReceipt, SendParam} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
@@ -24,6 +27,7 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
     address internal minter = address(0xB0B);
     address internal otherMinter = address(0xB0B2);
     address internal receiver = address(0xCAFE);
+    address internal reserveMinter = address(0xF5E5);
 
     function setUp() external {
         endpoint = new MockLzEndpoint();
@@ -305,10 +309,242 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         assertEq(uAsset.balanceOf(receiver), receiverBalanceBefore);
     }
 
+    function testTransferMinterDebtRejectsReserveDestination() external {
+        vm.startPrank(owner);
+        uAsset.setMintingCap(minter, 100e18);
+        uAsset.setMintingCap(otherMinter, 50e18);
+        // Headroom on the reserve record so this test goes red without the guard.
+        uAsset.setMintingCap(reserveMinter, 100e18);
+        uAsset.setReserveMinter(reserveMinter, true);
+        vm.stopPrank();
+
+        vm.prank(minter);
+        uAsset.mint(receiver, 60e18);
+
+        vm.prank(owner);
+        vm.expectRevert(IUniversalAssets.InvalidTransferParams.selector);
+        uAsset.transferMinterDebt(minter, reserveMinter, 10e18);
+
+        // The guard is destination-only: repair between debt-ledger minters still works.
+        vm.prank(owner);
+        uAsset.transferMinterDebt(minter, otherMinter, 10e18);
+
+        IUniversalAssets.MintingStatus memory fromStatus = uAsset.mintingStatusTable(minter);
+        IUniversalAssets.MintingStatus memory reserveStatus = uAsset.mintingStatusTable(reserveMinter);
+        IUniversalAssets.MintingStatus memory toStatus = uAsset.mintingStatusTable(otherMinter);
+        assertEq(fromStatus.amountInMinted, 50e18);
+        assertEq(reserveStatus.amountInMinted, 0);
+        assertEq(toStatus.amountInMinted, 10e18);
+    }
+
     function testNonOwnerCannotTransferMinterDebt() external {
         vm.prank(minter);
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, minter));
         uAsset.transferMinterDebt(minter, otherMinter, 1);
+    }
+
+    function testSetReserveMinterRegistersAndRevokesWithEvents() external {
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true);
+        emit IUniversalAssets.SetReserveMinter(reserveMinter, true);
+        uAsset.setReserveMinter(reserveMinter, true);
+
+        // Registration is observable through the reserve path itself.
+        vm.prank(reserveMinter);
+        uAsset.reserveMint(receiver, 1e18);
+        assertEq(uAsset.balanceOf(receiver), 1e18);
+
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true);
+        emit IUniversalAssets.SetReserveMinter(reserveMinter, false);
+        uAsset.setReserveMinter(reserveMinter, false);
+
+        // Revocation is the reserve-path kill switch: both directions fail closed.
+        vm.prank(reserveMinter);
+        vm.expectRevert(IUniversalAssets.NotReserveMinter.selector);
+        uAsset.reserveMint(receiver, 1e18);
+
+        vm.prank(reserveMinter);
+        vm.expectRevert(IUniversalAssets.NotReserveMinter.selector);
+        uAsset.reserveBurn(reserveMinter, 1e18);
+    }
+
+    function testSetReserveMinterRejectsZeroAddressAndNonOwner() external {
+        vm.prank(owner);
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.setReserveMinter(address(0), true);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, minter));
+        uAsset.setReserveMinter(reserveMinter, true);
+    }
+
+    function testReserveMintMintsToReceiverWithoutDebtLedger() external {
+        vm.prank(owner);
+        uAsset.setReserveMinter(reserveMinter, true);
+
+        vm.prank(reserveMinter);
+        vm.expectEmit(true, true, false, true);
+        emit IERC20.Transfer(address(0), receiver, 40e18);
+        vm.expectEmit(true, true, false, true);
+        emit IUniversalAssets.ReserveMintUAsset(reserveMinter, receiver, 40e18);
+        uAsset.reserveMint(receiver, 40e18);
+
+        assertEq(uAsset.balanceOf(receiver), 40e18);
+        assertEq(uAsset.totalSupply(), 40e18);
+
+        // Debt ledger untouched: no cap, no outstanding debt, no mintable headroom consumed.
+        IUniversalAssets.MintingStatus memory status = uAsset.mintingStatusTable(reserveMinter);
+        assertEq(status.mintingCap, 0);
+        assertEq(status.amountInMinted, 0);
+        assertEq(uAsset.checkMintableAmount(reserveMinter), 0);
+    }
+
+    function testReserveMintLeavesExistingDebtLedgerUnchanged() external {
+        vm.startPrank(owner);
+        uAsset.setMintingCap(minter, 100e18);
+        uAsset.setReserveMinter(minter, true);
+        vm.stopPrank();
+
+        // Debt-ledger mint first: 40e18 outstanding debt against the cap.
+        vm.prank(minter);
+        uAsset.mint(receiver, 40e18);
+
+        vm.prank(minter);
+        uAsset.reserveMint(receiver, 10e18);
+
+        assertEq(uAsset.balanceOf(receiver), 50e18);
+        IUniversalAssets.MintingStatus memory status = uAsset.mintingStatusTable(minter);
+        assertEq(status.amountInMinted, 40e18);
+        assertEq(uAsset.checkMintableAmount(minter), 60e18);
+
+        // The cap does not constrain the reserve path: mint past the remaining debt headroom.
+        vm.prank(minter);
+        uAsset.reserveMint(receiver, 100e18);
+        assertEq(uAsset.balanceOf(receiver), 150e18);
+        assertEq(uAsset.checkMintableAmount(minter), 60e18);
+    }
+
+    function testReserveMintRejectsUnregisteredCallerAndZeroInputs() external {
+        vm.prank(owner);
+        uAsset.setReserveMinter(reserveMinter, true);
+
+        vm.prank(minter);
+        vm.expectRevert(IUniversalAssets.NotReserveMinter.selector);
+        uAsset.reserveMint(receiver, 1e18);
+
+        vm.startPrank(reserveMinter);
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.reserveMint(address(0), 1e18);
+
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.reserveMint(receiver, 0);
+        vm.stopPrank();
+    }
+
+    function testReserveMintRevertsWhenPaused() external {
+        vm.startPrank(owner);
+        uAsset.setReserveMinter(reserveMinter, true);
+        uAsset.pause();
+        vm.stopPrank();
+
+        vm.prank(reserveMinter);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        uAsset.reserveMint(receiver, 1e18);
+    }
+
+    function testReserveBurnBurnsOwnBalanceWithoutDebtLedger() external {
+        vm.prank(owner);
+        uAsset.setReserveMinter(reserveMinter, true);
+
+        vm.prank(reserveMinter);
+        uAsset.reserveMint(reserveMinter, 30e18);
+
+        vm.prank(reserveMinter);
+        vm.expectEmit(true, true, false, true);
+        emit IERC20.Transfer(reserveMinter, address(0), 30e18);
+        vm.expectEmit(true, false, false, true);
+        emit IUniversalAssets.ReserveBurnUAsset(reserveMinter, 30e18);
+        uAsset.reserveBurn(reserveMinter, 30e18);
+
+        assertEq(uAsset.balanceOf(reserveMinter), 0);
+        assertEq(uAsset.totalSupply(), 0);
+        IUniversalAssets.MintingStatus memory status = uAsset.mintingStatusTable(reserveMinter);
+        assertEq(status.mintingCap, 0);
+        assertEq(status.amountInMinted, 0);
+    }
+
+    function testReserveBurnUsesAllowanceForOtherAccounts() external {
+        vm.prank(owner);
+        uAsset.setReserveMinter(reserveMinter, true);
+
+        vm.prank(reserveMinter);
+        uAsset.reserveMint(receiver, 30e18);
+
+        // No allowance: burning another account's balance fails.
+        vm.prank(reserveMinter);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, reserveMinter, 0, 12e18)
+        );
+        uAsset.reserveBurn(receiver, 12e18);
+
+        vm.prank(receiver);
+        uAsset.approve(reserveMinter, 12e18);
+
+        vm.prank(reserveMinter);
+        uAsset.reserveBurn(receiver, 12e18);
+
+        assertEq(uAsset.balanceOf(receiver), 18e18);
+        assertEq(uAsset.totalSupply(), 18e18);
+    }
+
+    function testReserveBurnDoesNotReduceDebtLedger() external {
+        vm.startPrank(owner);
+        uAsset.setMintingCap(minter, 100e18);
+        uAsset.setReserveMinter(minter, true);
+        vm.stopPrank();
+
+        // 40e18 of debt-ledger minting, then a reserve burn of the whole balance (via allowance,
+        // since the balance sits on receiver): the debt stays outstanding.
+        vm.startPrank(minter);
+        uAsset.mint(receiver, 40e18);
+        vm.stopPrank();
+
+        vm.prank(receiver);
+        uAsset.approve(minter, 40e18);
+
+        vm.prank(minter);
+        uAsset.reserveBurn(receiver, 40e18);
+
+        assertEq(uAsset.balanceOf(receiver), 0);
+        assertEq(uAsset.totalSupply(), 0);
+        IUniversalAssets.MintingStatus memory status = uAsset.mintingStatusTable(minter);
+        assertEq(status.amountInMinted, 40e18);
+        assertEq(uAsset.checkMintableAmount(minter), 60e18);
+    }
+
+    function testReserveBurnRejectsUnregisteredCallerZeroInputsAndPause() external {
+        vm.prank(owner);
+        uAsset.setReserveMinter(reserveMinter, true);
+
+        vm.prank(minter);
+        vm.expectRevert(IUniversalAssets.NotReserveMinter.selector);
+        uAsset.reserveBurn(receiver, 1e18);
+
+        vm.startPrank(reserveMinter);
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.reserveBurn(address(0), 1e18);
+
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.reserveBurn(receiver, 0);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        uAsset.pause();
+
+        vm.prank(reserveMinter);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        uAsset.reserveBurn(reserveMinter, 1e18);
     }
 
     function testOutboundRateLimitThroughProxy() external {

@@ -19,10 +19,6 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// transfer (ETH on Ethereum, BNB on BSC) instead of calling ERC20 methods. This lets a
     /// single code path handle both native and ERC20 tokens.
     address internal constant NATIVE = address(0);
-    /// @dev Approval refresh threshold.
-    /// Some ERC20 tokens store allowances in 96 bits. When the remaining allowance drops below
-    /// half of uint96 max, we refresh it back to max.
-    uint256 internal constant LOWER_BOUND_APPROVAL = type(uint96).max / 2;
 
     /// @notice Transfers token from user; native via msg.value or ERC20 via transferFrom.
     /// @param token Address of the token to transfer (NATIVE sentinel for ETH/BNB).
@@ -83,26 +79,5 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// so callers do not need to pre-zero the allowance.
     function _safeApprove(address token, address to, uint256 value) internal {
         IERC20(token).forceApprove(to, value);
-    }
-
-    /// @notice Refreshes allowance to max when it falls below the refresh threshold; resets to 0 first
-    /// because some tokens reject non-zero-to-non-zero.
-    /// @param token Address of the ERC20 token.
-    /// @param to Address to approve as spender.
-    /// @dev On each invocation, refreshes an ERC20 allowance to max when it is below `LOWER_BOUND_APPROVAL`;
-    ///      does not maintain a persistent max-allowance invariant. Native sentinel is ignored.
-    function _safeApproveInf(address token, address to) internal {
-        if (token == NATIVE) return;
-        uint256 currentAllowance = IERC20(token).allowance(address(this), to);
-        if (currentAllowance < LOWER_BOUND_APPROVAL) {
-            // Explicit two-step: resetting to 0 first makes each approve succeed on the first try for
-            // tokens that reject non-zero-to-non-zero changes. forceApprove's fallback would also recover,
-            // but only after one wasted failed call. Then set to max. When the allowance is already 0 the
-            // zero step is skipped — such tokens accept 0-to-max directly.
-            if (currentAllowance != 0) {
-                _safeApprove(token, to, 0);
-            }
-            _safeApprove(token, to, type(uint256).max);
-        }
     }
 }

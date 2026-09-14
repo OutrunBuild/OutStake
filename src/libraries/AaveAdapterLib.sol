@@ -7,8 +7,7 @@ import {WadRayMath} from "./WadRayMath.sol";
 /// @notice Conversion helpers for Aave V3's ray-scaled (1e27) liquidity index. Aave tracks balances as "scaled
 ///      shares" and converts to actual asset amounts using the liquidity index. The index is always ray-scaled
 ///      (1e27 = WadRayMath.RAY).
-/// @dev Quote/preview-only helpers — for debt-coverage use SYUtils.assetToSyUp (ceiling, wad 1e18), not this
-///      half-up/floor family. Position vs adapter rounding separation is intentional.
+/// @dev Quote/preview-only helpers (half-up/floor family) for Aave ray (1e27) previews.
 library AaveAdapterLib {
     /// @notice Thrown when the Aave liquidity index is zero; provides a decoded selector for the otherwise
     /// empty `WadRayMath.rayDiv` revert, which intentionally mirrors Aave's gas-optimized `revert(0,0)`.
@@ -26,8 +25,7 @@ library AaveAdapterLib {
     /// @dev Conservative preview variant for the underlying→aToken path. Uses floor division
     ///      `(a*RAY)/b` (no half-up) so the view never over-quotes vs the half-up
     ///      `ScaledBalanceTokenBase._mintScaled` execution (`amount.rayDiv(index)`) and the
-    ///      `scaledBalanceOf` delta. Max under-quote is 1 wei; over-quote is 0. Adapters use
-    ///      this floor/half-up family for quotes; Position debt coverage uses SYUtils.assetToSyUp ceiling.
+    ///      `scaledBalanceOf` delta. Max under-quote is 1 wei; over-quote is 0.
     /// @param amountAssets Amount of assets to convert.
     /// @param index Ray-scaled (1e27) liquidity index.
     /// @return The equivalent share amount, rounded down.
@@ -39,10 +37,7 @@ library AaveAdapterLib {
     /// @param amountAssets Amount of assets to convert.
     /// @param index Ray-scaled (1e27) liquidity index.
     /// @return The equivalent share amount, rounded half up.
-    // Rounding mode differs from the SYUtils assetToSyUp ceiling round, which
-    // always round toward the ceiling. Position coverage must use that ceiling; adapters
-    // intentionally use this half-up (or calcSharesFromAssetDown floor) for previews. The name
-    // states the mode explicitly so callers do not mistake this for a true ceiling round.
+    // The name states the mode explicitly so callers do not mistake this for a true ceiling round.
     function calcSharesFromAssetHalfUp(uint256 amountAssets, uint256 index) internal pure returns (uint256) {
         if (index == 0) revert ZeroIndex();
         return WadRayMath.rayDiv(amountAssets, index);

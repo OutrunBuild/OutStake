@@ -20,17 +20,8 @@ contract TokenHelperHarness is TokenHelper {
         _safeApprove(token, to, amount);
     }
 
-    function exposedSafeApproveInf(address token, address to) external {
-        _safeApproveInf(token, to);
-    }
-
     function exposedSelfBalance(address token) external view returns (uint256) {
         return _selfBalance(token);
-    }
-
-    // Expose the production approval-refresh threshold so tests can anchor it
-    function exposedLowerBoundApproval() external pure returns (uint256) {
-        return LOWER_BOUND_APPROVAL;
     }
 
     // Receive ETH for native transfers

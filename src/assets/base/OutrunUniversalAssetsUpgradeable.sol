@@ -12,7 +12,9 @@ import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
 ///      own debt tracking: mintingCap is the ceiling, amountInMinted is outstanding debt. Minters repay by
 ///      burning uAsset, which reduces their outstanding debt. amountInMinted is a minter debt ledger, not a
 ///      same-chain totalSupply invariant: OFT cross-chain sends burn on the source chain and mint on the
-///      destination chain without changing this minter debt ledger.
+///      destination chain without changing this minter debt ledger, and registered reserve minters (e.g., PSM
+///      instances) mint and burn through the reserve path without reading or writing mintingCap/amountInMinted
+///      either — the same exemption family, backed by locked reserves instead of minter debt.
 /// @dev No `sweep` rescue exists by design — the contract does not inherit `TokenHelper` and the full
 ///      inheritance chain (`OutrunOFTUpgradeable`, `OutrunERC20PausableUpgradeable`, `OFTCoreUpgradeable`,
 ///      `OutrunRateLimiterUpgradeable`) exposes no rescue entrypoint. Stranded ERC20/NATIVE balances have
@@ -22,7 +24,8 @@ import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
 ///      `balanceOf` without updating `amountInMinted` — otherwise it desyncs
 ///      `OutrunUniversalAssetsUpgradeable.sol::checkMintableAmount`/`OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable`
 ///      from `totalSupply` and breaks the cross-ledger invariant
-///      `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`,
+///      `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable[SP].amountInMinted == Σ active positions[id].principalDebt`
+///      (every staking position's minted principal; settled interest never enters the minter ledger),
 ///      which is not self-healing (unlike `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` over-cap).
 contract OutrunUniversalAssetsUpgradeable 
     // solhint-disable-next-line gas-small-strings
@@ -35,6 +38,9 @@ contract OutrunUniversalAssetsUpgradeable
 {
     struct OutrunUniversalAssetsStorage {
         mapping(address minter => MintingStatus) mintingStatusTable;
+        // Registered reserve minters (e.g., PSM instances) may mint/burn through the reserve path,
+        // which never touches the debt ledger in the mapping above.
+        mapping(address minter => bool isReserveMinter) reserveMinters;
     }
 
     OutrunUniversalAssetsStorage private outrunUniversalAssetsStorage;
@@ -55,6 +61,10 @@ contract OutrunUniversalAssetsUpgradeable
 
     function _mintingStatus(address minter) private view returns (MintingStatus storage) {
         return outrunUniversalAssetsStorage.mintingStatusTable[minter];
+    }
+
+    function _isReserveMinter(address minter) private view returns (bool) {
+        return outrunUniversalAssetsStorage.reserveMinters[minter];
     }
 
     function _remainingMintable(uint256 mintingCap, uint256 amountInMinted)
@@ -111,25 +121,28 @@ contract OutrunUniversalAssetsUpgradeable
 
     /// @notice Moves outstanding debt between minter records without minting or burning tokens.
     /// @dev Owner-only accounting repair tool. Intended ONLY for correcting debt records that have no
-    ///      position/wrap-debt backing (e.g. stray debt created by an operational incident): it migrates
-    ///      only the uAsset minter-level debt and never updates position, wrap, or other module ledgers.
+    ///      position-debt backing (e.g. stray debt created by an operational incident): it migrates
+    ///      only the uAsset minter-level debt and never updates staking-position or other module ledgers.
     ///      Live SP retirement or SY replacement must use the wind-down path instead
-    ///      (`setMintingCap(SP, 0)` → matured `redeem`/`keepRedeem`/`keepWrapRedeem` burn down → `revokeMinter`):
+    ///      (`setMintingCap(SP, 0)` → `redeem` burn down → `revokeMinter`):
     ///      the SP side exposes no ledger export/import entrypoint and a full-ledger move cannot fit
     ///      in one transaction, so a live-ledger transfer would leave a non-self-healing desync.
-    ///      @dev This is the ONLY operation that can silently break the cross-ledger invariant
-    ///      `uAsset.mintingStatusTable[SP].amountInMinted == Σ positions[id].UAssetMinted + wrapUAssetDebt`
+    ///      This is the ONLY operation that can silently break the cross-ledger invariant
+    ///      `uAsset.mintingStatusTable[SP].amountInMinted == Σ active positions[id].principalDebt`
     ///      (see `OutrunStakingPositionUpgradeable`). Pre-mainnet the
     ///      `owner` must be a timelock/multisig; every call must be followed by a mirror reconciliation
-    ///      (`mintingStatusTable` direct read vs Σ positions + wrapUAssetDebt; `checkMintableAmount`
+    ///      (`mintingStatusTable` direct read vs Σ active position principal debts; `checkMintableAmount`
     ///      clamps to zero when debt exceeds cap and is not a reconciliation source) with the desync
-    ///      alert clearing as repair confirmation. Any call against position/wrap-backed debt desyncs
+    ///      alert clearing as repair confirmation. Any call against position-backed debt desyncs
     ///      the ledgers and is not self-healing (unlike `setMintingCap` over-cap which self-heals via repay).
+    ///      The destination must not be a registered reserve minter (e.g. a PSM instance): the reserve
+    ///      path never reads the debt ledger, so such a transfer would strand debt with no repay path.
     /// @param from Source minter address
     /// @param to Destination minter address
     /// @param amount Amount of debt to transfer
     function transferMinterDebt(address from, address to, uint256 amount) external override onlyOwner {
         require(from != address(0) && to != address(0) && from != to && amount != 0, InvalidTransferParams());
+        require(!_isReserveMinter(to), InvalidTransferParams());
 
         MintingStatus storage fromStatus = _mintingStatus(from);
         uint256 fromAmountInMinted = fromStatus.amountInMinted;
@@ -192,6 +205,56 @@ contract OutrunUniversalAssetsUpgradeable
         _burn(account, amount);
 
         emit BurnUAsset(msg.sender, amount);
+    }
+
+    /// @notice Registers or revokes a reserve minter allowed to use the reserve mint/burn path. Owner-only.
+    /// @dev Independent of the debt ledger: this registration neither creates nor clears any
+    ///      `mintingStatusTable` record, and `setMintingCap`/`revokeMinter` do not constrain the reserve
+    ///      path. Revoking a live reserve minter is the kill switch for its reserve path — both directions
+    ///      then revert NotReserveMinter, fail-closed.
+    /// @param minter Address to register or revoke
+    /// @param status True to register, false to revoke
+    function setReserveMinter(address minter, bool status) external override onlyOwner {
+        require(minter != address(0), ZeroInput());
+
+        outrunUniversalAssetsStorage.reserveMinters[minter] = status;
+
+        emit SetReserveMinter(minter, status);
+    }
+
+    /// @notice Mints uAsset to a receiver through the reserve path.
+    /// @dev Caller must be a registered reserve minter. Exempt from the debt ledger: `mintingCap` and
+    ///      `amountInMinted` are neither read nor written (same exemption family as the OFT credit path),
+    ///      so a zero cap or revoked debt-ledger status does not constrain this path.
+    /// @param receiver Address to receive the newly minted tokens
+    /// @param amount Amount of uAsset to mint
+    function reserveMint(address receiver, uint256 amount) external override whenNotPaused {
+        // Authorization first: an unregistered caller learns NotReserveMinter regardless of arguments.
+        require(_isReserveMinter(msg.sender), NotReserveMinter());
+        require(receiver != address(0) && amount != 0, ZeroInput());
+
+        _mint(receiver, amount);
+
+        emit ReserveMintUAsset(msg.sender, receiver, amount);
+    }
+
+    /// @notice Burns uAsset from an account through the reserve path.
+    /// @dev Caller must be a registered reserve minter. The burn never touches the debt ledger
+    ///      (`mintingCap`/`amountInMinted` are neither read nor written), mirroring the OFT debit
+    ///      exemption. When `account` is not the caller, the caller must hold allowance on `account`'s
+    ///      balance (same allowance branch as repay).
+    /// @param account Address whose uAsset will be burned
+    /// @param amount Amount of uAsset to burn
+    function reserveBurn(address account, uint256 amount) external override whenNotPaused {
+        // Authorization first: an unregistered caller learns NotReserveMinter regardless of arguments.
+        require(_isReserveMinter(msg.sender), NotReserveMinter());
+        require(account != address(0) && amount != 0, ZeroInput());
+
+        // If burning another account's balance, check allowance.
+        if (account != msg.sender) _spendAllowance(account, msg.sender, amount);
+        _burn(account, amount);
+
+        emit ReserveBurnUAsset(msg.sender, amount);
     }
 
     /// @notice Validates that a new implementation preserves the LayerZero OFT configuration.

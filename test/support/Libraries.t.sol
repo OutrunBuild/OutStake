@@ -100,49 +100,13 @@ contract SYUtilsTest is Test {
         assertEq(result, 400);
     }
 
-    function testAssetToSyReturnsCorrectValue() public {
-        // With rate 1:1 (1e18), 100 asset -> 100 SY
-        uint256 exchangeRate = 1e18;
-        uint256 assetAmount = 100;
-        uint256 result = SYUtils.assetToSy(exchangeRate, assetAmount);
-        assertEq(result, 100);
-    }
-
-    function testAssetToSyWithRate2x() public {
-        // With rate 2e18, 200 asset -> 100 SY
-        uint256 exchangeRate = 2e18;
-        uint256 assetAmount = 200;
-        uint256 result = SYUtils.assetToSy(exchangeRate, assetAmount);
-        assertEq(result, 100);
-    }
-
-    function testAssetToSyUpRoundsUp() public {
-        // rate 3, 1 wei asset: floor 1e18/3 = 333_333_333_333_333_333, ceil rounds the remainder up by 1
-        uint256 exchangeRate = 3;
-        uint256 assetAmount = 1;
-        uint256 down = SYUtils.assetToSy(exchangeRate, assetAmount);
-        uint256 up = SYUtils.assetToSyUp(exchangeRate, assetAmount);
-        assertEq(down, 333_333_333_333_333_333);
-        assertEq(up, 333_333_333_333_333_334);
-    }
-
-    function testAssetToSyUpAlwaysGreaterOrEqualToAssetToSy() public {
-        // rate 1e18+1, 1e18-1 asset: floor = 1e18-2, ceil = 1e18-1 (rounds the remainder up)
-        uint256 exchangeRate = 1e18 + 1; // Non-trivial rate
-        uint256 assetAmount = 1e18 - 1;
-        uint256 down = SYUtils.assetToSy(exchangeRate, assetAmount);
-        uint256 up = SYUtils.assetToSyUp(exchangeRate, assetAmount);
-        assertEq(down, 1e18 - 2);
-        assertEq(up, 1e18 - 1);
-    }
-
-    function testRoundTripIdentity() public {
-        // syToAsset(rate, assetToSy(rate, x)) == x for exact values
-        uint256 exchangeRate = 1e18;
-        uint256 assetAmount = 1e18;
-        uint256 syAmount = SYUtils.assetToSy(exchangeRate, assetAmount);
-        uint256 backToAsset = SYUtils.syToAsset(exchangeRate, syAmount);
-        assertEq(backToAsset, assetAmount);
+    function testSyToAssetRoundsDownOnDustAndRemainder() public {
+        // 1 SY at rate 1e18-1 -> quotient just under 1. Rounds down to 0;
+        // a ceiling rounding mode would give 1, so this pins the down direction.
+        assertEq(SYUtils.syToAsset(1e18 - 1, 1), 0);
+        // 1 SY at rate 1.5e18 -> quotient exactly 1.5. Rounds down to 1;
+        // a ceiling rounding mode would give 2, so this pins the down direction.
+        assertEq(SYUtils.syToAsset(1.5e18, 1), 1);
     }
 }
 
