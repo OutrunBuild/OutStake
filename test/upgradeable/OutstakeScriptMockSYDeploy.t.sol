@@ -6,6 +6,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
 import {OutrunDeployer} from "../../script/deploy/deployment/OutrunDeployer.sol";
+import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
+import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
+import {EmptyMockLauncher} from "./mocks/EmptyMockLauncher.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {MockUSDC} from "../support/mocks/MockUSDC.sol";
 import {MockAUSDC} from "../support/mocks/MockAUSDC.sol";
@@ -14,8 +17,88 @@ import {MockAUSDCOracle} from "../support/mocks/MockAUSDCOracle.sol";
 import {MockSUSDSOracle} from "../support/mocks/MockSUSDSOracle.sol";
 import {MockExchangeRateOracle} from "../support/mocks/MockExchangeRateOracle.sol";
 import {YieldDeployMockUniversalAsset} from "../deploy/mocks/YieldDeployMocks.sol";
+import {SPDefaults} from "../../script/lib/SPDefaults.sol";
 
 contract OutstakeScriptHarness is OutstakeScript {
+    // --- injected config (overrides the script's env-read seams so tests never mutate process
+    // --- env: forge runs tests concurrently and vm.setEnv writes race across tests) ---
+
+    bool internal spCapSet;
+    uint256 internal injectedSpCap;
+    address internal injectedMockUSDC;
+    address internal injectedMockAUSDC;
+    address internal injectedMockSUSDS;
+    address internal injectedMockAUSDCOracle;
+    address internal injectedMockSUSDSOracle;
+    address internal injectedSupportSy;
+    address internal injectedSupportUusd;
+    address internal injectedSupportTreasury;
+    bool internal genesisLauncherSet;
+    address internal injectedGenesisLauncher;
+
+    function setSpMintingCap(uint256 mintingCap) external {
+        spCapSet = true;
+        injectedSpCap = mintingCap;
+    }
+
+    function setMockStackConfig(address usdc, address ausdc, address susds, address ausdcOracle, address susdsOracle)
+        external
+    {
+        injectedMockUSDC = usdc;
+        injectedMockAUSDC = ausdc;
+        injectedMockSUSDS = susds;
+        injectedMockAUSDCOracle = ausdcOracle;
+        injectedMockSUSDSOracle = susdsOracle;
+    }
+
+    function setMockSupportSy(address sy) external {
+        injectedSupportSy = sy;
+    }
+
+    function setMockSupportUusd(address uusd) external {
+        injectedSupportUusd = uusd;
+    }
+
+    function setMockSupportTreasury(address treasury) external {
+        injectedSupportTreasury = treasury;
+    }
+
+    function setGenesisLauncherConfig(address genesisLauncher) external {
+        genesisLauncherSet = true;
+        injectedGenesisLauncher = genesisLauncher;
+    }
+
+    function setMemeverseLauncherConfig(address launcher) external {
+        memeverseLauncher = launcher;
+    }
+
+    function exposedGenesisLauncherConfig() external view returns (bool set, address genesisLauncher) {
+        return _genesisLauncherConfig();
+    }
+
+    function exposedSpMintingCap() external view returns (uint256) {
+        return _spMintingCap();
+    }
+
+    function _spMintingCap() internal view override returns (uint256) {
+        return spCapSet ? injectedSpCap : super._spMintingCap();
+    }
+
+    function _mockStackConfig() internal view override returns (address, address, address, address, address) {
+        return
+            (injectedMockUSDC, injectedMockAUSDC, injectedMockSUSDS, injectedMockAUSDCOracle, injectedMockSUSDSOracle);
+    }
+
+    function _mockSupportConfig(string memory) internal view override returns (address, address, address) {
+        return (injectedSupportSy, injectedSupportUusd, injectedSupportTreasury);
+    }
+
+    /// @dev Unset injection falls through to the script's env read so the absent-env path (entry
+    ///      stays disabled) stays covered without env writes.
+    function _genesisLauncherConfig() internal view override returns (bool, address) {
+        return genesisLauncherSet ? (true, injectedGenesisLauncher) : super._genesisLauncherConfig();
+    }
+
     function configure(address owner_, address deployer_, address outrunDeployer_) external {
         owner = owner_;
         deployer = deployer_;
@@ -30,6 +113,10 @@ contract OutstakeScriptHarness is OutstakeScript {
         _supportMockAUSDC(nonce);
     }
 
+    function exposedSupportMockSUSDS(uint256 nonce) external {
+        _supportMockSUSDS(nonce);
+    }
+
     function exposedDeployMockERC20(uint256 nonce) external {
         _deployMockERC20(nonce);
     }
@@ -40,6 +127,13 @@ contract OutstakeScriptHarness is OutstakeScript {
 
     function exposedTestnetChainIds() external pure returns (uint32[] memory) {
         return _testnetChainIds();
+    }
+
+    // The family guard is an internal library call, so it reverts inside the caller's own frame
+    // and vm.expectRevert cannot observe it; routing it through this external frame makes the
+    // fail-closed legs assertable.
+    function exposedAssertFamilySY(address sy, uint8 family) external view {
+        SPDefaults.assertFamilySY(sy, family);
     }
 }
 
@@ -59,6 +153,17 @@ contract OutstakeScriptMockSYDeployTest is Test {
     YieldDeployMockUniversalAsset internal uusd;
 
     function setUp() external {
+        // The unset-seam cap path falls through to the real process env (the production
+        // default path this suite pins), so an ambient SP_MINTING_CAP export — a legitimate
+        // ops override — would break every default-value assert below. Fail here with the
+        // culprit named instead of an unrelated-looking red.
+        assertFalse(vm.envExists("SP_MINTING_CAP"), "ambient SP_MINTING_CAP export breaks default-cap asserts");
+        // Same hermeticity guard for the optional genesis-launcher config: the unset
+        // injection falls through to the GENESIS_LAUNCHER env key, and an ambient export
+        // (a legitimate ops override) would silently flip the "config absent" paths this
+        // suite pins or revert them mid-support-deploy. Fail here with the culprit named.
+        assertFalse(vm.envExists("GENESIS_LAUNCHER"), "ambient GENESIS_LAUNCHER export breaks unset-config asserts");
+
         script = new OutstakeScriptHarness();
         outrunDeployer = new OutrunDeployer(address(script));
         script.configure(address(script), address(script), address(outrunDeployer));
@@ -66,19 +171,17 @@ contract OutstakeScriptMockSYDeployTest is Test {
         mockUSDC = new MockUSDC("Mock USDC", "USDC", 18, address(this));
         mockAUSDC = new MockAUSDC("Mock aUSDC", "aUSDC", 18, address(mockUSDC), address(this));
         mockSUSDS = new MockSUSDS("Mock sUSDS", "sUSDS", 18, address(mockUSDC), address(this));
-
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_USDC", vm.toString(address(mockUSDC)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_AUSDC", vm.toString(address(mockAUSDC)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_SUSDS", vm.toString(address(mockSUSDS)));
         mockAUSDCOracle = new MockAUSDCOracle(address(this));
         mockSUSDSOracle = new MockSUSDSOracle(address(this));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_AUSDC_ORACLE", vm.toString(address(mockAUSDCOracle)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_SUSDS_ORACLE", vm.toString(address(mockSUSDSOracle)));
+        // Mock-stack addresses are harness-injected (fresh instances per test); writing them to
+        // env would race across concurrently running tests.
+        script.setMockStackConfig(
+            address(mockUSDC),
+            address(mockAUSDC),
+            address(mockSUSDS),
+            address(mockAUSDCOracle),
+            address(mockSUSDSOracle)
+        );
     }
 
     function testDeployMockERC20SYCreatesUsableAUSDCAndSUSDSSYProxies() external {
@@ -128,94 +231,252 @@ contract OutstakeScriptMockSYDeployTest is Test {
         aUSDCSY.exchangeRate();
     }
 
+    /// @dev Race-free seam test for the SP minting-cap config (mirrors the YieldDeploy-script
+    ///      variant): the injected cap wins when set and the 1_000_000_000 ether placeholder
+    ///      default applies when unset. The call site (`_supportMockSY` -> setMintingCap) is
+    ///      pinned by the default-value assert in the happy-path test above.
+    function testSpMintingCapFollowsInjectionOverDefault() external {
+        assertEq(script.exposedSpMintingCap(), 1_000_000_000 ether);
+
+        script.setSpMintingCap(1_234 ether);
+
+        assertEq(script.exposedSpMintingCap(), 1_234 ether);
+    }
+
     // --- mock-support validation matrix (the revert legs of _validateMockSupportConfig) ---
 
-    /// @dev Baseline env wiring that passes validation: a deployed mock SY reading its own oracle,
-    ///      and a UUSD stand-in that is Ownable-by-script, carries code, and answers decimals().
-    function _setValidMockSupportEnv() internal {
+    /// @dev Baseline harness wiring that passes validation: a deployed mock SY (one of the two
+    ///      instances created by a single `exposedDeployMockERC20SY`, selected by its salt word)
+    ///      reading its own wired oracle, and a UUSD stand-in that is Ownable-by-script, carries
+    ///      code, and answers decimals(). Injected via seams — no env writes (concurrent tests
+    ///      race on env keys).
+    function _setValidMockSupportConfig(string memory sySaltWord, MockExchangeRateOracle oracle, int256 answer)
+        internal
+        returns (address syAddress)
+    {
         uusd = new YieldDeployMockUniversalAsset(address(script));
+        uusd.setSymbol("UUSD");
         script.exposedDeployMockERC20SY(1);
-        address syAddress =
-            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("MockAUSDCSY", uint256(1))));
-        mockAUSDCOracle.setLatestAnswer(1_100_000);
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_AUSDC_SY", vm.toString(syAddress));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("UUSD", vm.toString(address(uusd)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("REVENUE_POOL", vm.toString(user));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("KEEPER", vm.toString(user));
+        syAddress = outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked(sySaltWord, uint256(1))));
+        oracle.setLatestAnswer(answer);
+        script.setMockSupportSy(syAddress);
+        script.setMockSupportUusd(address(uusd));
+        script.setMockSupportTreasury(user);
     }
 
     function testSupportMockAUSDCPassesValidationAndDeploysThePosition() external {
-        _setValidMockSupportEnv();
+        address syAddress = _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
 
         script.exposedSupportMockAUSDC(2);
 
         address sp =
             outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("Mock SP aUSDC", uint256(2))));
         assertGt(sp.code.length, 0);
+        // A wrapper pointed at the wrong mock SY (or a misfilled seam key) surfaces here.
+        assertEq(OutrunStakingPositionUpgradeable(sp).SY(), syAddress);
+        // Without SP_MINTING_CAP set, the placeholder default applies.
+        assertEq(uusd.mintingCaps(sp), 1_000_000_000 ether);
+        // Pins the v1 zero-fee duty default on this family's SP.
+        assertEq(OutrunStakingPositionUpgradeable(sp).duty(), SPDefaults.SP_DEFAULT_DUTY);
     }
 
-    function test_RevertWhen_SupportMockAUSDCOwnerDiffersFromDeployer() external {
-        _setValidMockSupportEnv();
-        script.configure(user, address(script), address(outrunDeployer));
+    function testSupportMockSUSDSPassesValidationAndDeploysThePosition() external {
+        address syAddress = _setValidMockSupportConfig("MockSUSDSSY", mockSUSDSOracle, 1.2e18);
 
-        vm.expectRevert(OutstakeScript.InvalidOwner.selector);
+        script.exposedSupportMockSUSDS(2);
+
+        address sp =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("Mock SP sUSDS", uint256(2))));
+        assertGt(sp.code.length, 0);
+        // A wrapper pointed at the wrong mock SY (or a misfilled seam key) surfaces here: the
+        // sUSDS wrapper must bind the sUSDS SY instance, not the aUSDC one deployed alongside it.
+        assertEq(OutrunStakingPositionUpgradeable(sp).SY(), syAddress);
+        assertEq(uusd.mintingCaps(sp), 1_000_000_000 ether);
+        // Pins the v1 zero-fee duty default on this family's SP.
+        assertEq(OutrunStakingPositionUpgradeable(sp).duty(), SPDefaults.SP_DEFAULT_DUTY);
+    }
+
+    function test_RevertWhen_SupportMockSYFamilyMismatched() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        address ausdcsSY =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("MockAUSDCSY", uint256(1))));
+        address susdsSY =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("MockSUSDSSY", uint256(1))));
+        // The aUSDC mock SY ("SY aUSDC") bound to the sUSDS family entry must revert.
+        script.setMockSupportSy(ausdcsSY);
+        vm.expectRevert(abi.encodeWithSelector(SPDefaults.MismatchedFamilySY.selector, ausdcsSY));
+        script.exposedSupportMockSUSDS(2);
+        // The sUSDS mock SY ("SY sUSDS") bound to the aUSDC family entry must revert too.
+        script.setMockSupportSy(susdsSY);
+        vm.expectRevert(abi.encodeWithSelector(SPDefaults.MismatchedFamilySY.selector, susdsSY));
         script.exposedSupportMockAUSDC(2);
     }
 
-    function test_RevertWhen_SupportMockAUSDCKeeperIsZero() external {
-        _setValidMockSupportEnv();
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("KEEPER", vm.toString(address(0)));
+    /// @dev The UBNB family is v1's only multi-adapter family: the binding check admits both
+    ///      BNB-family SY symbols — Lista slisBNB and Aster asBNB — while every other family
+    ///      admits exactly one. The stand-in mock models the only seam this guard reads: the
+    ///      reported symbol.
+    function test_AssertFamilySYAdmitsBothUBNBAdapterSymbols() external {
+        YieldDeployMockUniversalAsset slisBnbSY = new YieldDeployMockUniversalAsset(address(this));
+        slisBnbSY.setSymbol("SY slisBNB");
+        YieldDeployMockUniversalAsset asBnbSY = new YieldDeployMockUniversalAsset(address(this));
+        asBnbSY.setSymbol("SY asBNB");
 
-        vm.expectRevert(OutstakeScript.InvalidKeeper.selector);
+        SPDefaults.assertFamilySY(address(slisBnbSY), SPDefaults.FAMILY_UBNB);
+        SPDefaults.assertFamilySY(address(asBnbSY), SPDefaults.FAMILY_UBNB);
+    }
+
+    /// @dev Both fail-closed legs of the UBNB branch: a symbol outside the two admitted
+    ///      BNB-family symbols, and a target whose symbol() read reverts, must each fail the
+    ///      binding check with MismatchedFamilySY instead of silently passing.
+    function test_RevertWhen_AssertFamilyUBNBSymbolMismatchedOrUnreadable() external {
+        YieldDeployMockUniversalAsset foreignSY = new YieldDeployMockUniversalAsset(address(this));
+        foreignSY.setSymbol("SY wstETH");
+        vm.expectRevert(abi.encodeWithSelector(SPDefaults.MismatchedFamilySY.selector, address(foreignSY)));
+        script.exposedAssertFamilySY(address(foreignSY), SPDefaults.FAMILY_UBNB);
+
+        // symbol() is stubbed to revert, modelling a broken/foreign SY whose symbol read fails;
+        // the same selector the guard calls it through on IERC20Metadata.
+        YieldDeployMockUniversalAsset unreadableSY = new YieldDeployMockUniversalAsset(address(this));
+        unreadableSY.setSymbol("SY slisBNB");
+        vm.mockCallRevert(
+            address(unreadableSY), abi.encodeWithSelector(YieldDeployMockUniversalAsset.symbol.selector), bytes("")
+        );
+        vm.expectRevert(abi.encodeWithSelector(SPDefaults.MismatchedFamilySY.selector, address(unreadableSY)));
+        script.exposedAssertFamilySY(address(unreadableSY), SPDefaults.FAMILY_UBNB);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCOwnerDiffersFromDeployer() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.configure(user, address(script), address(outrunDeployer));
+
+        vm.expectRevert(SPDefaults.InvalidOwner.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCTreasuryIsZeroAddress() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.setMockSupportTreasury(address(0));
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedSupportMockAUSDC(2);
     }
 
     function test_RevertWhen_SupportMockAUSDCUUSDIsZeroAddress() external {
-        _setValidMockSupportEnv();
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("UUSD", vm.toString(address(0)));
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.setMockSupportUusd(address(0));
 
         vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedSupportMockAUSDC(2);
     }
 
     function test_RevertWhen_SupportMockAUSDCSyIsZeroAddress() external {
-        _setValidMockSupportEnv();
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_AUSDC_SY", vm.toString(address(0)));
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.setMockSupportSy(address(0));
 
         vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedSupportMockAUSDC(2);
     }
 
     function test_RevertWhen_SupportMockAUSDCUUSDHasNoCode() external {
-        _setValidMockSupportEnv();
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("UUSD", vm.toString(user));
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.setMockSupportUusd(user);
+
+        // No code check remains: the EOA staticcall to owner() succeeds with empty
+        // returndata, and the returndata decoder reverts dataless outside the try/catch.
+        vm.expectRevert(bytes(""));
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCUUSDOwnerDiffersFromScriptOwner() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        // MockUSDC carries code but is owned by this test contract, not by the configured owner.
+        script.setMockSupportUusd(address(mockUSDC));
+
+        vm.expectRevert(SPDefaults.InvalidOwner.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    function test_RevertWhen_SupportMockAUSDCSyExchangeRateRevertsFailClosed() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        // A zeroed oracle makes the SY's exchangeRate() revert; validation must fail closed.
+        mockAUSDCOracle.setLatestAnswer(0);
 
         vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedSupportMockAUSDC(2);
     }
 
-    function test_RevertWhen_SupportMockAUSDCUUSDOwnerDiffersFromScriptOwner() external {
-        _setValidMockSupportEnv();
-        // MockUSDC carries code but is owned by this test contract, not by the configured owner.
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("UUSD", vm.toString(address(mockUSDC)));
+    // --- optional genesis-launcher wiring on the mock-support SP (`_supportMockSY`) ---
 
-        vm.expectRevert(OutstakeScript.InvalidOwner.selector);
+    /// @dev Race-free seam test for the optional genesis-launcher config: the unset injection
+    ///      falls through to the script's env read, so with GENESIS_LAUNCHER absent the config
+    ///      reports "not set" and the SP stays at the zero default (entry disabled).
+    function testGenesisLauncherConfigDefaultsToUnsetWithoutEnv() external {
+        (bool set, address genesisLauncher) = script.exposedGenesisLauncherConfig();
+        assertFalse(set, "config must be unset without GENESIS_LAUNCHER");
+        assertEq(genesisLauncher, address(0), "unset config carries no address");
+    }
+
+    /// @dev Configured launcher is wired onto the freshly deployed SP via setGenesisLauncher
+    ///      (event + getter).
+    function testSupportMockAUSDCWiresGenesisLauncherWhenConfigured() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        EmptyMockLauncher launcher = new EmptyMockLauncher();
+        script.setGenesisLauncherConfig(address(launcher));
+        script.setMemeverseLauncherConfig(address(launcher));
+
+        vm.expectEmit(true, true, false, true);
+        emit IOutrunStakeManager.SetGenesisLauncher(address(0), address(launcher));
+        script.exposedSupportMockAUSDC(2);
+
+        address sp =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("Mock SP aUSDC", uint256(2))));
+        assertEq(OutrunStakingPositionUpgradeable(sp).genesisLauncher(), address(launcher), "SP launcher wired");
+    }
+
+    /// @dev The SP-side genesis gate and the router-side launcher registry must target one
+    ///      address: when the configured genesis launcher differs from the memeverse launcher
+    ///      the mock-support wiring fails closed instead of deploying an SP whose gate diverges
+    ///      from the router entries.
+    function test_RevertWhen_GenesisLauncherDiffersFromMemeverseLauncher() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        EmptyMockLauncher genesisSide = new EmptyMockLauncher();
+        EmptyMockLauncher routerSide = new EmptyMockLauncher();
+        script.setGenesisLauncherConfig(address(genesisSide));
+        script.setMemeverseLauncherConfig(address(routerSide));
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedSupportMockAUSDC(2);
     }
 
-    function test_RevertWhen_SupportMockAUSDCSyExchangeRateRevertsFailClosed() external {
-        _setValidMockSupportEnv();
-        // A zeroed oracle makes the SY's exchangeRate() revert; validation must fail closed.
-        mockAUSDCOracle.setLatestAnswer(0);
+    /// @dev Absent config leaves the genesis entry disabled: the SP keeps the zero default and no
+    ///      wiring call is made.
+    function testSupportMockAUSDCLeavesGenesisDisabledWhenConfigAbsent() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.exposedSupportMockAUSDC(2);
+
+        address sp =
+            outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked("Mock SP aUSDC", uint256(2))));
+        assertEq(OutrunStakingPositionUpgradeable(sp).genesisLauncher(), address(0), "entry stays disabled");
+    }
+
+    /// @dev A configured launcher that is the zero address fails closed (InvalidAddress) rather
+    ///      than silently wiring a disabled gate or reverting inside the SP setter.
+    function test_RevertWhen_GenesisLauncherConfigIsZeroAddress() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.setGenesisLauncherConfig(address(0));
+
+        vm.expectRevert(OutstakeScript.InvalidAddress.selector);
+        script.exposedSupportMockAUSDC(2);
+    }
+
+    /// @dev The launcher address value is operator responsibility: a codeless address is not
+    ///      rejected on its own — with only the genesis side configured, the wiring fails closed
+    ///      because the configured launcher differs from the unset (zero-default) memeverse
+    ///      launcher.
+    function test_RevertWhen_GenesisLauncherDiffersFromUnsetMemeverseLauncher() external {
+        _setValidMockSupportConfig("MockAUSDCSY", mockAUSDCOracle, 1_100_000);
+        script.setGenesisLauncherConfig(address(0xC0DE));
 
         vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedSupportMockAUSDC(2);
@@ -232,17 +493,12 @@ contract OutstakeScriptMockSYDeployTest is Test {
 
     // _supportMockAUSDC is the only call chain to the setMintingCap(SP_DEFAULT_MINTING_CAP) fund
     // surface, so its mock gate must fail closed on mainnet exactly like the deploy path.
-    // Pre-seeding the support env vars pins guard-BEFORE-env-read order: if the guard moved after
-    // the reads, the revert would become InvalidKeeper/InvalidAddress, not NotTestnetChain.
+    // Pre-seeding the harness support config pins guard-BEFORE-config-read order: if the guard
+    // moved after the reads, the revert would become InvalidAddress, not NotTestnetChain.
     function test_RevertWhen_ChainIsNotTestnetOnMockSupportPath() external {
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("MOCK_AUSDC_SY", vm.toString(address(0xA11CE)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("UUSD", vm.toString(address(0xB0B)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("REVENUE_POOL", vm.toString(address(0xCAFE)));
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("KEEPER", vm.toString(address(0xD00D)));
+        script.setMockSupportSy(address(0xA11CE));
+        script.setMockSupportUusd(address(0xB0B));
+        script.setMockSupportTreasury(address(0xCAFE));
 
         vm.chainId(1);
 

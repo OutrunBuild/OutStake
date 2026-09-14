@@ -22,6 +22,22 @@ library L2AssetValidation {
     error L2InvalidDecimalsForKnownAsset(address asset, uint8 expected, uint8 actual);
     error L2ZeroAddress();
 
+    /// @notice Shared decimals validation for L2 assets.
+    /// @dev New known-asset families are appended only in this helper; the
+    /// oracle-backed validator below applies it.
+    /// @param underlyingAssetOnEthAddr_ L1 underlying asset address (e.g. stETH on mainnet).
+    /// @param underlyingAssetOnEthDecimals_ Decimals claimed for that L1 asset.
+    function _validateDecimals(address underlyingAssetOnEthAddr_, uint8 underlyingAssetOnEthDecimals_) internal pure {
+        if (underlyingAssetOnEthDecimals_ == 0) revert L2InvalidDecimalsZero();
+        // Generic upper bound: no known L1 canonical asset exceeds 18. Higher values
+        // are almost certainly a typo and would under-scale uAsset debt.
+        if (underlyingAssetOnEthDecimals_ > 18) revert L2InvalidDecimalsOutOfRange(underlyingAssetOnEthDecimals_);
+        // Known-asset hard-coded expectations. Add more families here as L2 adapters expand.
+        if (underlyingAssetOnEthAddr_ == L1_STETH && underlyingAssetOnEthDecimals_ != 18) {
+            revert L2InvalidDecimalsForKnownAsset(underlyingAssetOnEthAddr_, 18, underlyingAssetOnEthDecimals_);
+        }
+    }
+
     /// @notice Validates L2 oracle-backed SY initialization params.
     /// @dev Reverts if decimals is zero, exceeds 18, or mismatches a known asset family.
     /// @param underlyingAssetOnEthAddr_ L1 underlying asset address (e.g. stETH on mainnet).
@@ -33,34 +49,11 @@ library L2AssetValidation {
         address exchangeRateOracle_
     ) internal pure {
         if (underlyingAssetOnEthAddr_ == address(0) || exchangeRateOracle_ == address(0)) revert L2ZeroAddress();
-        if (underlyingAssetOnEthDecimals_ == 0) revert L2InvalidDecimalsZero();
-        // Generic upper bound: no known L1 canonical asset exceeds 18. Higher values
-        // are almost certainly a typo and would under-scale uAsset debt.
-        if (underlyingAssetOnEthDecimals_ > 18) revert L2InvalidDecimalsOutOfRange(underlyingAssetOnEthDecimals_);
-        // Known-asset hard-coded expectations. Add more families here as L2 adapters expand.
-        if (underlyingAssetOnEthAddr_ == L1_STETH && underlyingAssetOnEthDecimals_ != 18) {
-            revert L2InvalidDecimalsForKnownAsset(underlyingAssetOnEthAddr_, 18, underlyingAssetOnEthDecimals_);
-        }
+        _validateDecimals(underlyingAssetOnEthAddr_, underlyingAssetOnEthDecimals_);
         // Future known assets (example pattern, keep commented until wired):
         // if (underlyingAssetOnEthAddr_ == L1_USDe && underlyingAssetOnEthDecimals_ != 18) revert ...;
         // Unknown assets fall through with only the generic 1..18 range check above;
-        // they must be manually verified against L1 Etherscan / official docs and recorded
-        // in docs/deployment.md L2 checklist before broadcast.
-    }
-
-    /// @notice Validates wrappable L2 wstETH params (no oracle, stETH is rate source).
-    function validateL2WrappableParams(
-        address underlyingAssetOnEthAddr_,
-        uint8 underlyingAssetOnEthDecimals_,
-        address stETH_
-    ) internal pure {
-        if (underlyingAssetOnEthAddr_ == address(0) || stETH_ == address(0)) {
-            revert L2ZeroAddress();
-        }
-        if (underlyingAssetOnEthDecimals_ == 0) revert L2InvalidDecimalsZero();
-        if (underlyingAssetOnEthDecimals_ > 18) revert L2InvalidDecimalsOutOfRange(underlyingAssetOnEthDecimals_);
-        if (underlyingAssetOnEthAddr_ == L1_STETH && underlyingAssetOnEthDecimals_ != 18) {
-            revert L2InvalidDecimalsForKnownAsset(underlyingAssetOnEthAddr_, 18, underlyingAssetOnEthDecimals_);
-        }
+        // they must be manually verified against L1 Etherscan / official docs and their
+        // decimals recorded on the L2 deployment checklist before broadcast.
     }
 }

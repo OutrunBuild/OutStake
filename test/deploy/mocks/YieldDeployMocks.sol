@@ -3,6 +3,11 @@ pragma solidity ^0.8.35;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+/**
+ * @title YieldDeployMockToken
+ * @notice Mock ERC20 used in deploy-script tests.
+ * @dev Decimals model: configurable at construction (decimals_).
+ */
 contract YieldDeployMockToken is ERC20 {
     uint8 internal immutable tokenDecimals;
 
@@ -38,6 +43,7 @@ contract YieldDeployMockUniversalAsset {
     address public lastMinter;
     uint256 public lastMintingCap;
     uint256 public capUpdateCount;
+    string private _mockSymbol;
 
     mapping(address minter => uint256 cap) public mintingCaps;
 
@@ -56,5 +62,13 @@ contract YieldDeployMockUniversalAsset {
 
     function decimals() external pure returns (uint8) {
         return 18;
+    }
+
+    function symbol() external view returns (string memory) {
+        return _mockSymbol;
+    }
+
+    function setSymbol(string memory s) external {
+        _mockSymbol = s;
     }
 }

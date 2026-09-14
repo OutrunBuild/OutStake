@@ -7,8 +7,9 @@ import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
 import {OutrunDeployer} from "../../script/deploy/deployment/OutrunDeployer.sol";
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {EmptyMockLauncher} from "../upgradeable/mocks/EmptyMockLauncher.sol";
+import {RouterConfigInjectionHarness} from "./mocks/RouterConfigInjectionHarness.sol";
 
-contract OutstakeRouterDriftFixHarness is OutstakeScript {
+contract OutstakeRouterDriftFixHarness is RouterConfigInjectionHarness {
     function configure(address owner_, address deployer_, address outrunDeployer_) external {
         owner = owner_;
         deployer = deployer_;
@@ -78,8 +79,11 @@ contract OutstakeRouterDriftFixTest is Test {
         assertEq(outrunDeployer.getDeployed(address(script), salt).code.length, 0);
     }
 
-    function testApplyRouterConfigUsesEnvWhenPresent() external {
-        vm.setEnv("OUTRUN_ROUTER", vm.toString(address(0xABCD)));
+    // NOTE: no test in this file may write OUTRUN_ROUTER via `vm.setEnv`: the key is
+    // process-global and writes race across concurrent tests. The present branch is covered
+    // hermetically below via the `_routerConfigEnv` seam instead.
+    function testApplyRouterConfigUsesInjectedRouterWhenPresent() external {
+        script.setRouterConfigOverride(address(0xABCD));
 
         script.applyRouterConfig();
 
