@@ -3,71 +3,198 @@ pragma solidity ^0.8.35;
 
 /**
  * @title Outrun SY Stake Manager interface
- * @notice Manages locked positions and the shared wrap pool backed by one canonical SY and one uAsset.
+ * @notice Open-term CDP positions backed by one canonical SY and one uAsset: `stakeForGenesis` is
+ *      the only mint entrypoint and mints principal debt at value parity (the collateral value at
+ *      the mint-time exchange rate), floating interest accrues virtually per second
+ *      (timestamp-anchored, with the RAY zero-fee sentinel as the legal v1 default), and `redeem`
+ *      repays debt in two legs (principal burn + interest transfer). There is no liquidation, no
+ *      LTV surface, and no free-borrowing entrypoint.
  */
 interface IOutrunStakeManager {
     /**
-     * @notice Locked position accounting record.
-     * @dev `owner` controls draw and owner-redemption paths. `syStaked` is principal in SY units, and
-     * `UAssetMinted` is this position's outstanding uAsset debt. `deadline` closes draw at maturity and
-     * gates owner and keeper redemption.
+     * @notice Open-term CDP position accounting record.
+     * @dev `owner` controls the redeem path. `syStaked` is collateral principal in SY units.
+     * `principalDebt` is minted principal in uAsset units (the value-parity amount minted at the
+     * genesis open — it equals the collateral value at the mint-time rate up to the two floored
+     * conversion stages). `accruedInterest` is settled-but-unpaid interest in uAsset units,
+     * written only at settlement touchpoints (redeem). `lastRate` is the SP cumulative rate
+     * snapshot at this position's last interest settlement.
      */
     struct Position {
         address owner;
         uint256 syStaked;
-        uint256 UAssetMinted;
-        uint128 deadline;
+        uint256 principalDebt;
+        uint256 accruedInterest;
+        uint256 lastRate;
     }
 
+    // --------------------------------------------------------------------------
+    // Errors (position-manager-local; dependency errors propagate unchanged)
+    // --------------------------------------------------------------------------
+
+    /// @dev Reverts when an input amount or address is zero at any entrypoint guard, or when a
+    /// duty is sub-RAY (a negative-rate domain, zero included — the cumulative rate must never
+    /// move backwards).
     error ZeroInput();
-    /// @dev Reverts when a non-zero input is so small that floor/pro-rata conversion rounds the
-    /// resulting SY or uAsset amount down to zero (e.g. dust after a decimal downscale). Distinct from
-    /// `ZeroInput`, which means the caller passed a zero amount or zero address.
+    /// @dev Reverts when a non-zero SY input is so small that the two-stage floor conversion
+    /// rounds the minted uAsset down to zero. Distinct from `ZeroInput`, which means the caller
+    /// passed a zero amount or zero address.
     error DustRoundedToZero();
-    /// @dev Reverts when the SY `exchangeRate()` read returns zero; every conversion path fails
+    /// @dev Reverts when the SY `exchangeRate()` read returns zero; every pricing path fails
     /// closed with this named error at the single rate-reading home instead of a low-level
-    /// division panic or a misleading dust/nothing error.
+    /// division panic or a misleading dust error.
     error ZeroExchangeRate();
-    error PermissionDenied();
-    error LockTimeNotExpired(uint128 deadline);
-    /// @dev Reverts when drawUAsset/previewDrawUAsset runs at or after the position deadline: from the
-    /// deadline on, draw is closed and redemption opens (redeem/keepRedeem guard the `< deadline` early
-    /// side with LockTimeNotExpired), so a matured position has only the redeem paths to exit.
-    error LockTimeExpired(uint128 deadline);
-    /// @dev Reverts when `lockupDays` is so large that `block.timestamp + lockupDays * 1 days` no
-    /// longer fits in uint128, which would let the deadline cast wrap into the past and bypass the lock.
-    error LockupDaysOutOfRange(uint128 lockupDays);
+    /// @dev Reverts when a stake amount is below the configured `minStake`.
     error MinStakeInsufficient(uint256 minStake);
+    /// @dev Reverts when a caller is not the recorded owner of a position (redeem) or the position
+    /// is missing.
     error PositionAccessDenied();
+    /// @dev Reverts when a requested redemption exceeds the position's staked SY.
     error ExceedsPositionBalance(uint256 requested, uint256 available);
-    error ExceedsPositionDebt(uint256 requested, uint256 available);
-    /// @dev Reverts when a position's staked SY value is below its uAsset debt face value, so a keeper
-    /// redemption would pay the keeper more SY than the position's proportional share covers.
-    error InsufficientSyCollateral();
-    error ExceedsWrapDebt(uint256 requested, uint256 available);
-    /// @dev Reverts when the wrap pool's SY is below its uAsset debt face value at the current exchange
-    /// rate, so a keeper wrap redemption would pay out more SY than the pool holds. Keeper-only wrap
-    /// redemptions use all-or-nothing semantics (no pro-rata partial payout): the keeper is trusted and
-    /// must not bear a loss-making redemption.
-    error WrapPoolUndercollateralized();
-    error NothingToDraw();
+    /// @dev Reverts when a partial redeem's ceiled principal portion would consume the entire
+    /// remaining principal; the caller must use a full redeem instead.
     error PartialRedeemMustLeaveDebt();
+    /// @dev Reverts when a direct-SY redemption output is below the caller's minimum.
     error InsufficientTokenOut(uint256 actual, uint256 minExpected);
-    /// @dev Reverts when cached decimals diverge from live `SY.assetInfo().assetDecimals` or `uAsset.decimals()` during upgrade; indicates SY/uAsset was upgraded to a different decimals domain which would silently mis-scale all sy<->uAsset conversions by 10**delta.
+    /// @dev Reverts when cached decimals diverge from live `SY.assetInfo().assetDecimals` or
+    /// `uAsset.decimals()` during upgrade; indicates SY/uAsset was upgraded to a different decimals
+    /// domain which would silently mis-scale all sy<->uAsset conversions by 10**delta.
     error DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset);
+    /// @dev Reverts when `setDuty` or `initialize` exceeds the duty cap (15% annual equivalent
+    /// per-second rate).
+    error DutyCap(uint256 newDuty);
+    /// @dev Reverts when the uAsset amount minted by `stakeForGenesis` is below the caller's
+    /// `minUAssetMinted` floor.
+    error InsufficientUAssetMinted(uint256 mintedUAsset, uint256 minMinted);
+    /// @dev Reverts when the uAsset amount minted by `stakeForGenesis` exceeds the launcher's
+    /// uint128 amount domain (checked before any allowance is granted to the launcher).
+    error InvalidParam();
+    /// @dev Reverts when `stakeForGenesis` is called while `genesisLauncher` is the zero address
+    /// (deployment default, or the owner disabled the entrypoint by resetting it to zero).
+    error GenesisLauncherNotSet();
+    // GenesisUAssetNotConsumed is the single-source physical-gate error defined in GenesisGateLib
+    // (SP reverts via GenesisGateLib.assertFullConsumption); not redeclared here to avoid dual-source drift.
+
+    // --------------------------------------------------------------------------
+    // State-changing entrypoints
+    // --------------------------------------------------------------------------
+
+    /**
+     * @notice Opens a CDP position and hands the minted uAsset to the genesis launcher inside the
+     * same transaction (the physical genesis gate). This is the only mint entrypoint.
+     * @dev Value-parity pricing: the minted amount is the SY collateral converted
+     * `SY -> canonical asset -> uAsset` with both stages floored — no LTV scaling segment — so the
+     * minted debt is strictly <= the collateral value at the mint-time exchange rate (backing
+     * invariant). The minted uAsset is minted to the SP itself, approved to `genesisLauncher` for
+     * exactly the minted amount, and forwarded via
+     * `IMemeverseLauncher.genesis(verseId, uint128(minted), positionOwner)`; after `genesis`
+     * returns, the SP's uAsset balance must be back at its pre-mint baseline and the launcher
+     * allowance zero, else `GenesisUAssetNotConsumed` reverts everything (the minted funds can
+     * only reach the launcher within this transaction — no custody, no transfer-back, no residue).
+     * Genesis-specific failure surfaces: `GenesisLauncherNotSet` when the launcher is the zero
+     * address (entry disabled), `InsufficientUAssetMinted` when the mint is below the caller's
+     * floor, `InvalidParam` when the mint exceeds type(uint128).max, and the mint still draws on
+     * the SP's minter record (`ReachMintCap` propagates). `verseId` is an opaque launcher-assigned
+     * id forwarded unchanged. The created position is an ordinary CDP position afterwards (redeem
+     * two-leg repayment, per-second accrual — no extra state, no lockup).
+     * @param amountInSY Amount of SY to stake. Must be > 0 and >= minStake.
+     * @param positionOwner Address that will own the position (redeem rights); also the user
+     * credited by the launcher.
+     * @param verseId Opaque launcher-assigned identifier for the target verse; not validated here.
+     * @param minUAssetMinted Minimum acceptable minted uAsset; `0` means no slippage protection.
+     * @return positionId Identifier of the created position.
+     */
+    function stakeForGenesis(uint256 amountInSY, address positionOwner, uint256 verseId, uint256 minUAssetMinted)
+        external
+        returns (uint256 positionId);
+
+    /**
+     * @notice Redeems SY collateral by repaying the position's debt in two legs, at any time.
+     * @dev Position-owner path, no maturity gate. Settles interest first, then splits the debt
+     * pro-rata by SY share: full redeem repays the exact remaining legs; partial redeem ceils
+     * both legs and must leave principal debt (`PartialRedeemMustLeaveDebt`). Repayment order:
+     * the interest leg is transferred from the caller to the treasury (skipped when zero, never
+     * burned, never touching the minter ledger), then the principal leg is burned via
+     * `uAsset.repay(msg.sender, principalPortion)`, which also reduces the SP minter's
+     * `amountInMinted`. Caller prerequisite: hold and approve the SP contract at least
+     * `principalPortion + interestPortion` uAsset (both legs share that allowance); shortfall
+     * reverts atomically with the dependency's error. Direct SY output enforces `minTokenOut`
+     * locally and never reads the exchange rate (the owner exit channel is oracle-independent);
+     * other tokens go through `SY.redeem`.
+     * @param positionId Identifier of the position to redeem from.
+     * @param syRedeemed Amount of SY collateral to redeem.
+     * @param receiver Address receiving the redemption proceeds.
+     * @param tokenOut Token requested on redemption.
+     * @param minTokenOut Minimum acceptable token output from redemption.
+     * @return principalBurned Amount of uAsset burned from the caller (principal leg).
+     * @return interestPaid Amount of uAsset transferred to the treasury (interest leg).
+     * @return amountTokenOut Amount of output token delivered to the receiver.
+     */
+    function redeem(uint256 positionId, uint256 syRedeemed, address receiver, address tokenOut, uint256 minTokenOut)
+        external
+        returns (uint256 principalBurned, uint256 interestPaid, uint256 amountTokenOut);
+
+    // --------------------------------------------------------------------------
+    // Owner-governed parameter setters
+    // --------------------------------------------------------------------------
+
+    /**
+     * @notice Adjusts the per-second duty (segmented effect).
+     * @dev Rejects sub-RAY values, zero included (`ZeroInput` — the cumulative rate must never
+     *      move backwards; RAY itself is the zero-fee sentinel and a legal rate) and values above
+     *      the duty cap (`DutyCap`). Settles the cumulative rate to the current timestamp under the
+     *      old duty before storing the new one, so seconds before the change accrue at the old duty
+     *      and seconds after at the new duty; positions need no migration.
+     * @param newDuty New duty, RAY per-second point value.
+     */
+    function setDuty(uint256 newDuty) external;
+
+    /**
+     * @notice Updates the genesis launcher target of `stakeForGenesis`.
+     * @dev Owner-only; accepts any address including zero — zero is the deployment default and
+     * doubles as the kill switch that disables the `stakeForGenesis` entrypoint
+     * (`GenesisLauncherNotSet`). No code-size validation is performed at configuration time
+     * (dependency level mirrors `setProtocolTreasury`); runtime safety comes from the
+     * strict full-consumption post-condition inside `stakeForGenesis`.
+     * Operational invariant: `genesisLauncher` must equal `OutrunRouter.memeverseLauncher()` for the two genesis gates
+     * to target one launcher; a single-side rotation makes router path-B entries and previews revert fail-closed
+     * (`GenesisLauncherMismatch`), while the residual silent surface is router path-A (router launcher) versus direct-SP (SP launcher) targeting different launchers. Rotation must be atomic — update this value and
+     * `router.memeverseLauncher` in the same governance transaction and verify
+     * `genesisLauncher() == router.memeverseLauncher()` before opening new genesis.
+     * @param genesisLauncher_ New launcher address (zero disables the entrypoint).
+     */
+    function setGenesisLauncher(address genesisLauncher_) external;
+
+    /**
+     * @notice Updates the minimum SY stake required for opening a position.
+     * @param minStake_ New minimum stake amount; must be > 0.
+     */
+    function setMinStake(uint256 minStake_) external;
+
+    /**
+     * @notice Updates the treasury receiving interest payments.
+     * @param protocolTreasury_ Address of the new protocol treasury; must be non-zero.
+     */
+    function setProtocolTreasury(address protocolTreasury_) external;
+
+    // --------------------------------------------------------------------------
+    // Views: tokens, parameters, and interest state
+    // --------------------------------------------------------------------------
 
     /**
      * @notice Returns the SY token handled by the staking manager.
-     * @dev Router flows treat this as the canonical SY for this manager and do not accept a separate SY address.
+     * @dev Router flows treat this as the canonical SY for this manager and do not accept a
+     * separate SY address.
      * @return Address of the standardized yield token.
      */
     // `SY` is part of the external protocol ABI; changing it would change the function selector.
-    // slither-disable-next-line naming-convention
+    // solhint-disable-next-line naming-convention
     function SY() external view returns (address);
 
     /**
      * @notice Returns the universal asset minted against stakes.
-     * @dev The stake manager is the uAsset minter; mint cap and repay accounting remain minter-scoped in uAsset.
+     * @dev The stake manager is the uAsset minter; mint cap and repay accounting remain
+     * minter-scoped in uAsset.
      * @return Address of the uAsset contract.
      */
     function uAsset() external view returns (address);
@@ -79,343 +206,188 @@ interface IOutrunStakeManager {
     function minStake() external view returns (uint256);
 
     /**
-     * @notice Returns the revenue pool address that receives harvested yield.
-     * @return Revenue pool address.
+     * @notice Returns the treasury address that receives interest payments.
+     * @dev Sole destination of the redeem interest leg.
+     * @return Protocol treasury address.
      */
-    function revenuePool() external view returns (address);
+    function protocolTreasury() external view returns (address);
 
     /**
-     * @notice Returns the total SY currently tracked across positions and wrap pool.
-     * @dev Includes locked-position principal and wrap-pool principal; it is not only user-owned unlocked SY.
-     * @return Total SY held as staking principal.
+     * @notice Returns the per-second duty in RAY (1e27 = zero-fee sentinel, the v1 default).
+     * @return Duty, RAY per-second point value.
      */
-    function syTotalStaking() external view returns (uint256);
+    function duty() external view returns (uint256);
 
     /**
-     * @notice Returns the SY principal currently allocated to the wrap pool.
-     * @dev This excludes SY locked only inside individual positions and is used with `wrapUAssetDebt` for harvest.
-     * @return Total wrap pool SY balance tracked by the contract.
+     * @notice Returns the genesis launcher target of `stakeForGenesis`.
+     * @dev Zero means the entrypoint is disabled (deployment default; the owner resets it to
+     * zero to disable the gate).
+     * @return Genesis launcher address, or zero when disabled.
      */
-    function syWrapStaking() external view returns (uint256);
+    function genesisLauncher() external view returns (address);
 
     /**
-     * @notice Returns the outstanding wrap-pool uAsset debt.
-     * @dev Aggregate principal debt for the shared wrap pool; individual wrap users do not receive position ids.
-     * @return Total uAsset debt minted against wrap stake deposits.
+     * @notice Returns the settled cumulative rate (stored value, not extrapolated).
+     * @return Rate, RAY cumulative value.
      */
-    function wrapUAssetDebt() external view returns (uint256);
+    function rate() external view returns (uint256);
 
     /**
-     * @notice Returns the keeper allowed to execute keeper-only redemptions.
-     * @dev Both keeper-only paths burn keeper-provided uAsset. `keepRedeem` splits released SY between the keeper
-     * receiver and position owner; `keepWrapRedeem` pays released wrap-pool SY directly to its receiver.
-     * @return Address with keeper privileges.
+     * @notice Returns the timestamp of the last rate settlement.
+     * @return Last settled timestamp.
      */
-    function keeper() external view returns (address);
+    function rateLastSettledAt() external view returns (uint256);
+
+    /**
+     * @notice Returns the cumulative rate extrapolated to the current timestamp without writing state.
+     * @dev Same closed-form compounding as the settlement touchpoints
+     *      (`rmul(rpow(duty, block.timestamp - rateLastSettledAt), rate)`), so same-second
+     *      preview and execution agree. At the zero-fee duty (1e27) this equals the stored rate.
+     * @return Extrapolated cumulative rate.
+     */
+    function currentRate() external view returns (uint256);
 
     /**
      * @notice Returns the stored data for a staking position.
      * @dev A zero owner identifies a missing/deleted position in the current implementation.
      * @param positionId Identifier of the position to inspect.
      * @return owner Owner of the position.
-     * @return syStaked SY principal currently staked in the position.
-     * @return UAssetMinted Current outstanding uAsset debt recorded against the position.
-     * @return deadline Timestamp when the lockup expires.
+     * @return syStaked SY collateral currently staked in the position.
+     * @return principalDebt Minted principal debt in uAsset units.
+     * @return accruedInterest Settled unpaid interest in uAsset units.
+     * @return lastRate Rate snapshot at the position's last settlement.
      */
     function positions(uint256 positionId)
         external
         view
-        returns (address owner, uint256 syStaked, uint256 UAssetMinted, uint128 deadline);
+        returns (address owner, uint256 syStaked, uint256 principalDebt, uint256 accruedInterest, uint256 lastRate);
 
     /**
-     * @dev Preview / executor divergence matrix — intentional floor/ceil:
-     * Rounding is correct by design: `_syToAsset` (via `SYUtils.syToAsset`) floors to avoid over-minting;
-     * `_assetToSyUp` (via `SYUtils.assetToSyUp` + `_scaleUAssetToCanonicalAsset` ceil `(a-1)/f+1`) ceils to
-     * guarantee coverage (`ceil >= floor`; harvest `syWrap - ceil(debt)` may under-harvest dust, never over-harvest).
-     * Dust handling is intentionally divergent between quote and execution so callers can pre-check dust off-chain:
-     * - `previewStake` returns 0 when floor zeroes dust; `stake` reverts `DustRoundedToZero` for the same input (mirrors
-     *   `previewDrawUAsset` returning 0 vs `drawUAsset` reverting `NothingToDraw`).
-     * - `previewWrapStake` reverts `DustRoundedToZero` on dust (mirrors `wrapStake`); `previewKeepRedeem`/`previewWrapRedeem`
-     *   revert `DustRoundedToZero` when `syRedeemed==0`/`keeperPrincipalSY==0`/`amountInSY==0` (keeper tails must be
-     *   owner-cleared via `redeem`).
-     * - An exactly-zero `SY.exchangeRate()` always reverts `ZeroExchangeRate` at the shared `_currentExchangeRate`
-     *   read home, before any dust check; callers must not treat a 0 preview as stakeable (`require UAssetMintable > 0`).
+     * @notice Returns the position's unsettled interest extrapolated to the current timestamp.
+     * @dev Read-only extrapolation (`principalDebt * (currentRate - lastRate) / 1e27`, single
+     *      floor); never writes state. Zero for a missing id. Under the zero-fee duty (1e27)
+     *      this is identically zero.
+     * @param positionId Identifier of the position to inspect.
+     * @return Unsettled interest in uAsset units.
      */
+    function pendingInterest(uint256 positionId) external view returns (uint256);
 
     /**
-     * @notice Previews how much uAsset a direct stake would mint.
-     * @dev Quote-only. Uses current `SY.exchangeRate()` and the same conversion direction as `stake`, but does
-     * not reserve cap, transfer SY, create a position, or apply slippage protection.
-     * Reverts `MinStakeInsufficient` when `amountInSY < minStake()`.
+     * @notice Returns the position's total debt: principal + settled interest + pending interest.
+     * @param positionId Identifier of the position to inspect.
+     * @return Total debt in uAsset units, extrapolated to the current timestamp.
+     */
+    function positionDebt(uint256 positionId) external view returns (uint256);
+
+    // --------------------------------------------------------------------------
+    // Preview family (quote-only, mirrors executor failure surfaces)
+    // --------------------------------------------------------------------------
+
+    /**
+     * @notice Previews how much uAsset a genesis open would mint.
+     * @dev Quote-only: reads the exchange rate, applies the same two-stage floor conversion as
+     * `stakeForGenesis` (value parity, no scaling segment), and checks `minStake`; it does not
+     * reserve mint cap, transfer SY, or create a position. Intentionally diverges from the
+     * executor on dust: `previewStake` returns 0 where floor conversion zeroes the output, while
+     * `stakeForGenesis` reverts `DustRoundedToZero` for the same input — callers must not treat a
+     * 0 return as stakeable. Reverts `ZeroInput` when `amountInSY == 0`, `MinStakeInsufficient`
+     * when `amountInSY < minStake()`, and `ZeroExchangeRate` when the rate reads zero. The
+     * genesis executor guards (`minUAssetMinted`, uint128 bound, launcher gate, consumption
+     * assertion) are not visible here.
      * @param amountInSY Amount of SY to stake.
-     * @return UAssetMintable Amount of uAsset expected to be minted; 0 when the floor conversion zeroes it.
+     * @return UAssetMintable Quoted uAsset amount that would be minted; 0 when floor conversion
+     * zeroes it. Named distinctly from the executor's `mintedUAsset` return to keep quote and
+     * actual-minted separate at call sites.
      */
     function previewStake(uint256 amountInSY) external view returns (uint256 UAssetMintable);
 
     /**
-     * @notice Previews how much uAsset a wrap stake would mint.
-     * @dev Quote-only. Uses current `SY.exchangeRate()` and the same conversion direction as `wrapStake`, but
-     * does not reserve cap, transfer SY, or update wrap-pool debt. Reverts `ZeroInput` when `amountInSY == 0`.
-     * @param amountInSY Amount of SY to add to the wrap pool.
-     * @return UAssetMintable Amount of uAsset expected to be minted.
-     */
-    function previewWrapStake(uint256 amountInSY) external view returns (uint256 UAssetMintable);
-
-    /**
-     * @notice Previews additional uAsset drawable from an existing position.
-     * @dev Quote-only. Returns only the current value above the position's existing debt; it does not update
-     * position debt or reserve uAsset mint cap. Reverts `PositionAccessDenied` when the position is missing,
-     * `LockTimeExpired` once `block.timestamp >= deadline` (draw is lockup-window-only, mirroring `drawUAsset`),
-     * and `ZeroExchangeRate` when the rate reads zero. Returns 0 when the current value does not exceed the
-     * position's existing debt (mirrors `drawUAsset` reverting `NothingToDraw`).
-     * @param positionId Identifier of the position to inspect.
-     * @return UAssetMintable Additional uAsset currently drawable from the position.
-     */
-    function previewDrawUAsset(uint256 positionId) external view returns (uint256 UAssetMintable);
-
-    /**
-     * @notice Previews a position redemption into SY or another output token.
-     * @dev Quote-only. Full redeem burns all remaining position debt; partial redeem uses ceiling rounding and
-     * rejects any partial path that would consume all remaining debt. Token output is either direct SY or the
-     * current `SY.previewRedeem` result for `tokenOut`. Reverts `PositionAccessDenied` when the position is
-     * missing, `LockTimeNotExpired` before maturity, `ZeroInput` when `syRedeemed == 0`,
-     * `ExceedsPositionBalance` when `syRedeemed > position.syStaked`, and `PartialRedeemMustLeaveDebt` when a
-     * partial quote would consume all remaining debt.
+     * @notice Previews a position redemption's two repayment legs and token output.
+     * @dev Quote-only, mirrors `redeem`'s amount/existence checks and rounding: full redeem
+     * returns the exact remaining debt legs; partial redeem ceils both legs pro-rata and rejects
+     * any partial that would consume all remaining principal (`PartialRedeemMustLeaveDebt`).
+     * Interest is extrapolated to the current timestamp without writing state. Direct-SY output never
+     * reads the exchange rate (the owner exit channel is oracle-independent). Reverts
+     * `PositionAccessDenied` when the position is missing, `ZeroInput` when `syRedeemed == 0`,
+     * `ExceedsPositionBalance` when `syRedeemed > position.syStaked`.
      * @param positionId Identifier of the position being redeemed.
-     * @param syRedeemed Amount of SY principal to redeem from the position.
-     * @param tokenOut Token requested on redemption.
-     * @return UAssetBurned Amount of uAsset expected to be burned.
-     * @return amountTokenOut Amount of output token expected to be received.
+     * @param syRedeemed Amount of SY collateral to redeem.
+     * @param tokenOut Token requested on redemption (SY itself or another token via SY.redeem).
+     * @return principalPortion Principal leg that would be burned.
+     * @return interestPortion Interest leg that would be transferred to the treasury.
+     * @return amountTokenOut Token output expected by the receiver.
      */
     function previewRedeem(uint256 positionId, uint256 syRedeemed, address tokenOut)
         external
         view
-        returns (uint256 UAssetBurned, uint256 amountTokenOut);
+        returns (uint256 principalPortion, uint256 interestPortion, uint256 amountTokenOut);
+
+    // --------------------------------------------------------------------------
+    // Events
+    // --------------------------------------------------------------------------
 
     /**
-     * @notice Previews the SY a keeper would receive from keepWrapRedeem.
-     * @dev Quote-only. Face value is the SY amount represented by the burned uAsset debt at the current exchange
-     * rate; the payout rounds down and full-debt coverage rounds up. Reverts `ZeroInput` when `amountInUAsset == 0`,
-     * `ExceedsWrapDebt` when the amount exceeds `wrapUAssetDebt()`, `ZeroExchangeRate` when the rate reads zero,
-     * `WrapPoolUndercollateralized` when the wrap pool is undercollateralized, and `DustRoundedToZero` when the
-     * payout rounds to zero. Does not check keeper permission; callers pranking as keeper can match this quote
-     * against keepWrapRedeem execution.
-     * @param amountInUAsset uAsset amount the keeper would burn.
-     * @return amountInSY SY amount the keeper would receive.
-     */
-    function previewWrapRedeem(uint256 amountInUAsset) external view returns (uint256 amountInSY);
-
-    /**
-     * @notice Previews the SY split for a keeper redemption of a matured position.
-     * @dev Quote-only. Mirrors `keepRedeem`'s keeper/owner SY split and failure paths without checking keeper
-     * permission, burning uAsset, or changing state. Reverts if the position is missing, not matured, the amount
-     * is zero or exceeds position debt, the position is undercollateralized, the SY exchange rate reads zero, or
-     * the proportional SY rounds to dust or the keeper's debt-equivalent SY rounds to dust.
-     * @param positionId Identifier of the position being redeemed.
-     * @param amountInUAsset Amount of uAsset the keeper would burn.
-     * @return keeperPrincipalSY Debt-equivalent SY the keeper would receive.
-     * @return ownerExcessSY Excess SY the position owner would receive.
-     */
-    function previewKeepRedeem(uint256 positionId, uint256 amountInUAsset)
-        external
-        view
-        returns (uint256 keeperPrincipalSY, uint256 ownerExcessSY);
-
-    /**
-     * @notice Stakes SY into a locked position and mints uAsset to a chosen receiver.
-     * @dev Pulls SY from `msg.sender`, creates a locked position owned by `positionOwner`, and mints initial debt
-     * to `uAssetReceiver`. The initial debt is current SY asset value, not a fixed 1:1 amount.
-     * @param amountInSY Amount of SY to stake.
-     * @param lockupDays Number of days the position remains locked. `0` creates an immediately
-     * redeemable position. A value so large that the deadline would exceed uint128 reverts.
-     * @param positionOwner Address that owns the created position.
-     * @param uAssetReceiver Address receiving the initially minted uAsset.
-     * @return positionId Identifier of the created position.
-     * @return mintedUAsset Amount of uAsset minted for the new position.
-     */
-    function stake(uint256 amountInSY, uint128 lockupDays, address positionOwner, address uAssetReceiver)
-        external
-        returns (uint256 positionId, uint256 mintedUAsset);
-
-    /**
-     * @notice Mints newly drawable uAsset from an existing position.
-     * @dev Position-owner path. Uses current SY asset value to mint only appreciation above existing position debt.
-     * Draw is lockup-window-only: reverts `LockTimeExpired` once `block.timestamp >= deadline` — a matured
-     * position exits through redemption instead.
-     * @param positionId Identifier of the position to draw against.
-     * @param uAssetReceiver Address receiving the minted uAsset.
-     * @return mintedUAsset Additional (per-call incremental) uAsset minted to the uAssetReceiver; not the position's
-     * outstanding total debt.
-     */
-    function drawUAsset(uint256 positionId, address uAssetReceiver) external returns (uint256 mintedUAsset);
-
-    /**
-     * @notice Adds SY to the wrap pool and mints uAsset to the uAssetReceiver.
-     * @dev Pulls SY from `msg.sender`, increases shared wrap-pool principal and debt, and does not create a
-     * per-user position record.
-     * @param amountInSY Amount of SY to add to the wrap pool.
-     * @param uAssetReceiver Address receiving the minted uAsset.
-     * @return mintedUAsset Amount of uAsset minted.
-     */
-    function wrapStake(uint256 amountInSY, address uAssetReceiver) external returns (uint256 mintedUAsset);
-
-    /**
-     * @notice Redeems part or all of a position after lock expiry.
-     * @dev Position-owner path. Burns uAsset from the caller via `repay`. Full redeem burns all remaining
-     * position debt; partial redeem uses ceiling rounding and rejects any partial path that would consume all
-     * remaining debt. Enforces `minTokenOut` on direct SY or downstream SY redemption.
-     * Caller prerequisite: the position owner must first approve this position contract to spend uAsset for the
-     * debt being repaid (repay's msg.sender is the position contract); see `keepRedeem`'s dev note.
-     * @param positionId Identifier of the position to redeem from.
-     * @param syRedeemed Amount of SY principal to redeem.
-     * @param receiver Address receiving the redemption proceeds.
-     * @param tokenOut Token requested on redemption.
-     * @param minTokenOut Minimum acceptable token output from redemption.
-     * @return UAssetBurned Amount of uAsset burned from the caller.
-     * @return amountTokenOut Amount of output token delivered to the receiver.
-     */
-    function redeem(uint256 positionId, uint256 syRedeemed, address receiver, address tokenOut, uint256 minTokenOut)
-        external
-        returns (uint256 UAssetBurned, uint256 amountTokenOut);
-
-    /**
-     * @notice Keeper burns its own uAsset to redeem wrap-pool SY at face value, paid out in SY only. Face value is
-     * the SY amount represented by the burned uAsset debt at the current exchange rate; the payout rounds down and
-     * full-debt coverage rounds up.
-     * @dev Keeper-only path; reverts PermissionDenied for any other caller. Reverts WrapPoolUndercollateralized
-     * on an undercollateralized pool — the keeper is trusted and must not bear a loss-making redemption
-     * (consistent with keepRedeem's InsufficientSyCollateral revert). Replaces the former public wrapRedeem,
-     * which was removed in favor of this keeper-only all-or-nothing redemption. Output is always SY: no
-     * downstream SY.redeem conversion and no minTokenOut slippage guard.
-     * @param amountInUAsset uAsset amount the keeper burns. Must be > 0 and <= wrapUAssetDebt.
-     * @param receiver Address receiving the SY.
-     * @return amountInSY SY amount sent to the receiver.
-     */
-    function keepWrapRedeem(uint256 amountInUAsset, address receiver) external returns (uint256 amountInSY);
-
-    /**
-     * @notice Lets the keeper redeem a matured position by burning keeper-provided uAsset.
-     * @dev Keeper-only path. Burns keeper-provided uAsset, sends floor-converted debt-equivalent SY to
-     * `receiver`, and sends any remaining released SY to the position owner. Reverts with
-     * `InsufficientSyCollateral` if the position is undercollateralized or the keeper's debt-equivalent
-     * share would exceed the proportional SY released (no capping). Reverts with `DustRoundedToZero`
-     * if amountInUAsset is so small that syRedeemed or keeperPrincipalSY rounds to zero — keeper tails
-     * below the floor threshold cannot be cleared via keepRedeem and must be owner-cleared via
-     * redeem(positionId, remainingSY).
-     * Keeper prerequisite: the keeper must first approve this position contract to spend uAsset for
-     * `amountInUAsset` (repay's msg.sender is the position contract); see `keepWrapRedeem`'s dev note.
-     * @param positionId Identifier of the position being redeemed.
-     * @param amountInUAsset Amount of uAsset the keeper burns.
-     * @param receiver Address receiving the keeper principal in SY.
-     * @return UAssetBurned Amount of uAsset burned by the keeper.
-     * @return keeperPrincipalSY Debt-equivalent SY sent to the keeper receiver.
-     * @return ownerExcessSY Excess SY sent back to the position owner.
-     */
-    function keepRedeem(uint256 positionId, uint256 amountInUAsset, address receiver)
-        external
-        returns (uint256 UAssetBurned, uint256 keeperPrincipalSY, uint256 ownerExcessSY);
-
-    /**
-     * @notice Harvests wrap-pool yield above outstanding wrap debt to the revenue pool.
-     * @dev Owner-only path. Harvestable yield is wrap-pool SY exceeding debt-equivalent SY at the current
-     * exchange rate; wrap uAsset debt is unchanged.
-     * @param tokenOut Token requested for harvested yield.
-     * @param minTokenOut Minimum acceptable token output from the SY redemption.
-     * @return amountTokenOut Amount of harvested token sent to the revenue pool.
-     */
-    function harvestWrapYield(address tokenOut, uint256 minTokenOut) external returns (uint256 amountTokenOut);
-
-    /**
-     * @notice Updates the minimum SY stake required for opening a position.
-     * @dev Only the owner may update this threshold.
-     * @param minStake_ New minimum stake amount.
-     */
-    function setMinStake(uint256 minStake_) external;
-
-    /**
-     * @notice Updates the revenue pool receiving harvested wrap yield.
-     * @dev Only the owner may update this destination address.
-     * @param revenuePool_ Address of the new revenue pool.
-     */
-    function setRevenuePool(address revenuePool_) external;
-
-    /**
-     * @notice Updates the keeper address.
-     * @dev Only the owner may grant keeper permissions.
-     * @param keeper_ Address granted keeper permissions.
-     */
-    function setKeeper(address keeper_) external;
-
-    /**
-     * @notice Emitted when a new locked position is created by `stake`.
+     * @notice Emitted when a new position is created by `stakeForGenesis`, immediately followed by
+     * `StakeForGenesis` (the two events corroborate each other).
      * @param positionId Identifier of the newly created position.
-     * @param owner Owner of the created position.
+     * @param owner Owner of the created position (may differ from the funder).
      * @param amountInSY Amount of SY staked.
-     * @param mintedUAsset Amount of uAsset minted for the new position, denominated in uAsset decimals
-     * (NOT SY or canonical asset units). Equals the position's initial `UAssetMinted` storage field
-     * (its initial debt) at stake time.
-     * @param deadline Timestamp when the position lockup expires.
+     * @param mintedUAsset Amount of uAsset minted at value parity, in uAsset decimals — the
+     * position's initial `principalDebt`.
      */
-    event Stake(
-        uint256 indexed positionId, address indexed owner, uint256 amountInSY, uint256 mintedUAsset, uint256 deadline
+    event Stake(uint256 indexed positionId, address indexed owner, uint256 amountInSY, uint256 mintedUAsset);
+
+    /**
+     * @notice Emitted after the genesis launcher consumed the minted uAsset in full and the
+     * post-condition passed; always follows the same position's `Stake` event.
+     * @param positionId Identifier of the newly created genesis position.
+     * @param positionOwner Owner of the position and the user credited by the launcher.
+     * @param verseId Opaque launcher-assigned identifier forwarded unchanged.
+     * @param mintedUAsset Amount of uAsset minted and consumed by the launcher (= the position's
+     * initial `principalDebt`).
+     */
+    event StakeForGenesis(
+        uint256 indexed positionId, address indexed positionOwner, uint256 verseId, uint256 mintedUAsset
     );
 
     /**
-     * @notice Emitted when a position owner draws additional uAsset from accrued value.
-     * @param positionId Identifier of the position drawn against.
-     * @param uAssetReceiver Address receiving the newly minted uAsset.
-     * @param mintedUAsset Incremental uAsset minted by this call (the appreciation above existing
-     * debt), NOT the position's outstanding total debt — after this call the total is
-     * `position.UAssetMinted`, which was reset to the position's current uAsset value.
+     * @notice Emitted after a redeem completes its position update, two-leg repayment, and output.
+     * @param positionId Identifier of the redeemed position.
+     * @param owner Position owner who passed the owner guard (`msg.sender`).
+     * @param syRedeemed SY collateral redeemed.
+     * @param principalBurned uAsset burned by the principal leg.
+     * @param interestPaid uAsset transferred to the treasury by the interest leg.
+     * @param receiver Recipient of the redemption proceeds.
+     * @param tokenOut Token delivered on redemption.
+     * @param amountTokenOut Amount of `tokenOut` delivered.
      */
-    event DrawUAsset(uint256 indexed positionId, address indexed uAssetReceiver, uint256 mintedUAsset);
-
     event Redeem(
         uint256 indexed positionId,
         address indexed owner,
         uint256 syRedeemed,
-        uint256 UAssetBurned,
+        uint256 principalBurned,
+        uint256 interestPaid,
         address indexed receiver,
         address tokenOut,
         uint256 amountTokenOut
     );
 
     /**
-     * @notice Emitted when SY is added to the shared wrap pool and uAsset is minted.
-     * @param amountInSY Amount of SY added to the wrap pool.
-     * @param mintedUAsset Incremental uAsset minted by this call and added to `wrapUAssetDebt`;
-     * wrap-pool debt is aggregate, so there is no per-position total here.
-     * @param uAssetReceiver Address receiving the minted uAsset.
+     * @notice Emitted when the duty is adjusted; the old duty's segmented settlement has
+     * already run when this is emitted.
      */
-    event WrapStake(uint256 amountInSY, uint256 mintedUAsset, address indexed uAssetReceiver);
-
-    event KeepWrapRedeem(address indexed keeper, address indexed receiver, uint256 amountInUAsset, uint256 amountInSY);
+    event SetDuty(uint256 oldDuty, uint256 newDuty);
 
     /**
-     * @notice Emitted when a keeper redeems a matured position with keeper-provided uAsset.
-     * @param positionId Identifier of the position redeemed.
-     * @param owner Owner of the redeemed position; receives the excess SY.
-     * @param UAssetBurned Amount of uAsset burned by the keeper.
-     * @param receiver Address receiving the keeper principal in SY.
-     * @param keeperPrincipalSY Debt-equivalent SY sent to the keeper receiver.
-     * @param ownerExcessSY Excess SY sent back to the position owner.
-     * @dev The total SY released from the position is intentionally not a separate field: it always
-     * equals `keeperPrincipalSY + ownerExcessSY`, so indexers recover it from those two fields.
+     * @notice Emitted when the genesis launcher target changes; the zero address is a legal
+     * value that disables the `stakeForGenesis` entrypoint.
      */
-    event KeepRedeem(
-        uint256 indexed positionId,
-        address indexed owner,
-        uint256 UAssetBurned,
-        address indexed receiver,
-        uint256 keeperPrincipalSY,
-        uint256 ownerExcessSY
-    );
+    event SetGenesisLauncher(address indexed oldLauncher, address indexed newLauncher);
 
-    event HarvestWrapYield(
-        address indexed receiver, address indexed tokenOut, uint256 amountInSY, uint256 amountTokenOut
-    );
-
+    /// @notice Emitted when the minimum stake is updated; the prior value follows from the
+    /// previous event.
     event SetMinStake(uint256 minStake);
-    event SetRevenuePool(address indexed revenuePool);
-    event SetKeeper(address indexed keeper);
+
+    /// @notice Emitted when the interest-leg treasury destination is updated.
+    event SetProtocolTreasury(address indexed protocolTreasury);
 }

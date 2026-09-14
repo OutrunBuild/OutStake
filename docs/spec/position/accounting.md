@@ -1,329 +1,314 @@
 # OutStake Accounting
 
+> 状态：v1 语义（genesis-only、面值铸造、0% 利率默认、无清算）已落地。本文是 position 层 v1 账务语义的唯一真源，描述现行 `OutrunStakingPositionUpgradeable` 行为：唯一铸造入口 `stakeForGenesis` 按面值（价值平价）铸出，债务按 duty 域计息（v1 全族默认零费），清算与 CollSurplus 不存在。
+
 ## 1. 文档目的
 
-本文档说明 `OutStake` 当前实现中的核心账务规则，并明确 mixed-decimals 双段换算语义，包括 `uAsset` minter-cap、position debt、wrap 池、汇率换算、赎回按比例销债、keeper redeem 分账与 wrap yield harvest。
+本文档说明 position 层 v1 的核心账务规则：`uAsset` minter-cap 台账、仓位债务（本金 + 应计利息）、浮动利率 virtual accrual 计息数学（duty 域、零费放行）、参数面、`redeem` 按比例双腿销债、协议金库、mixed-decimals 双段换算语义、三行对账式与背书不变式、错误/事件真源。状态机表达见 [state-machines.md](./state-machines.md)。
 
 ## 1.1 Upgradeable accounting readiness
 
-当前 implementation 使用 proxy-backed uAsset、SY adapter 与 staking position，并保持本文账务语义：
+v1 implementation 仍为 proxy-backed uAsset、SY adapter 与 staking position：
 
-- `OutrunUniversalAssetsUpgradeable` 的 `mintingStatusTable` 继续按 minter 维度记录 `mintingCap` 与 `amountInMinted`。
-- `OutrunStakingPositionUpgradeable` 继续按 position 记录 `syStaked` 与 `UAssetMinted`，并按公共 wrap 池记录 `syTotalStaking`、`syWrapStaking`、`wrapUAssetDebt`。
-- `OutrunStakingPositionUpgradeable.sol` 的 V1 ERC-7201 namespace 将 `SY` 与两个 decimals 配置值打包在同一个 storage word；`minStake` 至 `positions` 的后续字段位置保持不变。该布局优化适用于 V1 发布前；若存在旧布局 proxy，升级前必须迁移旧 decimals 或恢复旧 struct 顺序。
-- `SY` 依赖在 initializer 中写入后保持固定，不新增 `setSY()`，避免 position / wrap debt 对应的 share token 与 exchangeRate source 被替换。
+- `OutrunUniversalAssetsUpgradeable` 的 `mintingStatusTable` 继续按 minter 维度记录 `mintingCap` 与 `amountInMinted`（§2）。
+- `OutrunStakingPositionUpgradeable` 按 position 记录 `owner`、`syStaked`、`principalDebt`、`accruedInterest`、`lastRate`（§3、§4）；v1 删除 `rateMultiplier` 字段（五字段化）。
+- v1 重排 `OutrunStakingPositionUpgradeable.sol` 的 ERC-7201 namespace storage struct（删除 `mintLtv`/`liquidationLtv`/`liquidationPremium`/`genesisRateMultiplier` 参数字段与 `CollSurplus` mapping、`Position` 结构五字段化）；当前 pre-deployment、无存量 proxy，布局重置不需要迁移函数；若出现任何存量部署，必须先提供迁移函数再升级。
+- `SY` 依赖在 initializer 中写入后保持固定，不新增 `setSY()`，避免 position 债务对应的 share token 与 exchangeRate source 被替换。
 - oracle-backed SY upgradeable variants 可通过 owner-only `setExchangeRateOracle(address)` 更换 `exchangeRateOracle`，但 setter 不改变 balances、shares、position accounting 或 yield-bearing token 配置。
-- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（做 raw answer 正性、新鲜度窗口 `maxStaleness`（`updatedAt == 0`、`updatedAt > block.timestamp`（feed 时钟超前）或超窗均 fail-closed，revert `StaleOracleAnswer`）、可选构造期 sequencer 校验，并在精度归一化后校验结果非零（`ZeroNormalizedRate`）；不提供 bounds/fallback/多源聚合）。
-- 当前 upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout。L2 oracle-backed SY 变体（`OutrunL2StakedTokenSYUpgradeable` / `OutrunL2WstETHSYUpgradeable`）在共享基类中的 state（`exchangeRateOracle` 引用与 underlying asset 元数据）使用基类 ERC-7201 槽 `erc7201("outrun.storage.OutrunL2OracleBackedSY")`，升级兼容性以该槽为准。前提：当前无任何测试网/主网部署这两个变体（无存量部署），V1 发布前布局变更无需迁移函数；若出现任何存量部署，必须先提供迁移函数。
+- `OutrunExchangeOracleAdapter` 仍是非 upgradeable adapter（raw answer 正性、round 完整性、新鲜度窗口、可选 sequencer 校验、归一化后非零校验；语义真源见 `docs/spec/yield/oracles-and-integrations.md`）；不提供 bounds/fallback/多源聚合。oracle 喂价 revert（staleness 等）传导为 position 侧 fail-closed（§5.1）。
+- upgradeable variants 的 V1 storage layout 是后续升级的 canonical layout；L2 oracle-backed SY 变体的升级兼容性以基类 ERC-7201 槽 `erc7201("outrun.storage.OutrunL2OracleBackedSY")` 为准。
 
 ## 2. `uAsset` 的 minter-cap 账务
 
-`OutrunUniversalAssetsUpgradeable` 当前按 minter 维护一张 `mintingStatusTable`：
-
-- `mintingCap`
-- `amountInMinted`
-
-当前账务规则是：
+`OutrunUniversalAssetsUpgradeable` 按 minter 维护 `mintingStatusTable`（`mintingCap` / `amountInMinted`），本层不变：
 
 - `checkMintableAmount(minter)` 返回 `mintingCap - amountInMinted`，最低到 0。
-- `mint(receiver, amount)` 由调用者自己的 minter 额度承担，成功后增加调用者的 `amountInMinted`。
-- `repay(account, amount)` 减少调用者（`msg.sender`，即 minter）自己的 `amountInMinted`；`account` 是被 burn 的地址，必须持有足够的 `uAsset`。若 `account != msg.sender`，则还必须先授权 `msg.sender` 消耗对应 `uAsset`。
-- `revokeMinter(minter)` 只把 cap 设为 0 以禁止后续 mint，不会自动清空历史已铸债务；既有 `amountInMinted` 保留到后续 repay。
-- `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；完整输入校验与账务约束以 `docs/spec/common-foundations.md`「基础规则」为准。
-- accounting 视角补充：`transferMinterDebt` 只迁移 `uAsset` 的 minter 级债务，不更新 position/wrap 记录（SP 侧无账本导出/导入入口）；用途限定与对账验收见 `docs/spec/common-foundations.md`「基础规则」与本文 §10.2。
-- OFT 跨链铸烧豁免（outbound `_debit`/inbound `_credit` 不触碰 minter 债务台账、`_credit` 零地址重映射 `0xdead`）以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
+- `mint(receiver, amount)` 由调用者（position 合约）自己的 minter 额度承担，成功后增加 `amountInMinted`。
+- `repay(account, amount)` 减少调用者（`msg.sender`，即 minter = position 合约）的 `amountInMinted`；`account` 是被 burn 的地址，必须持有足够 `uAsset` 且（`account != msg.sender` 时）已授权。本金腿销债一律经 `repay`（§7）。
+- `revokeMinter(minter)` 只把 cap 设为 0 以禁止后续 mint，既有 `amountInMinted` 保留到后续 repay。
+- `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；用途限定与对账验收见 `docs/spec/common-foundations.md`「基础规则」与本文 §10.2。
+- OFT 跨链铸烧豁免与 PSM 储备铸烧豁免不触碰 minter 债务台账，见 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」。
 
-因此，`uAsset` 当前不是”全局总债务池”，而是”按 minter 独立记账的铸造额度和未偿债务”；owner 只能迁移这笔 minter 维度债务归属，不能消灭债务或改变总供应，也不能仅靠 `uAsset` 调账就让 position/wrap 账本自动一致。
+应计利息不进入 minter 台账：利息腿是流通 `uAsset` 的 transfer（调用者 → 协议金库），既不 mint 也不 repay（§4、§7），因此 §10.2 的对账式只含本金。v1 零费默认下利息腿恒为 0，台账语义不变。
 
-## 3. Position debt 账务
+`mintingCap` 在 v1 的定位是**唯一的供给刹车**：原「背书保护」（LTV）职责已随 LTV 族删除并入——cap 直接限总供给，背书由价值平价铸造构造保证（§3.1、§10.3）。
 
-`OutrunStakingPositionUpgradeable` 中每个 `Position` 当前记录：
+## 3. Position debt 账务（本金 + 应计利息）
 
-- `owner`
-- `syStaked`
-- `UAssetMinted`
-- `deadline`
+每个 `Position` 记录：
 
-锁仓仓位的初始 debt 规则是：
+- `owner`：仓位控制权（redeem 权）
+- `syStaked`：质押的 SY 本金数量
+- `principalDebt`：本金债务（uAsset decimals 口径，即铸账口径——`stakeForGenesis` 时经 `uAsset.mint` 铸出的数量；字段语义= 铸账本金）
+- `accruedInterest`：已结算未支付的应计利息（uAsset decimals 口径，与本金币同单位；仅在本位结算触点写入，§4）
+- `lastRate`：本仓最近一次利息结算时的 SP `rate` 快照
 
-- 用户 stake `amountInSY`
-- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`
-- `uAssetDebt` 同时成为初始 `UAssetMinted`
-- position 内写入该值，并调用 `uAsset.mint(...)`
+仓位总债务（结算后）：
 
-这里的关键点是：position debt 不是按固定 1:1 写入，而是按当前 `exchangeRate()` 折算后的 canonical asset value，再归一化成 `uAsset` 记账单位后写入。
+> `totalDebt = principalDebt + accruedInterest + pendingInterest`
 
-## 4. Wrap 池账务
+其中 `pendingInterest` 为自 `lastRate` 至当前 `rate` 的未结算增量（§4 公式）。开放期限：无 `deadline` 字段、无到期门；无增借入口（`drawUAsset` 删除），减借唯一路径是 partial `redeem`（§7）。
 
-wrap 池当前使用三组聚合账务变量：
+初始铸债规则（`OutrunStakingPositionUpgradeable.sol::stakeForGenesis`，唯一铸造入口）：
 
-- `syTotalStaking`
-- `syWrapStaking`
-- `wrapUAssetDebt`
+1. 抵押定价：`collateralValue = SY -> canonical asset -> uAsset`（两段均 down，沿用 `_syToAsset` 路径与 `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点读率）。
+2. 面值铸出（价值平价）：`mintedUAsset = collateralValue`——两段 down 的直接结果，无 LTV 缩放段。注意是**价值平价不是单位平价**：汇率 1.15 时存 1 sUSDS 铸 1.15 UUSD。
+3. `mintedUAsset` 写入 `principalDebt`，并经 `uAsset.mint` 铸出（消耗 SP minter 的 mintingCap headroom，`ReachMintCap` 属依赖边界）。
 
-`wrapStake` 时：
+由此每个仓位在铸造时刻满足 `principalDebt ≤ syStaked × exchangeRate(铸造时点)`（两段 down 构造严格 ≤），这是背书不变式（§10.3）的唯一构造来源。自由借贷入口（`stake`）在 v1 不存在：uAsset 铸出量与 Memeverse genesis 需求严格绑定（§3.1）。
 
-- 增加 `syTotalStaking`
-- 增加 `syWrapStaking`
-- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `uAssetDebt = canonical asset -> uAsset`
-- 用 `uAssetDebt` 增加 `wrapUAssetDebt`
-- 铸造等额 `uAsset`
+### 3.1 `stakeForGenesis`：唯一铸造入口（SP 原生物理门）
 
-`keepWrapRedeem` 时（keeper-only，仅直付 SY）：
+`OutrunStakingPositionUpgradeable.sol::stakeForGenesis(amountInSY, positionOwner, verseId, minUAssetMinted)`（`nonReentrant` + `whenNotPaused`，返回 `positionId`）是 v1 唯一的铸造入口：铸出的 uAsset 在同一交易内全额交 SP 侧 `genesisLauncher`。全原子执行序：
 
-- keeper 守卫：`msg.sender != keeper()` → revert `PermissionDenied()`
-- 先检查 `uAssetDebtUnits = amountInUAsset` 且 `uAssetDebtUnits <= wrapUAssetDebt`
-- 先按完整 `wrapUAssetDebt` 的债务覆盖口径计算 `wrapDebtInSY`：`uAsset -> canonical asset` 用 up、`canonical asset -> SY` 用 up
-- 池子不足（`wrapDebtInSY > syWrapStaking`）时 revert `WrapPoolUndercollateralized()`（不再按 pro-rata 部分兑付）
-- 池子健康后，按本次 `amountInUAsset` 计算 `canonicalAssetValue = uAsset -> canonical asset` 与 `amountInSY = canonical asset -> SY`，两段均用 down
-- 减少 `syTotalStaking`
-- 减少 `syWrapStaking`
-- 减少 `wrapUAssetDebt` 中对应的 `uAssetDebtUnits`
-- 烧掉 keeper 自己提供的 `uAsset`（`uAsset.repay(msg.sender, uAssetDebtUnits)`）
-- 直接将 `amountInSY` 的 SY 转给 `receiver`（不经 `SY.redeem`，无 tokenOut/minTokenOut）
+- (a) 前置校验：`genesisLauncher == address(0)` → `GenesisLauncherNotSet()`；`amountInSY` / `positionOwner` 为零 → `ZeroInput()`；`amountInSY < minStake()` → `MinStakeInsufficient`。
+- (b) 铸出量数学：两段 down 面值换算（§3），铸出为 0 → `DustRoundedToZero()`；随后两项 genesis 专属守卫：`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted(mintedUAsset, minMinted)`（SP 本地声明）；`mintedUAsset > type(uint128).max` → `InvalidParam()`（与 router 路径 A（`genesisByPSM`）的同名守卫同构，launcher 参数域为 uint128）。
+- (c) 开仓：SY 转入 position 合约 → SP `rate` 结算到当前时刻并快照 `lastRate`（新仓不承接开仓前利息，首次结算利息按开仓时刻起算，§4.4）→ 写入五字段 `Position`（无锁定系数）；`principalDebt = mintedUAsset`。
+- (d) uAsset 铸给 `address(this)`（SP 自身），绝不经过 owner、router 或任何第三方，SP 的 uAsset minter 台账正常入账——`uAsset.mint` 使 SP minter 的 `amountInMinted += mintedUAsset`，无 PSM 式豁免（§10.2 第一行显式覆盖 genesis 铸出）。
+- (e) 对 `genesisLauncher` 精确 approve 恰好 `mintedUAsset`。
+- (f) 调用 `IMemeverseLauncher.genesis(verseId, uint128(mintedUAsset), positionOwner)`（接口真源 `src/router/interfaces/IMemeverseLauncher.sol`，launcher 侧零改动）；`verseId` 原样转发、SP 不校验。
+- (g) 后置断言：`genesis` 返回后 SP 的 uAsset 余额必须回到铸出前基线，且对 `genesisLauncher` 的 allowance 必须为 0，否则 `GenesisUAssetNotConsumed(residualBalance, residualAllowance)` 整笔回滚——部分消费、转回或任何残余都使仓位与铸出一并消失。
+- (h) 事件：`Stake(positionId, positionOwner, amountInSY, mintedUAsset)` 加 `StakeForGenesis(positionId, positionOwner, verseId, mintedUAsset)`（§11.2）。
 
-当前测试已经说明 wrap 池按 principal accounting 运行，不会因为汇率上涨而自动增加用户的 `uAsset` debt。
+物理门控语义与边界：
+
+- 物理门：铸出资金只能在单笔交易内到达 launcher——门是物理约束，不是身份白名单，也不是事后返还；`genesisLauncher == address(0)`（部署默认态，或 owner 置零）时入口以 `GenesisLauncherNotSet()` 拒绝（kill switch，§6）。
+- 守恒断言：`stakeForGenesis` 成功后 SP 的 uAsset 余额恒等于调用前余额——mint→consume 在交易内闭环，无托管、无持久账面。
+- genesis 仓在创建后即普通仓位：redeem 双腿销债（§7）、按 §4.2 计息（v1 零费默认下利息腿恒 0）——无额外状态、无锁仓。
+- 报价：无 genesis 专属 preview；`previewStake` 公式同式覆盖唯一执行入口（genesis 消费量 == 铸出量，确定性，§5）。
+
+## 4. 计息数学（virtual accrual，duty 域，零费放行）
+
+借贷利息为浮动、治理可调、作用于存量债务；采用 per-SP 累计率单位 + per-position 按秒记账的 virtual accrual（计息锚为 `block.timestamp`），严禁 mint-as-you-accrue（计息不调用 `uAsset.mint`，`uAsset` totalSupply 不因计息变化）。timestamp 锚定使速率语义为纯日历时间、与链出块基础设施解耦：多链部署（各链出块节奏不同且随链加速漂移）不携带任何会过期的年均块数换算假设，跨链利率口径一致，无 per-chain 换算参数；`block.timestamp` 受共识约束（单调不减、偏斜有界），对借贷利率的偏斜攻击面可忽略（行业先例：按秒累计的利率指数自 2019 年起长期运行）。原块数锚定的部署误配面——年均块数 per-chain 定值与链真实出块节奏错配、链加速后名义利率与实际利率静默漂移、低率下每块增量整除归零的静默零息窗口及配套的部署后增量下限断言——随换算参数整体删除而作废，无遗留部署核对项。
+
+### 4.1 per-SP `duty` 与累计 `rate`（Maker 式，RAY 1e27 域）
+
+- per-SP 每秒率 `duty`（RAY 1e27 域），累计率 `rate`（init=`1e27`），单调不减（`initialize` 同时写入 `rateLastSettledAt = block.timestamp`，init 时刻即首个结算基线，此后首个触点自 init 时刻起算增量）；复利整段闭式：`rate = rmul(rpow(duty, dt), rate)`，其中 `dt = block.timestamp − rateLastSettledAt`；`rpow` 系 Maker assembly 版（内步 round-half-up），`rmul` 单次截断。无全局 base（单 `duty` per-SP）；USR 不动。
+- **接受域 `[1e27, DUTY_CAP]`（v1 零费放行）**：`OutrunStakingPositionUpgradeable.sol::initialize` 与 `OutrunStakingPositionUpgradeable.sol::setDuty` 的守卫为 `duty < 1e27 → ZeroInput`（sub-RAY 即负利率、含 0，全拒——保 `rate` 单调不减），仅此拒绝对；`duty == 1e27`（零费哨兵）合法且为 v1 默认；上限 `DUTY_CAP`（年化 15% 等效每秒率），越上限 → `DutyCap`。零费从「不开放的语义」改为「v1 默认」；`BorrowRateBelowResolution` 已废除（dust 悬崖不存在）；pause 才是熔断器。
+- 惰性结算：`rate` 存储值只在结算触点前移——`OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（开仓即结算，见 4.4）、`::setDuty`（分段生效，见 4.3）、`::redeem` 先把 `rate` 结算到当前时刻（`rate = rmul(rpow(duty, block.timestamp − rateLastSettledAt), rate)`）再执行本体；同秒多次结算幂等（`dt == 0` 时 `rpow(duty, 0) == 1e27`，`rate` 不变）。
+- 存储配套 `rateLastSettledAt`（最近结算 timestamp）；视图族按同公式纯外推（`currentRate()`，外推至当前时刻），不写状态、与执行结算同输入同输出。
+
+### 4.2 per-position 利息结算
+
+position 记 `principalDebt`（= 铸账本金）+ `accruedInterest` + `lastRate`；结算增量（有效利率 = `duty` 单项，无乘数）：
+
+> `Δint = principalDebt × (rate(t) − lastRate) / 1e27`
+
+- `rate(t) − lastRate` 为 RAY 1e27 域复利增量，除一次 `1e27`；`rmul` 语义单次截断。
+- 结算后 `accruedInterest += Δint`、`lastRate = rate(t)`。
+- 复利（compound on principal via 累计 `rate`）：利息按 `principalDebt` 对累计 `rate` 复利增量计，已落账 `accruedInterest` 本身不另行复利；增借不存在故铸账本金恒定，唯一变动是 partial `redeem` 减本金后按新本金续计（§7）。
+- **零费语义（v1 默认）**：`duty = 1e27` 时 `rpow(1e27, dt) = 1e27`、`rate` 永不前移、利息永不 accrue——无需任何特殊分支；债务冻结、背书率单调上升（§10.3）。`_repayTwoLegs` 保留：0 费下利息腿恒 0，既有 `interestPortion == 0 时跳过` 逻辑覆盖；`protocolTreasury` 参数保留（未来加息的利息去向不变）。mint-as-you-accrue 禁令在零费下自动满足（计息增量恒 0）。
+
+### 4.3 利率变更分段生效
+
+`OutrunStakingPositionUpgradeable.sol::setDuty`（§6）在写入新 `duty` 前先把 `rate` 按旧 `duty` 结算到当前时刻（复利整段闭式增量），随后新 `duty` 前瞻生效：此前未结算时间按旧 `duty` 累计、此后按新 `duty` 累计。positions 无需逐仓迁移——`lastRate` 语义是「快照时的累计 `rate`」，与率值解耦，结算公式自动分段。
+
+### 4.4 virtual accrual 触点
+
+- 写状态结算（`accruedInterest` 落账）：`OutrunStakingPositionUpgradeable.sol::redeem`（支付时结算）。
+- 开仓结算触点：`OutrunStakingPositionUpgradeable.sol::stakeForGenesis` 在写入新仓前先把 SP `rate` 结算到当前时刻，再快照 `lastRate = rate()`（结算后值）——新仓不承接开仓前未结算时间的利息，首次结算利息按开仓时刻起算。
+- 只读外推（不写）：`pendingInterest(positionId)`、`positionDebt(positionId)`、`previewRedeem` 及 `rate` 视图族（§11.3）。
+- 同秒内（同一 timestamp）preview 与执行一致（同一 `rate` 外推/结算值）。
 
 ## 5. 汇率换算
 
-当前仓库把 `exchangeRate()` 视为 `asset per SY` 的统一换算基准，接口层也明确要求：
+`exchangeRate()` 仍为 `asset per SY` 的统一换算基准，接口层语义不变；mixed-decimals 双段换算单位模型与四个基础公式以 `docs/spec/common-foundations.md`「单位模型」为准。`OutrunStakingPositionUpgradeable` 的换算方向：
 
-- `exchangeRate * syBalance / 1e18` 对应资产值
-- 如果用户贡献的是价值 X 的资产，则铸出的 SY 或 debt 应通过同一换算关系推导
-- position / wrap debt 的统一语义是：先 `SY -> canonical asset`，再 `canonical asset -> uAsset`；需要从 debt 反推 `SY` 时，则先 `uAsset -> canonical asset`，再 `canonical asset -> SY`
-- `canonical asset` 在这里是 `exchangeRate()` 定义的价值单位；`canonicalAssetDecimals` 取自 `SY.assetInfo().assetDecimals`，`uAssetDecimals` 取自 `uAsset.decimals()`
-- 以下 mixed-decimals 双段换算为当前代码已完成行为；具体单位模型与四个基础公式以 [docs/spec/common-foundations.md](/home/azkrale/Web3Project/OutStake/docs/spec/common-foundations.md) 为准
+- `SY -> canonical asset`：`collateralValue = _syToAsset(syStaked, exchangeRate)`（down + down，`OutrunStakingPositionUpgradeable.sol::_syToAsset`）
+- `uAsset -> canonical asset -> SY` 的 up/up 复合（`canonical asset -> SY` up 内联公式，非 `SYUtils` 库成员）在 v1 无 SP 侧消费方（清算路径删除后 `_assetToSy` 及其唯一消费者 `_liquidationSplit` 一并删除），偏差记录见 `docs/spec/common-foundations.md` 单位模型
 
-`OutrunStakingPositionUpgradeable` 的相关账务应按四个基础方向换算：
+读率点：所有换算入口经 `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点读取，`exchangeRate() == 0` revert `ZeroExchangeRate()`；oracle adapter 的 stale 等喂价错误原样透传（fail-closed，依赖边界）。
 
-- `SY -> canonical asset`：`canonicalAssetValue = syToAsset(exchangeRate, syAmount)`
-- `canonical asset -> uAsset`：把 `canonicalAssetValue` 归一化为 `uAssetDebtUnits`
-- `uAsset -> canonical asset`：把 `uAssetDebtUnits` 反归一化为 `canonicalAssetValue`
-- `canonical asset -> SY`：`syAmount = assetToSy(exchangeRate, canonicalAssetValue)`，必要时使用向上版本
+rounding matrix（v1 全表）：
 
-rounding matrix：
+- `stakeForGenesis` / `previewStake(amountInSY)`：
+  - `SY -> canonical asset` 用 down；`canonical asset -> uAsset` 用 down（无 LTV 缩放段）
+  - 失败面：`previewStake` 的 `amountInSY == 0` → `ZeroInput()`（先于一切检查）；`amountInSY < minStake()` → `MinStakeInsufficient()`；rate==0 → `ZeroExchangeRate()`；两段换算下取整为 0 → 返回 `0`（执行入口 `stakeForGenesis` 对同输入 revert `DustRoundedToZero()`，quote/actual 刻意分歧，沿用既有约定）
+  - 同一铸出量公式同式覆盖执行入口与 preview（§3.1 (b)）；genesis 专属失败面：`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted(mintedUAsset, minMinted)`、`mintedUAsset > type(uint128).max` → `InvalidParam()`、`genesisLauncher == address(0)` → `GenesisLauncherNotSet()`、后置断言失败 → `GenesisUAssetNotConsumed(residualBalance, residualAllowance)`；无 genesis 专属 preview（genesis 消费量 == 铸出量，确定性）
+- `redeem` / `previewRedeem(positionId, syRedeemed, tokenOut)`：
+  - debt 按仓内比例切片，不读汇率（SY 直出路径无 oracle 依赖；tokenOut != SY 时经 `SY.redeem`/`SY.previewRedeem` 依赖换算）
+  - 本金腿 partial 用 ceil：`principalPortion = ceil(principalDebt × syRedeemed / syStaked)`；full（`syRedeemed == syStaked`）精确等于 `principalDebt`
+  - 利息腿 partial 用 ceil：`interestPortion = ceil(settledInterest × syRedeemed / syStaked)`；full 精确等于 `settledInterest`
+  - partial 结果 `principalPortion >= principalDebt` → `PartialRedeemMustLeaveDebt()`（须改走 full redeem）
 
-- mint / stake / wrap stake / `previewStake(amountInSY)` / `previewWrapStake(amountInSY)`：
-  - `SY -> canonical asset` 用 down
-  - `canonical asset -> uAsset` 用 down
-  - 失败面 / 0-return：
-    - `previewStake`：`amountInSY < minStake()` → `MinStakeInsufficient()`；rate==0 → `ZeroExchangeRate()`；dust 下取整为 0 → 返回 `0`（不触发 `DustRoundedToZero()`）
-    - `previewWrapStake`：`amountInSY == 0` → `ZeroInput()`；rate==0 → `ZeroExchangeRate()`；报价为 0 → `DustRoundedToZero()`
-    - 执行入口 `stake` / `wrapStake` 的对应触发见 §11.1
-- draw：
-  - `SY -> canonical asset` 用 down
-  - `canonical asset -> uAsset` 用 down
-  - `previewDrawUAsset`：仓位缺失 → `PositionAccessDenied()`；到期（`block.timestamp >= position.deadline`）→ revert `LockTimeExpired()`（不返回 0，镜像执行入口的到期失败，与 `previewRedeem` / `previewKeepRedeem` 镜像 `LockTimeNotExpired()` 的方向一致）；rate==0 → `ZeroExchangeRate()`；无新增可 draw → 返回 `0`（执行入口 `drawUAsset` 同条件 revert `NothingToDraw()`）
-- wrap redeem（健康池）：
-  - 健康守卫（完整 `wrapUAssetDebt` 的债务等值 SY）：`uAsset -> canonical asset` 用 up、`canonical asset -> SY` 用 up
-  - 实际兑付（本次 `amountInUAsset`）：`uAsset -> canonical asset` 用 down、`canonical asset -> SY` 用 down
-- wrap redeem（不足池，池值 < 债务面值）：revert `WrapPoolUndercollateralized()`（keeper-only keepWrapRedeem 不再 pro-rata）
-- `previewWrapRedeem(amountInUAsset)`：镜像 `keepWrapRedeem` 的健康守卫 up/up 与实际兑付 down/down；失败面包括 `amountInUAsset == 0` → `ZeroInput()`、超 `wrapUAssetDebt()` → `ExceedsWrapDebt()`、rate==0 → `ZeroExchangeRate()`、不足池 → `WrapPoolUndercollateralized()`、兑付为 0 → `DustRoundedToZero()`
-- keeper redeem：
-  - `uAsset -> canonical asset` 用 down
-  - `canonical asset -> SY` 用 down
-  - 全仓位守卫：`uAsset -> canonical asset` 用 up、`canonical asset -> SY` 用 up（与 §8 公式 `_assetToSyUp` 对齐）
-  - `previewKeepRedeem` 的失败面见 §8 与 §11.1（含 position 存在、lockup、amount 边界、solvency、rate==0、dust）
-- `previewRedeem(positionId, syRedeemed, tokenOut)`：
-  - full redeem 直接返回全部剩余 `position.UAssetMinted`
-  - partial redeem 对 `position.UAssetMinted * syRedeemed / syStaked` 用 up
-  - 若 partial 结果会耗尽剩余 debt，则 preview 必须拒绝该报价
-  - 失败面包括仓位缺失 → `PositionAccessDenied()`、未到期 → `LockTimeNotExpired()`、`syRedeemed == 0` → `ZeroInput()`、超仓位 → `ExceedsPositionBalance()`、partial 耗尽 debt → `PartialRedeemMustLeaveDebt()`；非 SY 输出可能透传 `SY.previewRedeem` 依赖错误
-- harvest coverage：
-  - `uAsset -> canonical asset` 用 up
-  - `canonical asset -> SY` 用 up
+### 5.1 风险声明（oracle fail-closed、dust 接受语义与 LST 例外）
 
-因此，position/wrap 账务都以 `SY` 数量和资产值之间的双向换算为前提，但 mixed-decimals 双段归一化按上表作为当前实现落文。
+- **oracle fail-closed（率值完整性（喂价异常导致超铸）的唯一链上防线）**：铸造全路径（定价、铸出量）消费 `SY.exchangeRate()`；经 oracle-backed SY 变体时，adapter 的 raw answer 正性、round 完整性、新鲜度窗口（`maxStaleness`）、（配置时）L2 sequencer 校验、归一化后非零校验任一失败即 revert（错误面真源 `docs/spec/yield/oracles-and-integrations.md`），`stakeForGenesis` / `previewStake` 原子拒绝——fail-closed：价格源异常时铸造不可用，不降级、不 fallback。本地分支：`exchangeRate() == 0` → `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点守卫）。v1 无 LTV/清算，oracle 栈从「清算保护」升格为**率值完整性（喂价异常导致超铸）的唯一链上防线**——汇率虚高时面值铸造即超铸，oracle 栈是铸造侧率值维度的链上守卫（余额维度由名义 1:1 族 resident 背书对账守卫承担，见 `docs/spec/yield/yield-adapters.md`）；该栈现为两层链上防御：新鲜度栈（正性 / round 完整性 / `maxStaleness` / sequencer / 归一化非零）仍是 adapter 侧防线，oracle-backed SY 基类（`OutrunL2OracleBackedSYUpgradeable`）的锚点偏差熔断是第二层链上防御，专门拦截铸造路径的喂价数值跳变（带外读数 revert `RateDeviationExceeded`，语义真源 `docs/spec/yield/oracles-and-integrations.md`「边界」锚点偏差熔断条目）；带内缓变漂移仍属链下监控与 pause 联动职责（监控与应急操作面见 `docs/deployment.md`）。
+- **互补退出通道**：`redeem` 的 SY 直出路径不读汇率——oracle 异常期间 owner 仍可按面值销债赎回（有意保留的退出通道，非守卫遗漏）；面值语义下该通道更关键：还 `principalDebt`（0 利息下 = 铸出量）拿回全部 SY，汇率涨跌只改变这组数字的外部价值，不改变结算，汇率上涨收益归抵押方。
+- **dust 接受语义（Info）**：微量存款两段 down floor 归零 → `DustRoundedToZero()` 拒绝（不接受零债仓位）；已开仓的 dust 级仓位无第三方出清方（清算不存在），owner `redeem(syRedeemed == syStaked)` SY 直出全量自赎是唯一出清通道（不读汇率），波及金额 dust 级，协议零坏账（owner 自赎出口存在）。
+- **LST 削罚例外**：背书不变式（§10.3）的「汇率单调不降」为收益型资产正常态假设；LST 削罚可使汇率小幅回撤（历史 ≤1% 量级，Lido/Lista 国库有自补先例）——非黑天鹅形态，风险模型可吸收，但每个 LST 集成须按准入标准单独评估（准入标准与尽调清单见 `docs/deployment.md`）。
 
-- 上表三处 up/up 守卫（wrap redeem 健康守卫、keeper redeem 全仓位守卫、harvest coverage）共享 `OutrunStakingPositionUpgradeable.sol::_assetToSyUp` 的双段复合，继承同一保守量化偏差带（方向保守、只误拒不放行不足额）；量化推导以 `docs/spec/common-foundations.md`「mixed-decimals up/up 双段复合取整偏差」条目为准。
+## 6. 参数面
 
-## 6. Draw 账务
+以下参数全部为 owner-governed 变量（setter + `Set*` 事件 + 合约内边界校验），存储于 SP 合约（per-SP 实例参数；家族一致性由部署与治理保证）：
 
-`drawUAsset(positionId, uAssetReceiver)` 当前的账务规则是：
+| 参数 | 默认值（部署期落位） | 边界 |
+| --- | --- | --- |
+| `duty`（per-SP，每秒率，RAY 1e27 域） | 全族 `1e27`（零费，v1 默认；0 率 + 抵押生息 → 债务冻结、背书率单调上升） | 接受域 `[1e27, DUTY_CAP]`（`DUTY_CAP = 1000000004431822129783699001`，年化 15% 等效每秒率）：`duty < 1e27`（含 0，sub-RAY 即负利率）→ `ZeroInput`（保 `rate` 单调不减）；`duty == 1e27` 合法（零费哨兵）；越上限 → `DutyCap`。未来加息换算式 `duty = 1e27*(1+年化)^(1/31536000)` 向下取整（python3 decimal 高精度）；变更分段生效（§4.3）；加息前置校准清单见本节「加息前置校准」 |
+| `genesisLauncher`（per-SP 地址参数，依赖级别同 `protocolTreasury`） | 零地址（部署默认＝`stakeForGenesis` 入口禁用；非 initialize 参数，部署后 owner setter 布线） | owner-settable；接受任意地址含零；零地址＝入口禁用（kill switch）；emit `SetGenesisLauncher`（§11.2） |
+| `minStake`（per-SP） | 部署期定（genesis 门票最小规模 + 反垃圾） | 双向可调，恒 > 0 |
+| `protocolTreasury`（per-SP 地址参数） | V1 = 部署期金库地址 | owner-settable；零地址拒绝；利息腿唯一去向（v1 零费下恒 0 腿，参数保留供未来加息）；禁止为改去向升级合约（§9） |
 
-- position 存在与 owner 守卫通过后、估值/汇率读取之前：未到期检查——`block.timestamp >= position.deadline` 时 revert `LockTimeExpired(position.deadline)`
-- 先计算 `canonicalAssetValue = SY -> canonical asset`，再计算 `currentValueInUAsset = canonical asset -> uAsset`
-- 再读取已有 `position.UAssetMinted`
-- 若 `currentValueInUAsset <= positionUAssetMinted`，则 `drawUAsset` 回退 `NothingToDraw()`
-- 汇率读取成功且上述条件成立时，`previewDrawUAsset` 仅返回 `0` quote；`rate==0` 时先回退 `ZeroExchangeRate()`
-- 否则只允许铸造差额 `currentValueInUAsset - positionUAssetMinted`
+**加息前置校准**：任何把 `duty` 提过 `1e27` 的 `OutrunStakingPositionUpgradeable.sol::setDuty` 治理决策，执行前须完成并留痕三项前置：
 
-成功后：
+1. 利息腿流通供应依赖确认——利息为 virtual accrual、永不铸出（§4），付息 uAsset 须来自流通供应或 PSM 面值铸出（本金经 genesis 全额交付 launcher，owner 偿还本金同样依赖流通供应）；
+2. 各 (uAsset, reserve) PSM 实例的 stockCap headroom 与绑定储备规模相对该 SP 家族债务存量及预期付息流的容量评估（`docs/spec/psm/peg-stability-module.md`「储备消耗监控与校准」）；
+3. 跨链持币分布下 OFT 出站限额对回桥付息可达性的影响评估——等待期间债务按新 duty 继续计息，限流延迟具直接利息成本（`docs/spec/protocol.md`「跨链可用性与限流」）。
 
-- `position.UAssetMinted = currentValueInUAsset`（本次 draw 后总债务被重置为当前估值；返回值/事件里的 `mintedUAsset` 仅指本次新增差额 `currentValueInUAsset - positionUAssetMinted`，非新总量）
-- 再次检查当前 `uAsset` mint cap 是否足够
-- 最后铸造追加的 `uAsset`
+v1 `duty = 1e27` 下本清单不触发；本清单为治理前置程序而非链上强制——`OutrunStakingPositionUpgradeable.sol::setDuty` 不做链上前置校验为有意设计，此处记录治理程序，不引入运行时门。
 
-因此，draw 当前只把“升值部分”转成新的 debt，不会重写原本金 principal。
+v1 参数族收缩说明：`mintLtv` / `liquidationLtv` / `liquidationPremium`（三 LTV/premium 族）与 `genesisRateMultiplier` 随无 LTV/无清算/零折扣决策整体删除，无存量迁移面。
 
-## 7. `redeem` 的按比例销债
+- setter 边界校验错误全表见 §11.1；状态机级转移条件表见 [state-machines.md](./state-machines.md) §6。
+- `initialize` 落位同一套参数：init 期零地址/零值 → `ZeroInput()`，`duty` sub-RAY 或越上限 → `ZeroInput` / `DutyCap`；init 期无旧值，无棘轮检查；默认值由部署脚本传入，合约内不硬编码。
 
-锁仓仓位赎回时，debt 销毁规则按 full redeem / partial redeem 分叉：
+## 7. `redeem` 的按比例双腿销债
 
-- 用户传入要赎回的 `syRedeemed`
-- 若 `syRedeemed == syStaked`，则视为 full redeem，必须精确烧掉该 position 剩余的全部 `position.UAssetMinted`
-- 若 `syRedeemed < syStaked`，则视为 partial redeem，`UAssetBurned` 按 `ceil(position.UAssetMinted * syRedeemed / syStaked)` 计算
-- partial redeem 额外有一条边界：若上述 ceiling 结果会等于或超过当前剩余 debt，则该 partial 路径必须回退，用户只能改走 full redeem
-- `previewRedeem(...)` 与执行期 `redeem(...)` 使用同一条 full / partial 判定与拒绝规则；preview 不能返回一个执行期会因“partial consume all debt”而失败的报价
-- position 层先确定 `UAssetBurned` 和允许性，再进入 `uAsset.repay(...)`；正确性不依赖下游出现 `uAsset.repay(0)` 这种零额 repay
+`OutrunStakingPositionUpgradeable.sol::redeem(positionId, syRedeemed, receiver, tokenOut, minTokenOut)` 为 position owner 专属入口（`onlyPositionOwner`），任意时刻可用（无到期门），沿用 full/partial 语义：
 
-如果赎回后 `remainingSY == 0`，position 会被删除；否则保留剩余 principal 与剩余 debt。
+- `syRedeemed == 0` → `ZeroInput()`；`syRedeemed > syStaked` → `ExceedsPositionBalance(syRedeemed, syStaked)`。
+- 进门后先做利息结算（§4.4 写状态触点）：SP `rate` 结算到当前时刻，本仓 `accruedInterest += Δint`、`lastRate` 更新（v1 零费下 `Δint == 0`，利息腿跳过）。
+- 两腿份额（§5 rounding matrix）：
+  - full（`syRedeemed == syStaked`）：`principalPortion = principalDebt`、`interestPortion = accruedInterest`。
+  - partial：两腿均按 `syRedeemed / syStaked` 比例 ceil；partial 耗尽本金（`principalPortion >= principalDebt`）→ `PartialRedeemMustLeaveDebt()`，须改走 full redeem。
+- 偿还顺序（两腿，利息腿先行）：
+  1. **利息腿**：`interestPortion` 等值 `uAsset` 从调用者 transfer 至 `protocolTreasury`（`OutrunUniversalAssetsUpgradeable` ERC20 transfer，经 SP 合约拉取调用者余额）；`interestPortion == 0` 时跳过。利息腿不 burn、不冲销 minter 台账（§2）。
+  2. **本金腿**：`OutrunUniversalAssetsUpgradeable.sol::repay(msg.sender, principalPortion)`——burn 调用者的 `uAsset` 并等额冲销 SP minter 的 `amountInMinted`。
+  - 调用前提：owner 须先向 SP 合约 approve 不少于 `principalPortion + interestPortion` 的 `uAsset`（repay 与 transfer 拉取共用该 allowance）；余额/授权不足时以依赖边界错误（如 `ERC20InsufficientAllowance`）整笔原子回退。
+- 仓位更新（CEI：先减记仓位，后外部调用）：`syStaked -= syRedeemed`、`principalDebt -= principalPortion`、`accruedInterest -= interestPortion`；剩余 `syStaked == 0`（full redeem）删除仓位（id 空洞，§11.3）；`PartialRedeemMustLeaveDebt` 保证 partial 后 `principalDebt > 0` 且 `syStaked > 0`。partial 减本金后利息按新本金续计（§4.2）。
+- 资产输出（沿用既有语义）：`tokenOut == SY` 时直接转出 `syRedeemed`（执行前校验 `syRedeemed < minTokenOut` → `InsufficientTokenOut`）；否则经 `SY.redeem(receiver, syRedeemed, tokenOut, minTokenOut, false)`。
+- 成功后 emit `Redeem(positionId, owner, syRedeemed, principalBurned, interestPaid, receiver, tokenOut, amountTokenOut)`（§11.2）。
+- `previewRedeem(positionId, syRedeemed, tokenOut)` 复用同一判定/舍入/拒绝规则，返回 `(principalPortion, interestPortion, amountTokenOut)`；SY 直出报价不读汇率（owner 退出通道不依赖 oracle，与铸造侧 fail-closed 形成互补，见 §5.1）。
 
-这意味着 position redeem 仍然是“按当前仓位内部 debt 比例切片销债”，但 partial 路径使用 ceiling rounding，并显式禁止“剩余 SY 仍在、debt 已被全部烧空”的状态。
+被销毁/转移的 `principalDebt` 与 `interestPortion` 始终是 uAsset decimals 口径的债务单位；本金腿的语义基准仍是 `stakeForGenesis` 时的 `SY -> canonical asset -> uAsset` 铸账，执行路径不按汇率重定价。
 
-这里被销毁的 `position.UAssetMinted` 始终是前述 `SY -> canonical asset -> uAsset` 归一化后记下来的 debt 单位；执行路径不要求在每次 partial redeem 时重新按汇率定价，但该 debt 单位的语义基准保持不变。
+## 9. 协议金库账务（`protocolTreasury`；原清算账务与 CollSurplus 账务随 v1 无清算决策整节删除，§8 编号退役不复用）
 
-## 8. Keeper redeem 分账
-
-`keepRedeem(positionId, amountInUAsset, receiver)` 的账务路径与普通 redeem 不同，当前实现语义如下：
-
-- 输入校验：`amountInUAsset == 0` → revert `ZeroInput()`；`amountInUAsset > position.UAssetMinted` → revert `ExceedsPositionDebt()`
-- **全仓位守卫（前置判定）**：先按上取整口径判断仓位整体是否不足额——`if (_assetToSyUp(positionUAssetMinted, exchangeRate) > syStaked) revert InsufficientSyCollateral();`。仓位整体不足额（当前 `SY` 市值低于债务面值）时，任何 `amountInUAsset > 0` 的 keepRedeem 一律 revert，原子回滚——keeper 的 `uAsset` 不被烧、仓位不变，不存在 amount 依赖的残余暴露
-- 再按显式 down rounding 公式 `syRedeemed = roundDownDiv(syStaked * uAssetDebtUnits, positionUAssetMinted)` 算出本次实际抽出的仓位 `SY`
-- **dust 守卫（保留）**：`syRedeemed == 0` → revert `DustRoundedToZero()`，与现有实现一致；dust 输入不得在不减少 `syStaked` 的情况下烧 debt
-- keeper 提供并烧掉自己持有的 `uAssetDebtUnits = amountInUAsset`，并按 `keeperPrincipalSY = _assetToSy(UAssetBurned, exchangeRate)`（即先 `uAsset -> canonical asset`，再 `canonical asset -> SY`）折算其应得本金
-- **keeper 侧 dust 守卫**：`keeperPrincipalSY == 0` → revert `DustRoundedToZero()`；keeper 不得为零 SY 支付燃烧非零 uAsset 债（本金腿 floor 为 0 时，分账会把全部 `syRedeemed` 静默划归 owner），与 `keepWrapRedeem` 的 `amountInSY == 0` 守卫对称
-- **per-amount 防御判定**：若 `keeperPrincipalSY > syRedeemed`，同样 revert `InsufficientSyCollateral()`（替代对 `keeperPrincipalSY` 的上限收敛写法）；该防御不重复全仓位判断、正常路径不触发，仅作防御性不变量检查保留
-- 否则分账不变：剩余 `ownerExcessSY = syRedeemed - keeperPrincipalSY`
-
-不足额判定说明：
-
-- 全仓位守卫与 per-amount 防御都 revert `InsufficientSyCollateral()`，但判定口径不同：前者在仓位整体不足额时一刀切拒绝任何 `amountInUAsset > 0` 的调用，且已严格覆盖所有 per-amount 情形；后者正常路径不触发，仅作为防御性不变量检查保留，防止未来重构在成功分账时 `ownerExcessSY = syRedeemed - keeperPrincipalSY` 下溢。
-- 方向性：守卫绝不放行不足额仓位，只可能在 `docs/spec/common-foundations.md`「mixed-decimals up/up 双段复合取整偏差」刻画的量化偏差带内误拒；owner 可经 `OutrunStakingPositionUpgradeable.sol::redeem` 自赎（redeem 无该守卫）。
-- keepRedeem 对调用者（keeper）的 `uAsset` 零暴露：不足额判定触发时调用失败且不烧 `uAsset`，汇率下跌风险由仓位/owner 承担，不内化到 keeper 调用者。
-
-只读查询：
-
-- `previewKeepRedeem(positionId, amountInUAsset) returns (keeperPrincipalSY, ownerExcessSY)` mirror keepRedeem 的 `SY` 分账计算（同一个 `_assetToSy` 与 `roundDownDiv` 公式），并镜像以下失败路径，使”preview 与执行一致”成立：
-  - **镜像 amount 相关失败路径**：
-    - `amountInUAsset == 0` → `ZeroInput()`
-    - `amountInUAsset > position.UAssetMinted` → `ExceedsPositionDebt()`
-    - `syRedeemed == 0` → `DustRoundedToZero()`
-    - `keeperPrincipalSY == 0` → `DustRoundedToZero()`
-    - 全仓位守卫不足额 → `InsufficientSyCollateral()`
-  - **镜像汇率读取点守卫**：`exchangeRate()` 读回为 0 → `ZeroExchangeRate()`，与执行路径在同一读取点触发（`_computeKeepRedeemShares` 共享读取点）
-  - **镜像 position 存在与 lockup（与 `previewRedeem` 一致）**：仓位不存在 → `PositionAccessDenied()`；未到期 → `LockTimeNotExpired()`（目的：优先保留缺失仓位的明确错误语义，避免被零 amount 或超 debt 校验误报为金额错误）
-  - **不镜像 permission**：非 keeper 属执行期调用者身份校验，quote 公开不校验
-- preview 是 keeper 事前决策入口；补上 keepRedeem 无 preview 的缺口，与 `previewStake` / `previewRedeem` / `previewWrapRedeem` 系列一致
-
-成功后：
-
-- keeper 接收 `keeperPrincipalSY`
-- position owner 接收 `ownerExcessSY`
-- `revenuePool` 不参与这一路径的分成
-
-测试也直接证明了当前 keeper redeem 没有额外 protocol fee，并且分账输入基于 keeper 烧掉的 `uAsset`，不是 keeper 自己指定的 `SY` 数量。
-
-## 9. Harvest 账务
-
-`harvestWrapYield(tokenOut, minTokenOut)` 只处理 wrap 池中高于当前 exchangeRate 下 wrap debt 最低覆盖需求的那部分 `SY`：
-
-- 先读取 `wrapPoolSY = syWrapStaking`
-- 先按 up 版本计算 `wrapDebtInCanonicalAsset = uAsset -> canonical asset`，再按 up 版本计算 `wrapDebtInSY = canonical asset -> SY`
-- 若 `wrapPoolSY <= wrapDebtInSY`，则没有可 harvest 的额外收益
-- 否则 `amountInSY = wrapPoolSY - wrapDebtInSY`
-
-成功 harvest 后：
-
-- `syTotalStaking -= amountInSY`
-- `syWrapStaking -= amountInSY`
-- `wrapUAssetDebt` 不变化
-- harvest 后剩余的 `syWrapStaking` 仍满足 `syWrapStaking >= wrapDebtInSY`
-- 收益转到 `revenuePool`
-
-因此，harvest 当前抽走的是 wrap 池里“高于 debt 等价 SY 的超额部分”，而不是改变用户未偿 `uAsset` debt。
+- per-SP 实例参数（V1 部署期统一配置为家族金库地址），owner 经 `setProtocolTreasury` 更新（零地址 → `ZeroInput()`），emit `SetProtocolTreasury(protocolTreasury)`。
+- 唯一用途：`redeem` 的利息腿接收方——`uAsset` transfer 到账后即为金库自有的流通 `uAsset`（不 burn、不进 minter 台账）。v1 零费默认下利息腿恒 0，该参数为未来加息保留（加息后利息去向不变）。
+- 运营约束：禁止为更改利息去向而升级合约；去向变更只走 setter（可审计事件）。
 
 ## 10. 账务边界总结
 
-当前实现可以概括为四条账务边界：
+v1 的账务边界：
 
-- `uAsset` debt 按 minter 独立记账
-- locked position debt 按 position 独立记账
-- wrap debt 按公共池聚合记账
-- `exchangeRate()` 与 `SYUtils` 是 `SY` 数量和资产值之间的统一换算基准
+- `uAsset` 债务按 minter 独立记账（本金经 mint/repay；利息不进台账）
+- 仓位债务按 position 独立记账（本金 + 应计利息双字段，virtual accrual；v1 默认零费冻结）
+- `exchangeRate()` 与 `SYUtils` 仍是 SY 数量与资产值之间的统一换算基准
+- 外部协议如何生成 `exchangeRate()` 属本地依赖边界；本仓库只证明上层账务如何消费该汇率
 
-凡是外部协议如何生成该 `exchangeRate()` 的问题，都只属于本地依赖边界；当前本仓库能直接证明的是“上层账务如何消费这个汇率”，而不是外部汇率来源本身的真实性。
+### 10.1 核心守恒不变量（SY 持仓分解）
 
-### 10.1 核心守恒不变量（`syTotalStaking` 守恒式）
+`syTotalStaking` 聚合变量不保留（spec 决策：不再保留聚合变量，总量视图由链下/遍历取），守恒式为按持仓分解的对账锚点：
 
-除上述边界外，position 合约维护一条全局守恒式，作为所有 SY 入口账务的单一对账锚点：
+> `SP 合约 SY 余额 == Σ active positions.syStaked`
 
-> `syTotalStaking = Σ(active positions.syStaked) + syWrapStaking`
+其中 active position 指 `positions(id).owner != address(0)` 的仓位。等式隐含前提：无第三方向 SP 合约直转 SY——正常流的唯一 SY 入口是 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis` 的 transferFrom；误转/捐赠的 SY 会沉淀为合约余额的额外项，使余额侧大于分解项之和（对账口径见 §13 第 1 条的两种断言模式）。各入口对等式的构造性保持：
 
-其中 active position 指 `positions(id).owner != address(0)` 且 `positions(id).syStaked > 0` 的仓位；`owner` 归零表示该 id 从未创建或已被 full redeem 删除。
+- `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`：SY 转入 + 新仓位 `syStaked`，两侧同增（uAsset 的铸出→launcher 消费在同一交易内闭环，不影响 SY 守恒式，§3.1）。
+- `OutrunStakingPositionUpgradeable.sol::redeem`：SY 转出（直转或经 `SY.redeem`）镜像 `syStaked` 减记；full redeem 删除仓位移出 active sum。
 
-各入口对等式两侧的影响（与 `OutrunStakingPositionUpgradeable.sol` 实现一致）：
+新增或升级任何 SY 资金路径时必须使上式在每次状态变更后仍成立；该式作为 invariant 测试锚点（§13）。
 
-- `OutrunStakingPositionUpgradeable.sol::stake`：`syTotalStaking += amountInSY`，新仓位写入 `syStaked = amountInSY` —— 等式右侧新增同一仓位的 principal，两侧同增。
-- `OutrunStakingPositionUpgradeable.sol::wrapStake`：`syTotalStaking += amountInSY` 且 `syWrapStaking += amountInSY` —— wrap 池一侧同增，等式保持。
-- `OutrunStakingPositionUpgradeable.sol::redeem` / `OutrunStakingPositionUpgradeable.sol::keepRedeem`（均经 `OutrunStakingPositionUpgradeable.sol::_applyPositionRedeem`）：`syTotalStaking -= syRedeemed`，对应仓位 `syStaked` 同步减少；partial redeem 保留剩余 principal，full redeem（剩余 `syStaked == 0`）删除该 position，该仓位从 active sum 移除。
-- `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem`：`syTotalStaking -= amountInSY` 且 `syWrapStaking -= amountInSY` —— wrap 池两侧同减，等式保持。
-- `OutrunStakingPositionUpgradeable.sol::harvestWrapYield`：`syTotalStaking -= amountInSY` 且 `syWrapStaking -= amountInSY`（wrap debt 不变）—— wrap 池两侧同减，等式保持。
+### 10.2 Position minter 对账式（三行对账式，升级 / 迁移 / 运营对账验收标准）
 
-该等式由 invariant 测试 `OutrunStakingPositionInvariantUpgradeable.t.sol::invariant_syTotalStakingMatchesSum` 锁为最核心约束。新增或升级任何 SY 资金路径时，必须使上式在每次状态变更后仍成立：`syTotalStaking` 的每次增减都镜像到 `Σ(active positions.syStaked) + syWrapStaking` 一侧，避免局部漏增/多减导致 wrap redeem / harvest 依据错误池余额运行。
+uAsset 供给侧三行对账（`uAsset` 三条供给路径：CDP（position 层）+ PSM + POLend）：
 
-### 10.2 Position minter 对账式（升级 / 迁移 / 运营对账验收标准）
+**第一行（CDP，本仓库强制）**：
 
-本小节把 `uAsset` 的 per-minter 台账与 position / wrap 台账绑定为一条可计数的对账式，作为运行对账、升级与迁移的验收标准：
+> `amountInMinted(SPx) == Σ active positions.principalDebt`
 
-- `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable` 里 `address(position)` 条目的 `amountInMinted`，必须等于活动仓位的 `Position.UAssetMinted` 之和加上公共 wrap 池的 `wrapUAssetDebt()`：`amountInMinted(address(position)) == Σ 活动仓位 Position.UAssetMinted + wrapUAssetDebt()`
-- 该恒等式由 `OutrunStakingPositionUpgradeable` 的六条账务入口按构造成立：`OutrunStakingPositionUpgradeable.sol::stake` / `::drawUAsset` / `::wrapStake` 在增加对应 `UAssetMinted` / `wrapUAssetDebt` 的同时经 `uAsset.mint` 等额增加 position minter 的 `amountInMinted`；`OutrunStakingPositionUpgradeable.sol::redeem` / `::keepRedeem` / `::keepWrapRedeem` 在减少对应台账的同时经 `uAsset.repay` 等额冲减 `amountInMinted`
-- 锚定测试：`test/upgradeable/OutrunStakingPositionInvariantUpgradeable.t.sol::invariant_uAssetSupplyConsistency` 逐活动仓位累加 `Position.UAssetMinted` 并加 `wrapUAssetDebt()`，断言其等于 `mintingStatusTable(address(position)).amountInMinted`
-- 口径边界：对账必须读 per-minter 的 `amountInMinted`（`mintingStatusTable`），不读 `totalSupply()`——`totalSupply` 会被其它 minter 的铸造以及 OFT 跨链铸烧影响，且该 invariant 的 fuzz handler 在赎回时会向 actor/keeper 直接 mint uAsset 补足余额而污染总供应；per-minter 的 `amountInMinted` 只记录 position 自己的净铸造额；OFT 跨链 `OutrunOFTUpgradeable.sol::_debit` / `::_credit` 只移动流通供应、不触碰 minter 债务台账（见 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」），故跨链 supply movement 不参与该式
-- position minter wiring：position 合约经部署脚本 `script/deploy/OutstakeScript.s.sol` 的 `setMintingCap(spAddress, SP_DEFAULT_MINTING_CAP)` 注册为 uAsset minter 并配置 mintingCap；升级 / 迁移不得在不改该注册的情况下单独变更 position 侧台账
-- `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 以该 minter（position）为 from/to 时，`uAsset` 只迁移 minter 级债务、不自动同步 position/wrap 台账（见 §2 与 `docs/spec/common-foundations.md`「基础规则」）：仅限修复无仓位/wrap 债支撑的错账；对有真实仓位/池支撑的债务调用即打破本恒等式，且 SP 侧无账本导出/导入入口、无法原子或分批搬迁（分批产生非自愈中间态偏离），活 SP 退役走清盘路径（`setMintingCap(SP,0)` → 存量经 `redeem`/`keepRedeem`/`keepWrapRedeem` 烧尽 → `revokeMinter`，见 `docs/spec/position/state-machines.md` §8.6）
-- 修账验收步骤：修账前记录恒等式偏离方向与量 → 执行 `transferMinterDebt` 归位 → 修账后逐项核对 `positions(id)` 的 `UAssetMinted`、`wrapUAssetDebt()` 与 position minter 的 `amountInMinted`（经 `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable` 直读），本式重新成立即通过；恒等式仍不成立即验收失败，必须先排查 wiring 再放行
+- 应计利息单列、不进铸账：利息腿是流通 `uAsset` 的 transfer，不 mint、不 repay，`amountInMinted` 只随 `stakeForGenesis`（+本金）与 `redeem` 本金腿（−本金）移动（v1 清算项消失后该式更简：铸造与偿还双向对称）。
+- 该恒等式由构造成立：`OutrunStakingPositionUpgradeable.sol::stakeForGenesis` 经 `uAsset.mint` 等额增加 position minter 的 `amountInMinted`——genesis 铸出正常入账（`amountInMinted += mintedUAsset`），无 PSM 式豁免；`::redeem` 本金腿经 `uAsset.repay` 等额冲减。
+- 锚定测试：逐活动仓位累加 `Position.principalDebt`，断言等于 `mintingStatusTable(address(position)).amountInMinted`（§13）。
+- 口径边界：对账读 per-minter 的 `amountInMinted`，不读 `totalSupply()`——后者受其它 minter、OFT 跨链与 PSM 储备铸烧影响；OFT 跨链不触碰 minter 台账（`docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」），故跨链 supply movement 不参与本式。
+- position minter wiring：position 合约经部署脚本注册为 uAsset minter 并配置 `mintingCap`；升级/迁移不得在不改该注册的情况下单独变更 position 侧台账。
+- `OutrunUniversalAssetsUpgradeable.sol::transferMinterDebt` 以该 minter（position）为 from/to 时只迁移 minter 级债务、不自动同步 position 台账：仅限修复无仓位债支撑的错账；对有真实仓位支撑的债务调用即打破本恒等式，且 SP 侧无账本导出/导入入口，活 SP 退役走清偿路径（`setMintingCap(SP,0)` → 存量经 `redeem` 清偿 → `revokeMinter`）。
+- 修账验收步骤：修账前记录恒等式偏离方向与量 → 执行 `transferMinterDebt` 归位 → 修账后逐项核对 `positions(id)` 的 `principalDebt` 与 position minter 的 `amountInMinted`（经 `mintingStatusTable` 直读），本式重新成立即通过。
+
+**第二行（PSM，豁免）**：PSM 经 uAsset 储备铸烧路径（`reserveMint`/`reserveBurn`）供给，豁免 minter 债务台账（储备侧口径）；储备守恒式与豁免语义真源见 `docs/spec/psm/peg-stability-module.md`。
+
+**第三行（POLend，接口预留）**：`POLend 行 == Σ globalDebtByUAsset + 未结 preRedeem backing`；`globalDebtByUAsset` 视图族的接口语义预留见 §12，Memeverse 侧持子账本，本仓库不实现。
+
+### 10.3 背书不变式（v1 核心锚点）
+
+- **仓位形态**：对任意活动仓位，`positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)`——由铸造的两段 down 取整构造成立（§3），两段 floor 保证严格 ≤；这是 uAsset 足额背书的唯一链上构造来源。
+- **聚合形态**：`amountInMinted(SPx) ≤ Σ collateralValue`（各仓按其铸造时点汇率计）。
+- 汇率单调不降假设下（收益型资产正常态），背书率随时间单调改善——0 利息（v1 默认）下债务冻结、抵押生息，仓位自愈；LST 削罚例外声明见 §5.1。
+- 铸造取整方向是构造来源：`mintedUAsset = floor₂(syStaked × exchangeRate())`，不存在任何放大杠杆段（v1 无 LTV 缩放、无乘数、无折扣）。
+- 回锚双管道（脱钩不是单行道）：uAsset 折价 → genesis 借款人买折价 uAsset 还债赎 SY（债赎套利，`redeem` SY 直出保证该通道 oracle 无关）；uAsset 溢价 → PSM 储备放出。借款人与非借款人两条锚定管道并存。
 
 ## 11. Position manager 错误与事件真源
 
-本节是 `IOutrunStakeManager.sol` 声明的 18 个自定义错误和 10 个事件的 canonical surface。错误表只覆盖 position manager 自己声明并在本地分支触发的错误；OpenZeppelin、`TokenHelper`、`SY` adapter 和 `uAsset` 的错误属于依赖边界。每个本地错误都会使整笔交易 revert，已经发生的 manager storage 写入、ERC20 transfer 或下游调用一并回滚。
+本节是 v1 `IOutrunStakeManager.sol` 声明的自定义错误与事件的 canonical surface。错误表只覆盖 position manager 自己声明并在本地分支触发的错误；OpenZeppelin、`TokenHelper`、`SY` adapter、oracle adapter 和 `uAsset` 的错误属于依赖边界。每个本地错误都使整笔交易 revert，已发生的 manager storage 写入、ERC20 transfer 或下游调用一并回滚。
 
-### 11.1 18 个自定义错误
+### 11.1 错误全表（14 个）
 
 下表中的 `::function` 简写均指 `OutrunStakingPositionUpgradeable.sol::function`；接口声明锚点为 `IOutrunStakeManager.sol`。
 
 | 错误 | 入口与精确触发分支 | 参数 | 回滚 / 依赖边界 |
 | --- | --- | --- | --- |
-| `ZeroInput()` | `OutrunStakingPositionUpgradeable.sol::initialize` 的 owner、revenuePool、SY、uAsset 或 keeper 为零；`::stake` 的 amount、positionOwner 或 uAssetReceiver 为零；`::drawUAsset` 的 receiver 为零；`::wrapStake` 的 amount 或 receiver 为零；`::redeem` 的 receiver 为零；`::keepWrapRedeem` 的 amount 或 receiver 为零；`::keepRedeem` 的 amount 或 receiver 为零；`::setRevenuePool` / `::setKeeper` 的新地址为零。`::previewWrapStake`、`::previewWrapRedeem`、`::previewKeepRedeem` 的零数量也走此错误。 | 无 | 各入口的本地零值守卫；状态写入和 token 依赖调用均在守卫之后。`keepWrapRedeem` / `keepRedeem` 先做 keeper 守卫，非 keeper 会先得到 `PermissionDenied()`。 |
-| `DustRoundedToZero()` | `::stake`、`::wrapStake` 的 `SY -> canonical asset -> uAsset` 向下换算得到 `uAssetDebt == 0`；`::previewWrapStake` 的报价为 0；`::keepWrapRedeem` / `::previewWrapRedeem` 的 `uAsset -> canonical asset -> SY` 向下换算得到 `amountInSY == 0`；`::keepRedeem` / `::previewKeepRedeem` 的按比例 `syRedeemed == 0` 或 keeper 本金 `keeperPrincipalSY == 0`。`previewStake` 对同类下取整只返回 0，不触发本错误（rate==0 除外：现于汇率读取点先 revert `ZeroExchangeRate()`）。 | 无 | 所有这些检查都在对应 transfer、burn、position/pool 写入前；`exchangeRate()` 读取若失败则由 SY 依赖错误返回，读取返回 0 时由 position 侧 `ZeroExchangeRate()` 具名失败（rate==0 下各入口先触发该错误，本错误仅覆盖非零 rate 下的取整归零）。dust 不会创建零债务 position、改变 pool 或烧 keeper debt。 |
-| `ZeroExchangeRate()` | `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 读回的 SY `exchangeRate()` 为 0；所有消费汇率的换算入口（`::stake` / `::wrapStake` / `::drawUAsset` / `::keepWrapRedeem` / `::keepRedeem` / `::harvestWrapYield` 及对应 preview）都在该读取点触发。 | 无 | 所有换算路径在读取点具名失败，先于一切 transfer、burn 与 position/pool 写入；rate==0 下原先的底层除零 / 下溢 Panic 与 0-返回、误归 `DustRoundedToZero()` / `NothingToDraw()` 等表现统一收敛为该具名错误，fail-closed 原子性不变；非零 rate 的一切路径行为不变。 |
-| `PermissionDenied()` | `OutrunStakingPositionUpgradeable.sol::keepWrapRedeem` 和 `::keepRedeem` 的 `msg.sender != keeper()`。 | 无 | 入口第一道 keeper 守卫；没有 manager 状态写入、uAsset repay 或 SY transfer。 |
-| `LockTimeNotExpired(uint128 deadline)` | `::redeem`、`::previewRedeem`、`::keepRedeem`、`::previewKeepRedeem` 的 `block.timestamp < position.deadline`。 | `deadline`：position 中保存的 uint128 Unix 秒时间戳。 | position 存在性检查后、任何 redeem 状态变化和依赖调用前触发；只读报价同样回退。 |
-| `LockTimeExpired(uint128 deadline)` | `::drawUAsset`、`::previewDrawUAsset` 的 `block.timestamp >= position.deadline`。 | `deadline`：position 中保存的 uint128 Unix 秒时间戳。 | position 存在性/owner 守卫后、汇率读取与一切状态写入前触发；只读报价同样回退。与 `LockTimeNotExpired` 的 `< deadline` 在 deadline 时刻精确互补（`>= deadline` 时 redeem 开放、draw 关闭）。 |
-| `LockupDaysOutOfRange(uint128 lockupDays)` | `::stake` 先以 uint256 计算 `deadline256 = block.timestamp + uint256(lockupDays) * 1 days`，若 `deadline256 > type(uint128).max`。 | `lockupDays`：输入的天数。 | 该分支位于 SY 已转入且 `syTotalStaking` 已暂增之后，但 revert 的原子性会回滚 transfer、账本暂增和后续 position 创建；不会产生溢出后已过期的 deadline。 |
-| `MinStakeInsufficient(uint256 minStake)` | `::stake` 和 `::previewStake` 的 `amountInSY < minStake()`。 | `minStake`：当前配置的最小 SY 数量。 | stake 在 transfer 前触发；preview 不写状态、不调用 token。 |
-| `PositionAccessDenied()` | `::drawUAsset` / `::redeem` 的 `onlyPositionOwner` 在 position 不存在或 caller 不是记录 owner 时；`::previewDrawUAsset`、`::previewRedeem`、`::previewKeepRedeem`、`::keepRedeem` 只在 position owner 为零（缺失/已删除）时。 | 无 | owner/modifier 或存在性守卫先于各自的状态写入和依赖调用；preview 不检查 caller 权限。 |
-| `ExceedsPositionBalance(uint256 requested, uint256 available)` | `::redeem` / `::previewRedeem` 的 `_validateRedeemAmount` 在 `syRedeemed > position.syStaked`；`_applyPositionRedeem` 对 redeem/keepRedeem 的共享防御分支也检查 `syRedeemed > syStaked`。 | `requested`：请求或计算的 SY 数量；`available`：position 当前 SY 数量。 | owner redeem 的输入守卫在任何写入前；共享 apply 守卫位于其 ledger subtraction 前。owner 路径在 repay 前，keeper 路径的计算值当前有上界保证；若未来防御分支在 keeper repay 后触发，原子 revert 会回滚该 repay 和全部 manager 写入。 |
-| `ExceedsPositionDebt(uint256 requested, uint256 available)` | `::keepRedeem` / `::previewKeepRedeem` 的 `amountInUAsset > position.UAssetMinted`；`_applyPositionRedeem` 对 redeem/keepRedeem 的共享防御分支检查 `UAssetBurned > positionUAssetMinted`。 | `requested`：输入或计算的 uAsset 数量；`available`：position 当前 uAsset debt（uAsset decimals）。 | 输入分支在 keeper burn 前；共享 apply 分支在 debt subtraction 前。合法 full redeem 等于 available，合法 partial redeem 的 ceiling 结果严格小于 available；keeper 路径若未来触发 apply 防御分支，已发生的 repay 也随原子 revert 回滚。 |
-| `InsufficientSyCollateral()` | `::keepRedeem` / `::previewKeepRedeem` 的 `_computeKeepRedeemShares`：全仓位上取整债务等值 `(_assetToSyUp(positionUAssetMinted) > syStaked)`，或防御性检查 `keeperPrincipalSY > syRedeemed`。 | 无 | 只读汇率和 position 值检查，发生在 keeper uAsset repay、position reduction 和 SY transfer 前；不通过 cap 或其他依赖来收敛金额，失败即整笔回滚。 |
-| `ExceedsWrapDebt(uint256 requested, uint256 available)` | `::keepWrapRedeem` / `::previewWrapRedeem` 的 `_validateWrapRedeemAmount` 在 `amountInUAsset > wrapUAssetDebt`。 | `requested`：要烧的 uAsset 数量；`available`：共享 wrap debt（uAsset decimals）。 | 在读取汇率、pool solvency 检查和任何 pool/repay 操作前触发；无状态变化。 |
-| `WrapPoolUndercollateralized()` | `::keepWrapRedeem` / `::previewWrapRedeem` 在当前汇率下 `_assetToSyUp(wrapUAssetDebt) > syWrapStaking`。 | 无 | keeper wrap redeem 采用 all-or-nothing；该只读 guard 在 pool subtraction、uAsset repay 和 SY transfer 前触发，不能以 pro-rata 方式支付。 |
-| `NothingToDraw()` | `::drawUAsset` 的 `currentValueInUAsset <= position.UAssetMinted`。 | 无 | 汇率估值后、position debt 写入和 uAsset mint 前触发；`previewDrawUAsset` 在同一条件下返回 0，不触发本错误（rate==0 时先在汇率读取点 revert `ZeroExchangeRate()`，不进入本条件）。 |
-| `PartialRedeemMustLeaveDebt()` | `::redeem` / `::previewRedeem` 的 partial 分支（`syRedeemed < syStaked`）在 ceiling 计算后 `UAssetBurned >= position.UAssetMinted`。full redeem 直接烧全部 debt，不进入此分支。 | 无 | `_computeRedeemPositionDebt` 在 position reduction、uAsset repay 和 output 前执行；不会留下 SY 仍存在但 debt 已被清零的 partial position。 |
-| `InsufficientTokenOut(uint256 actual, uint256 minExpected)` | `::redeem` 直接输出 SY 时 `syRedeemed < minTokenOut`；`::harvestWrapYield` 直接输出 SY 时 `amountInSY < minTokenOut`（rate==0 先在读取点 revert `ZeroExchangeRate()`，不进入本检查）。非 SY 输出交由 `SY.redeem` 的依赖校验。 | `actual`：本地可交付 SY 数量；`minExpected`：调用者的最小值。 | redeem 分支在 position apply 前；harvest 分支在临时扣减 `syTotalStaking` / `syWrapStaking` 后，但 revert 原子性会回滚该扣减。非 SY 的 adapter slippage/error 不属于这 18 个错误。 |
-| `DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset)` | `OutrunStakingPositionUpgradeable.sol::_authorizeUpgrade` 在 `SY.assetInfo().assetDecimals` 或 `uAsset.decimals()` 的实时值与 `initialize` 缓存的 `canonicalAssetDecimals`/`uAssetDecimals` 漂移时 | `cachedCanonical`/`currentCanonical`/`cachedUAsset`/`currentUAsset`：缓存与实时的两组 decimals | UUPS 升级守卫，发生在任何存储布局迁移前；漂移会使所有 `SY↔uAsset` 双段换算以 `10**delta` 静默错账，须通过重部署 SY+position 解决而非原地升级 |
+| `ZeroInput()` | `::initialize` 的 owner、SY、uAsset、protocolTreasury 零地址，或 `minStake == 0`；`duty < 1e27`（sub-RAY 即负利率，含 0；保 `rate` 单调不减）；`::stakeForGenesis` 的 `amountInSY` 或 `positionOwner` 为零；`::redeem` 的 receiver 为零或 `syRedeemed == 0`；`::setDuty` 的新率 sub-RAY；`::setProtocolTreasury` 的新地址为零；`::setMinStake` 的新值为零。`::previewStake`/`::previewRedeem` 的对应零输入同此错误。 | 无 | 各入口本地零值守卫，先于一切 transfer、写入与依赖调用。 |
+| `DustRoundedToZero()` | `::stakeForGenesis` 的 `SY -> canonical asset -> uAsset` 向下换算得到 `mintedUAsset == 0`。 | 无 | 检查在 transfer、写入与 mint 之前；不创建零债仓位。rate==0 先在读取点 revert `ZeroExchangeRate()`。 |
+| `ZeroExchangeRate()` | `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 读回的 SY `exchangeRate()` 为 0；`::stakeForGenesis` / `::previewStake` 在该读取点触发。 | 无 | fail-closed 单点守卫，先于一切换算与写入；`redeem` 的 SY 直出路径不读率，不受影响（owner 退出通道）。 |
+| `MinStakeInsufficient(uint256 minStake)` | `::stakeForGenesis` 与 `::previewStake` 的 `amountInSY < minStake()`。 | `minStake`：当前配置的最小 SY 数量。 | stakeForGenesis 在 transfer 前触发；preview 不写状态。 |
+| `PositionAccessDenied()` | `::redeem` 的 `onlyPositionOwner` 在仓位不存在或 caller 非记录 owner 时。 | 无 | owner/existence 守卫先于状态写入与外部调用。 |
+| `ExceedsPositionBalance(uint256 requested, uint256 available)` | `::redeem` / `::previewRedeem` 的 `syRedeemed > position.syStaked`。 | `requested`：请求的 SY 数量；`available`：仓位当前 SY 数量。 | 输入守卫在任何写入前。 |
+| `PartialRedeemMustLeaveDebt()` | `::redeem` / `::previewRedeem` 的 partial 分支在 ceil 计算后 `principalPortion >= principalDebt`。full redeem 不进入此分支。 | 无 | 在仓位减记、repay 与输出前触发；不留下 SY 仍在而本金已被清零的 partial 仓位。 |
+| `InsufficientTokenOut(uint256 actual, uint256 minExpected)` | `::redeem` 直接输出 SY 时 `syRedeemed < minTokenOut`；非 SY 输出由 `SY.redeem` 依赖校验。 | `actual`：本地可交付 SY 数量；`minExpected`：调用者下限。 | 在仓位 apply 前；revert 原子回滚。 |
+| `DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset)` | `OutrunStakingPositionUpgradeable.sol::_authorizeUpgrade` 在 `SY.assetInfo().assetDecimals` 或 `uAsset.decimals()` 实时值与 `initialize` 缓存值漂移时。 | 缓存与实时两组 decimals。 | UUPS 升级守卫，发生在任何存储布局迁移前；漂移须重部署 SY+position 解决。 |
+| `DutyCap(uint256 newDuty)` | `::initialize` 的 `duty_ > DUTY_CAP` 及 `::setDuty` 的 `newDuty > DUTY_CAP`（上限 `DUTY_CAP = 1000000004431822129783699001`，年化 15% 等效每秒率）。 | 新值。 | setter 本地校验，无状态变化。 |
+| `InsufficientUAssetMinted(uint256 mintedUAsset, uint256 minMinted)` | `::stakeForGenesis` 的 `mintedUAsset < minUAssetMinted`（SP 本地声明）。 | `mintedUAsset`：实际铸出量；`minMinted`：调用者下限。 | 铸出量计算后、仓位写入与 mint 之前；整笔回滚。零值 `minUAssetMinted` 为无保护透传。 |
+| `InvalidParam()` | `::stakeForGenesis` 的 `mintedUAsset > type(uint128).max`（与 router 路径 A（`genesisByPSM`）的同名守卫同构，launcher 参数域为 uint128）。 | 无 | 铸出量计算后、对 launcher 的 approve 与 `genesis` 调用之前。 |
+| `GenesisLauncherNotSet()` | `::stakeForGenesis` 的 `genesisLauncher == address(0)`（部署默认态或 owner 置零＝入口禁用，kill switch）。 | 无 | 前置守卫，先于一切资金移动与写入。 |
+| `GenesisGateLib.GenesisUAssetNotConsumed(uint256 residualBalance, uint256 residualAllowance)` | `::stakeForGenesis` 后置断言（`GenesisGateLib.sol::assertFullConsumption`）：`IMemeverseLauncher.genesis` 返回后 SP 的 uAsset 余额 != 铸出前基线，或对 `genesisLauncher` 的 allowance 非零（任一成立即触发）。 | `residualBalance`：余额相对铸出前基线的残余；`residualAllowance`：对 launcher 的残余授权。 | 部分消费、转回或任何残余 → 整笔回滚（仓位与铸出一并消失，§3.1）；launcher 自身 revert 属依赖边界原样透传。 |
 
-本地错误和下游依赖的边界固定如下：`uAsset.mint` 的 mint cap、`uAsset.repay` 的账户余额/授权、`SY.redeem` 的 token 校验与输出下限、`_transferIn` / `_transferOut` 的 ERC20 行为，以及 initializer 的 `assetInfo()` / `decimals()` 失败，不会改名为 position manager 错误；它们的 revert data 原样形成外部依赖边界。任何下游 revert 同样回滚本函数已做的 manager storage 写入。
+本地错误与下游依赖边界固定：`uAsset.mint` 的 mint cap（`ReachMintCap`）、`uAsset.repay` 的余额/授权、`uAsset` ERC20 transferFrom 的余额/授权、`SY.redeem` 的 token 校验与输出下限、oracle adapter 的 `StaleOracleAnswer` 等喂价错误、SY 侧锚点偏差熔断的 `RateDeviationExceeded`（oracle-backed SY 基类带外读数 revert，经 `OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 原样透传——`stakeForGenesis` / `previewStake` fail-closed，`redeem` SY 直出不读率、不受影响，与 `ZeroExchangeRate` 消费面同口径）、initializer 的 `assetInfo()`/`decimals()` 失败，以及 `genesisLauncher.genesis` 的自身回退，不改名为 position manager 错误；revert data 原样透传并回滚本地已做写入。
 
-### 11.2 10 个事件、单位与索引
+### 11.2 事件全表（7 个）
 
-下表按 `IOutrunStakeManager.sol` 的声明和 `OutrunStakingPositionUpgradeable.sol` 的 emit 点记录字段。`indexed` 是日志 topic 索引属性，不改变字段的数值单位。
+下表按 `IOutrunStakeManager.sol` 声明与 `OutrunStakingPositionUpgradeable.sol` emit 点记录。
 
 | 事件 | 字段（单位） | indexed 字段 | 状态 / 索引含义 |
 | --- | --- | --- | --- |
-| `Stake` | `positionId`（position id）；`owner`（地址）；`amountInSY`（SY token units）；`mintedUAsset`（本次铸造的 uAsset units，uAsset decimals 口径，等于创建时 `Position.UAssetMinted` 即该 position 初始债务）；`deadline`（Unix 秒 timestamp，事件为 uint256，position 存储为 uint128）。 | `positionId`, `owner` | `::stake` 成功后创建 position、推进 `idCounter` 并铸 uAsset；owner 可与交易 caller 不同。事件用于发现新 position 和其初始 debt/deadline（经 `mintedUAsset`）。 |
-| `DrawUAsset` | `positionId`（position id）；`uAssetReceiver`（地址）；`mintedUAsset`（本次新增 uAsset units，不是 position 总 debt）。 | `positionId`, `uAssetReceiver` | `::drawUAsset` 将 position debt 写为当前估值并成功 mint 后发出；事件字段是调用增量，当前总 debt 仍需读 `positions(positionId)`. |
-| `Redeem` | `positionId`（position id）；`owner`（地址，当前为通过 owner guard 的 `msg.sender`）；`syRedeemed`（SY units）；`UAssetBurned`（uAsset units）；`receiver`（地址）；`tokenOut`（token 地址）；`amountTokenOut`（`tokenOut` units）。 | `positionId`, `owner`, `receiver` | `::redeem` 完成 position 减记/删除、uAsset repay 和 output 后发出；full redeem 后 `positions(id)` 的 owner 变为零。 |
-| `WrapStake` | `amountInSY`（SY units）；`mintedUAsset`（本次新增 uAsset units）；`uAssetReceiver`（地址）。 | `uAssetReceiver` | `::wrapStake` 只改变共享 `syTotalStaking`、`syWrapStaking`、`wrapUAssetDebt`，不创建 position id；事件按交易记录聚合池的增量。 |
-| `KeepWrapRedeem` | `keeper`（地址，`msg.sender`）；`receiver`（地址）；`amountInUAsset`（烧掉的 uAsset units）；`amountInSY`（释放的 SY units）。 | `keeper`, `receiver` | `::keepWrapRedeem` 成功后减少共享 pool/debt 并直付 SY；没有 position id，keeper 身份从 indexed sender 字段和交易 sender 双重确认。 |
-| `KeepRedeem` | `positionId`（position id）；`owner`（position owner 地址）；`UAssetBurned`（keeper 烧掉的 uAsset units）；`receiver`（keeper principal 的地址）；`keeperPrincipalSY`（SY units）；`ownerExcessSY`（SY units）。 | `positionId`, `owner`, `receiver` | `::keepRedeem` 完成 keeper repay、position 减记/删除及两方转账后发出；keeper 本身不在字段中，`receiver` 是 keeper principal 收款地址，owner excess 收款地址由 `owner` 表示。从 position 释放的 SY 总量（内部计算量 `syRedeemed`）恒等于 `keeperPrincipalSY + ownerExcessSY`，不再单列事件字段。 |
-| `HarvestWrapYield` | `receiver`（地址，当前为 `revenuePool`）；`tokenOut`（地址）；`amountInSY`（从 wrap pool 扣除的 SY units）；`amountTokenOut`（`tokenOut` units）。 | `receiver`, `tokenOut` | `::harvestWrapYield` 只移除 debt 覆盖线以上的 pool SY，`wrapUAssetDebt` 不变；有超额且 payout 成功才 emit，`wrapPoolSY <= wrapDebtInSY` 的零收益早返不 emit。 |
-| `SetMinStake` | `minStake`（SY units）。 | 无 | `::setMinStake` 更新新阈值；事件只记录新值，旧值需由前一事件或链上读取推导。 |
-| `SetRevenuePool` | `revenuePool`（地址）。 | `revenuePool` | `::setRevenuePool` 更新 harvest 收款目的地；indexed 字段是新地址，不包含旧地址。 |
-| `SetKeeper` | `keeper`（地址）。 | `keeper` | `::setKeeper` 更新 keeper 权限边界；indexed 字段是新地址，不包含旧地址。 |
+| `Stake` | `positionId`；`owner`（地址）；`amountInSY`（SY units）；`mintedUAsset`（uAsset units，= 该仓初始 `principalDebt`）。 | `positionId`, `owner` | `::stakeForGenesis` 成功创建仓位、铸 uAsset 后发出（随后另发 `StakeForGenesis`）；owner 可与 caller 不同。 |
+| `StakeForGenesis` | `positionId`；`positionOwner`（地址）；`verseId`（uint256，launcher opaque ID 原样转发）；`mintedUAsset`（uAsset units，= 该仓初始 `principalDebt`）。 | `positionId`, `positionOwner` | `::stakeForGenesis` 后置断言通过后紧随同 positionId 的 `Stake` 发出；两事件互为印证（§3.1 (h)）。 |
+| `Redeem` | `positionId`；`owner`（通过 owner guard 的 `msg.sender`）；`syRedeemed`（SY units）；`principalBurned`（uAsset units，本金腿 burn 量）；`interestPaid`（uAsset units，利息腿转金库量）；`receiver`；`tokenOut`；`amountTokenOut`。 | `positionId`, `owner`, `receiver` | `::redeem` 完成仓位减记/删除、两腿偿还与输出后发出；两腿合计 = 本次总偿付（v1 零费下 `interestPaid == 0`）。full redeem 后 `positions(id)` owner 归零。 |
+| `SetDuty` | `oldDuty`、`newDuty`（RAY 1e27 域每秒率）。 | 无 | `::setDuty` 成功；emit 前已完成旧 `duty` 分段结算（§4.3）。 |
+| `SetGenesisLauncher` | `oldLauncher`、`newLauncher`（地址）。 | `oldLauncher`, `newLauncher` | `::setGenesisLauncher` 更新 genesis launcher 目标；接受任意地址含零（零＝`stakeForGenesis` 入口禁用 kill switch）。 |
+| `SetMinStake` | `minStake`（SY units）。 | 无 | `::setMinStake` 更新阈值；沿用单值形态（旧值由前一事件推导）。 |
+| `SetProtocolTreasury` | `protocolTreasury`（地址）。 | `protocolTreasury` | `::setProtocolTreasury` 更新利息腿收款目的地。 |
 
-### 11.3 Position enumeration 与事件历史
+### 11.3 视图族、Position enumeration 与事件历史
 
-- `idCounter()`（`AutoIncrementIdUpgradeable.sol::idCounter`）返回最后一次已签发的 position id；`_nextId` 预增，因此有效新 id 从 1 开始并单调递增。`wrapStake` / `keepWrapRedeem` 只操作聚合池，不签发 id。
-- 链上枚举应把 `1 .. idCounter()` 作为候选范围并逐项读取 `positions(id)`（`OutrunStakingPositionUpgradeable.sol::positions`）。返回 `owner == address(0)` 表示该 id 从未创建或已被 full redeem 删除；因此删除后会留下可观测的 id 空洞，没有单独的 position length/active-id 数组。
-- 事件历史与当前 storage 互补：`Stake` 发现创建，`DrawUAsset` 记录 debt 增量，`Redeem` / `KeepRedeem` 记录 position 减记或删除，`WrapStake` / `KeepWrapRedeem` / `HarvestWrapYield` 记录共享池增减，三个 `Set*` 事件记录配置变更。事件是追加式索引和审计轨迹；当前余额、owner、剩余 debt 以 `positions(id)`、`syTotalStaking`、`syWrapStaking`、`wrapUAssetDebt` 为准。
+- 计息状态视图族：`duty()`、`rate()`（已结算存储值）、`rateLastSettledAt()`（最近结算 timestamp）、`currentRate()`（外推至当前时刻，不写）；仓位级 `pendingInterest(positionId)`（未结算利息，外推）、`positionDebt(positionId)`（= `principalDebt + accruedInterest + pendingInterest`）。
+- 参数视图：`minStake()`、`genesisLauncher()`、`protocolTreasury()`、`SY()`、`uAsset()`。
+- `positions(positionId)` 返回 `(owner, syStaked, principalDebt, accruedInterest, lastRate)`。
+- `idCounter()`（`AutoIncrementIdUpgradeable.sol::idCounter`）返回最后已签发的 position id；有效 id 从 1 起单调递增、永不复用。链上枚举把 `1 .. idCounter()` 作为候选范围逐项读取 `positions(id)`；`owner == address(0)` 表示从未创建或已删除（full redeem 后留下可观测 id 空洞，无 active-id 数组）。
+- 事件历史与 storage 互补：`Stake` + `StakeForGenesis` 发现创建（含 `verseId`），`Redeem` 记录两腿减记/删除，`Set*` 族记录配置变更（含 `SetGenesisLauncher`）。当前余额、剩余债务以 `positions(id)` 与视图族为准。
+
+## 12. POLend 对账接口预留（`globalDebtByUAsset` 视图族）
+
+- 语义：按 uAsset 族聚合的 Memeverse 侧杠杆债务视图——返回该族 POLend（Memeverse 杠杆创世供给）未偿本金债务总额，18-dec uAsset 单位；配套概念「未结 preRedeem backing」指 Memeverse 创世/preRedeem 流程中已铸出但对应仓位尚未完成赎回结算的背书量。
+- 归属：子账本由 Memeverse 侧持有与实现，本仓库只预留接口语义，不在本仓库实现或部署该视图。
+- 消费方：uAsset 供给侧第三行对账（§10.2 第三行）——`POLend 行 == Σ globalDebtByUAsset + 未结 preRedeem backing`；跨仓库对账流程在协议层文档落地，本文只固定公式与接口语义。
+
+## 13. 测试与不变量验收清单
+
+v1 合约变更落地时，测试/不变量以下列条目为验收基准：
+
+1. **守恒式**：任意状态变更后 `SP 合约 SY 余额 == Σ active positions.syStaked`（§10.1；遍历 `1 .. idCounter()` 断言）；两种断言口径——handler 流（无第三方直转 SY）断言严格等式，fuzz 含捐赠流断言余额 ≥ 分解项之和且差值恰为累计捐赠沉淀。
+2. **对账式（本金 + 应计 + PSM 豁免）**：`amountInMinted(SPx) == Σ active positions.principalDebt` 恒成立；应计利息结算/支付前后 minter 台账不动（利息腿只 transfer）；PSM 储备铸烧不改 minter 台账（豁免行回归，真源 `docs/spec/psm/peg-stability-module.md`）。
+3. **背书不变式 fuzz（v1 核心锚点）**：任意状态下逐活动仓位断言 `positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)`、聚合断言 `amountInMinted(SPx) ≤ Σ collateralValue`（各仓按其铸造时点汇率计）；fuzz 含汇率上行（背书率单调改善）与 dust 边界（两段 down 归零面）；uAsset 侧仅 SP minter 经 `mint` 铸出（PSM 走储备路径、OFT 走 `_credit`）。
+4. **oracle fail-closed**：oracle adapter stale/零率 revert 时 `stakeForGenesis`/`previewStake` 原子拒绝（`ZeroExchangeRate` 本地分支 + adapter 依赖错误透传分支各自覆盖）；`redeem` SY 直出不读率、可用（owner 退出通道回归）。
+5. **accrual 精度**：interest 结算对独立参考实现（`Δint = principalDebt × (rateNow − lastRate) / 1e27`，`rateNow = rmul(rpow(duty, dt), rate)` 逐步模拟，时间经 warp 推进）逐步一致；复利性质（累计 `rate` 按 `duty` 复利增长）；partial redeem 后按新本金续计；同秒（同一 timestamp）preview/执行一致；`rate` 单调不减；距上次结算触点 N 秒后开仓的仓位，首次结算利息按开仓时刻起算（开仓前 N 秒不产生本仓利息，`lastRate` 为开仓时刻结算后快照、`initialize` 后首触点自 init 时刻起算）；零费（`duty = 1e27`）下 `rate` 恒 `1e27`、`pendingInterest` 恒 0、`accruedInterest` 恒 0。
+6. **调息边界**：`new < 1e27`（含 0，sub-RAY）revert `ZeroInput`，`new > DUTY_CAP` revert `DutyCap`；`new == 1e27` 合法（零费哨兵放行）；域内 `[1e27, DUTY_CAP = 1000000004431822129783699001]` 任意值一笔可设，两端可设；分段生效——变更时刻前后利息按旧/新 `duty` 各计各的。
+7. **repay 双腿（本金 burn / 利息 transfer）**：redeem 的本金腿减少 SP minter `amountInMinted` 并 burn 调用者余额、利息腿等额转 `protocolTreasury` 且不改 `amountInMinted`/`totalSupply`（除 transfer 的持有人变化）；allowance 不足时依赖边界整笔回退。
+8. **参数面全表回归**：§6/§11.1 每个 setter（`setDuty`/`setGenesisLauncher`/`setMinStake`/`setProtocolTreasury`）的接受/拒绝矩阵与 `Set*` 事件字段；`initialize` 同套校验与零值拒绝。
+9. **暂停矩阵回归**：[state-machines.md](./state-machines.md) §8 矩阵逐行（SP/SY/uAsset 三级对 stakeForGenesis/redeem 的阻断面）；SP 暂停期计息外推继续（运维含义）。
+10. **mint-as-you-accrue 禁令**：任何只触发计息结算（redeem partial、视图外推、setDuty）的路径不改变 `uAsset.totalSupply()`（零费下计息增量恒 0，禁令对 `duty > 1e27` 域保持回归）。
+11. **genesis 物理门（`stakeForGenesis`，测试面见 `test/upgradeable/OutrunStakingPositionUpgradeable.t.sol`）**：成功路径后 SP 的 uAsset 余额恒等于调用前（mint→consume 交易内闭环守恒断言）；mock launcher 部分消费 / 转回 → `GenesisUAssetNotConsumed` 整笔回退（无仓位、无铸出）；launcher revert → 无仓位、无 mint；`genesisLauncher == address(0)` → `GenesisLauncherNotSet` 先于资金移动。
+12. **uint128 边界与 minUAssetMinted 下限**：`mintedUAsset > type(uint128).max` → `InvalidParam()`（恰等上限可过）；`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted(mintedUAsset, minMinted)`（零值下限为无保护透传）。
+13. **router 薄转发等价**：router `genesisBySY`/`genesisByToken` 与直接调用 `SP.stakeForGenesis`（同输入同参数）铸出额、仓位字段、launcher 收额一致（等价性测试见 `test/upgradeable/RouterProxyIntegration.t.sol`）；router 路径 B 全程不持有 uAsset；部署布线验收（`GENESIS_LAUNCHER` env + `SP.genesisLauncher() == router.memeverseLauncher()` 同址断言）见 `test/upgradeable/OutstakeScriptMockSYDeploy.t.sol`。
+
+preview 面注记：不新增 genesis 专属 preview；`previewStake` 公式同式覆盖执行入口（genesis 消费量 == 铸出量，确定性），genesis 专属守卫（`minUAssetMinted`、uint128、launcher 禁用、后置断言）只在执行入口可见。
