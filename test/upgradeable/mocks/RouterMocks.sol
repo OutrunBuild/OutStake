@@ -2,9 +2,8 @@
 pragma solidity ^0.8.35;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {MockUAssetReserveBase} from "./MockUAssetReserveBase.sol";
 import {IStandardizedYield} from "../../../src/yield/interfaces/IStandardizedYield.sol";
-import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.sol";
 
 /**
  * @title RouterMockSY
@@ -12,40 +11,28 @@ import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.
  * @dev Partial mock: models deposit pull/minSharesOut and redeem burn/transfer/minTokenOut for
  *      consumer-level router tests. Does not model exchange-rate-based redeem conversion or a
  *      production token surface; token surfaces are aligned to the underlying token only.
+ *      Decimals model: fixed 18 (assetDecimals hard-coded, no setDecimals);
+ *      use MockSY in PositionTestMocks for configurable-decimals runs.
  */
 contract RouterMockSY is ERC20, IStandardizedYield {
     error RouterDepositTransferFailed();
     error RouterInsufficientSharesOut(uint256 actual, uint256 minimum);
 
     address internal immutable underlying;
-    uint256 internal rate;
-    uint256 internal depositRate;
+    // 1e18 identity rate for the exchangeRate() seam read by the position stack.
+    uint256 internal constant RATE = 1e18;
     address internal lastDepositTokenIn;
     uint256 internal lastDepositAmount;
     uint256 internal lastDepositValue;
-    uint256 internal zeroApproveCount;
 
     constructor(address underlying_) ERC20("Mock SY", "mSY") {
         underlying = underlying_;
-        rate = 1e18;
-        depositRate = 1e18;
-    }
-
-    /// @notice Sets the token-to-SY conversion used by deposit and previewDeposit.
-    /// @dev Kept separate from exchangeRate, which models the SY-to-uAsset conversion in the position mock.
-    function setDepositRate(uint256 newRate) external {
-        depositRate = newRate;
     }
 
     function mintShares(address receiver, uint256 amount) external {
         _mint(receiver, amount);
-    }
-
-    function approve(address spender, uint256 amount) public override(ERC20, IERC20) returns (bool) {
-        if (amount == 0) {
-            zeroApproveCount += 1;
-        }
-        return super.approve(spender, amount);
+        // Minted test shares need matching backing so redeem exercises a real transfer path.
+        RouterMockERC20(underlying).mint(address(this), amount);
     }
 
     function deposit(address receiver, address tokenIn, uint256 amountTokenToDeposit, uint256 minSharesOut)
@@ -92,7 +79,7 @@ contract RouterMockSY is ERC20, IStandardizedYield {
     }
 
     function exchangeRate() external view returns (uint256 res) {
-        res = rate;
+        res = RATE;
     }
 
     function yieldBearingToken() external view returns (address) {
@@ -129,26 +116,17 @@ contract RouterMockSY is ERC20, IStandardizedYield {
         amountTokenOut = amountSharesToRedeem;
     }
 
-    function _convertDepositAmount(address tokenIn, uint256 amountTokenToDeposit)
+    function _convertDepositAmount(address, uint256 amountTokenToDeposit)
         internal
-        view
+        pure
         returns (uint256 amountSharesOut)
     {
-        if (tokenIn == address(this)) return amountTokenToDeposit;
-        if (depositRate == 1e18) return amountTokenToDeposit;
-        amountSharesOut = amountTokenToDeposit * depositRate / 1e18;
+        // Identity conversion: the mock mints SY 1:1 with the deposited token amount.
+        return amountTokenToDeposit;
     }
 
     function lastDeposit() external view returns (address tokenIn, uint256 amount, uint256 value) {
         return (lastDepositTokenIn, lastDepositAmount, lastDepositValue);
-    }
-
-    function getZeroApproveCount() external view returns (uint256 count) {
-        return zeroApproveCount;
-    }
-
-    function resetZeroApproveCount() external {
-        zeroApproveCount = 0;
     }
 
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {
@@ -161,195 +139,51 @@ contract RouterMockSY is ERC20, IStandardizedYield {
 /**
  * @title RouterMockERC20
  * @notice Mock ERC20 token used in router tests.
- * @dev Tracks zero-approve calls for allowance-clearing verification.
+ * @dev Full mock: standard OpenZeppelin ERC20 semantics plus a test-only faucet mint; no caps, fees,
+ *      or deflation behavior.
+ *      Decimals model: fixed 18 (no decimals override; OpenZeppelin default).
  */
 contract RouterMockERC20 is ERC20 {
-    uint256 internal zeroApproveCount;
-
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
-
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        if (amount == 0) {
-            zeroApproveCount += 1;
-        }
-        return super.approve(spender, amount);
-    }
 
     function mint(address receiver, uint256 amount) external {
         _mint(receiver, amount);
-    }
-
-    function getZeroApproveCount() external view returns (uint256 count) {
-        return zeroApproveCount;
-    }
-
-    function resetZeroApproveCount() external {
-        zeroApproveCount = 0;
     }
 }
 
 /**
  * @title RouterMockUAsset
  * @notice Mock Universal Asset token used in router tests.
- * @dev Implements minting cap and repayment logic with owner-only admin functions.
+ * @dev Implements minting cap and repayment logic with owner-only admin functions. Models the pausable
+ *      uAsset seam of the production asset: a test-admin pause switch blocks mint/repay/reserveMint/
+ *      reserveBurn and every transfer with EnforcedPause while paused (mirrors the production contract's
+ *      whenNotPaused entrypoints and _update guard).
  */
-contract RouterMockUAsset is ERC20, IUniversalAssets {
-    address public immutable owner;
-    uint256 internal zeroApproveCount;
+contract RouterMockUAsset is MockUAssetReserveBase {
+    bool public paused;
 
-    mapping(address minter => MintingStatus) public mintingStatusTable;
+    error EnforcedPause();
 
-    error OwnableUnauthorizedAccount(address account);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, OwnableUnauthorizedAccount(msg.sender));
+    modifier whenNotPaused() {
+        require(!paused, EnforcedPause());
         _;
     }
 
-    constructor() ERC20("Mock UAsset", "mUAsset") {
-        owner = msg.sender;
+    /// @notice Test-admin pause switch mirroring the production uAsset's owner pause.
+    function pause() external onlyOwner {
+        paused = true;
     }
 
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        if (amount == 0) {
-            zeroApproveCount += 1;
-        }
-        return super.approve(spender, amount);
+    /// @notice Test-admin unpause switch.
+    function unpause() external onlyOwner {
+        paused = false;
     }
 
-    function checkMintableAmount(address minter) external view returns (uint256 amountInMintable) {
-        MintingStatus storage status = mintingStatusTable[minter];
-        amountInMintable = status.mintingCap > status.amountInMinted ? status.mintingCap - status.amountInMinted : 0;
+    function _update(address from, address to, uint256 value) internal virtual override whenNotPaused {
+        super._update(from, to, value);
     }
 
-    function setMintingCap(address minter, uint256 mintingCap) public onlyOwner {
-        require(minter != address(0), ZeroInput());
-        mintingStatusTable[minter].mintingCap = mintingCap;
-    }
-
-    function revokeMinter(address minter) external onlyOwner {
-        require(minter != address(0), ZeroInput());
-        mintingStatusTable[minter].mintingCap = 0;
-    }
-
-    function transferMinterDebt(address from, address to, uint256 amount) external onlyOwner {
-        require(from != address(0) && to != address(0) && from != to && amount != 0, ZeroInput());
-
-        MintingStatus storage fromStatus = mintingStatusTable[from];
-        require(fromStatus.amountInMinted >= amount, ReachBurnCap());
-
-        MintingStatus storage toStatus = mintingStatusTable[to];
-        require(toStatus.mintingCap >= toStatus.amountInMinted, ReachMintCap());
-        require(amount <= toStatus.mintingCap - toStatus.amountInMinted, ReachMintCap());
-
-        fromStatus.amountInMinted -= amount;
-        toStatus.amountInMinted += amount;
-    }
-
-    function mint(address receiver, uint256 amount) external {
-        MintingStatus storage status = mintingStatusTable[msg.sender];
-        require(status.amountInMinted + amount <= status.mintingCap, ReachMintCap());
-        status.amountInMinted += amount;
-        _mint(receiver, amount);
-    }
-
-    function repay(address account, uint256 amount) external {
-        MintingStatus storage status = mintingStatusTable[msg.sender];
-        require(status.amountInMinted >= amount, ReachBurnCap());
-        _spendAllowance(account, msg.sender, amount);
-        status.amountInMinted -= amount;
-        _burn(account, amount);
-    }
-
-    function getZeroApproveCount() external view returns (uint256 count) {
-        return zeroApproveCount;
-    }
-
-    function resetZeroApproveCount() external {
-        zeroApproveCount = 0;
-    }
-}
-
-/**
- * @title RouterMockLauncher
- * @notice Mock Memeverse launcher used in router tests.
- * @dev Records the last genesis call parameters for test assertions.
- */
-contract RouterMockLauncher {
-    error RouterGenesisTransferFailed();
-
-    RouterMockUAsset internal immutable uAsset;
-    uint256 internal lastVerseId;
-    uint128 internal lastAmountInUAsset;
-    address internal lastUser;
-
-    constructor(address uAsset_) {
-        uAsset = RouterMockUAsset(uAsset_);
-    }
-
-    function genesis(uint256 verseId, uint128 amountInUAsset, address user) external {
-        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) revert RouterGenesisTransferFailed();
-        lastVerseId = verseId;
-        lastAmountInUAsset = amountInUAsset;
-        lastUser = user;
-    }
-
-    function snapshot() external view returns (uint256 verseId, uint128 amountInUAsset, address user) {
-        return (lastVerseId, lastAmountInUAsset, lastUser);
-    }
-}
-
-/**
- * @title RouterMockPartialLauncher
- * @notice Mock Memeverse launcher that consumes only half of the approved genesis uAsset.
- * @dev Partial mock: models a launcher that partially pulls the genesis uAsset (transferFrom of exactly
- *      half of `amountInUAsset`). Does not model snapshot/verse bookkeeping or other genesis side effects.
- */
-contract RouterMockPartialLauncher {
-    RouterMockUAsset internal immutable uAsset;
-
-    constructor(address uAsset_) {
-        uAsset = RouterMockUAsset(uAsset_);
-    }
-
-    function genesis(uint256, uint128 amountInUAsset, address) external {
-        // Consume exactly half of the approved amount to model partial launcher consumption.
-        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset / 2)) {
-            revert RouterMockLauncher.RouterGenesisTransferFailed();
-        }
-    }
-}
-
-/**
- * @title RouterMockEmptyLauncher
- * @notice Mock Memeverse launcher whose genesis consumes none of the approved uAsset.
- * @dev Partial mock: models a launcher that leaves the approved genesis uAsset untouched (no transferFrom).
- *      Does not model snapshot/verse bookkeeping or other genesis side effects.
- */
-contract RouterMockEmptyLauncher {
-    function genesis(uint256, uint128, address) external {}
-}
-
-/**
- * @title RouterMockTransferBackLauncher
- * @notice Mock Memeverse launcher that pulls the full genesis uAsset and transfers part of it back.
- * @dev Partial mock: models full-pull-then-return launcher behavior (transferFrom of the full `amountInUAsset`
- *      followed by a transfer of `amountInUAsset / 10` back to the caller). Does not model snapshot/verse
- *      bookkeeping or other genesis side effects.
- */
-contract RouterMockTransferBackLauncher {
-    RouterMockUAsset internal immutable uAsset;
-
-    constructor(address uAsset_) {
-        uAsset = RouterMockUAsset(uAsset_);
-    }
-
-    function genesis(uint256, uint128 amountInUAsset, address) external {
-        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
-            revert RouterMockLauncher.RouterGenesisTransferFailed();
-        }
-        if (!uAsset.transfer(msg.sender, amountInUAsset / 10)) {
-            revert RouterMockLauncher.RouterGenesisTransferFailed();
-        }
+    function _requireNotPaused() internal view override {
+        require(!paused, EnforcedPause());
     }
 }

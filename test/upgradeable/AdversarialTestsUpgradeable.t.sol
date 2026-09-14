@@ -1,20 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {Test} from "forge-std/Test.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
-import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
-import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {GenesisGateLib} from "../../src/libraries/GenesisGateLib.sol";
+import {OutrunExchangeOracleAdapter} from "../../src/libraries/oracle/OutrunExchangeOracleAdapter.sol";
+import {IExchangeRateOracle} from "../../src/libraries/oracle/interfaces/IExchangeRateOracle.sol";
+import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
+import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
+import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
+import {MockAggregator} from "../support/mocks/MockOracleWarningsMocks.sol";
 import {
     MockSYWithRateControl,
     MockERC20ForAdversarial,
     MockUAssetForAdversarial,
-    MaliciousSY
+    ReentrantPositionSY,
+    ReenteringGenesisLauncher,
+    DonatingGenesisLauncher
 } from "./mocks/AdversarialMocks.sol";
+import {MockGenesisLauncher} from "./mocks/LauncherMocks.sol";
+import {MockUAsset} from "./mocks/PositionTestMocks.sol";
+import {PositionMockToken} from "./mocks/PositionMocks.sol";
+import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
+import {CommonTestHelpers} from "./helpers/CommonTestHelpers.sol";
+import {PositionRefModel} from "./helpers/PositionRefModel.sol";
 
 // ============================================================
 //                    ADVERSARIAL TEST SUITE
@@ -22,31 +34,26 @@ import {
 
 /**
  * @title AdversarialTests
- * @notice Security tests covering attack vectors not covered by existing fuzz tests
- * @dev Threat model documentation:
- *      1. Exchange rate manipulation between preview and execution
- *      2. Keeper griefing via partial redemptions
- *      3. Position takeover attempts via drawUAsset
- *      4. Full-stack reentrancy (Router -> Position -> SY callback)
- *      5. Wrap pool drain attempts
- *      6. Pause mechanism enforcement
- *      7. Mint cap enforcement
- *      8. Cross-position contamination
+ * @notice Adversarial surface of the open-term CDP position: input-guard full table (zero
+ *         addresses, minStake boundary, dust), non-owner access, oracle fail-closed on every
+ *         pricing read, genesis-gate abuse (partial consumption, transfer-back, donation,
+ *         launcher revert, kill switch), and redeem funding shortfalls. There is no
+ *         liquidation surface: every borrower's exit is the owner-only redeem.
  */
-contract AdversarialTests is Test {
+contract AdversarialTests is CommonTestHelpers {
     bytes4 internal constant POSITION_ACCESS_DENIED_SELECTOR = bytes4(keccak256("PositionAccessDenied()"));
-    bytes4 internal constant REENTRANCY_GUARD_SELECTOR = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
+    bytes4 internal constant ZERO_EXCHANGE_RATE_SELECTOR = bytes4(keccak256("ZeroExchangeRate()"));
+    bytes4 internal constant ENFORCED_PAUSE_SELECTOR = bytes4(keccak256("EnforcedPause()"));
 
     MockERC20ForAdversarial internal underlying;
     MockSYWithRateControl internal sy;
     MockUAssetForAdversarial internal uAsset;
     OutrunStakingPositionUpgradeable internal position;
+    MockGenesisLauncher internal genesisLauncher;
 
     address internal owner = address(0xA11CE);
-    address internal keeper = address(0xB0B);
-    address internal revenuePool = address(0xFEE);
+    address internal treasury = address(0xFEE);
     address internal alice = address(0xA11CE1);
-    address internal bob = address(0xB0B1);
     address internal attacker = address(0xDEAD);
 
     function setUp() external {
@@ -57,855 +64,406 @@ contract AdversarialTests is Test {
         position = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(uAsset), keeper)
-                )
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-
         uAsset.setMintingCap(address(position), type(uint256).max);
-
-        // Fund test accounts
-        sy.mintShares(alice, 10_000e18);
-        sy.mintShares(bob, 10_000e18);
-        sy.mintShares(attacker, 10_000e18);
-        sy.mintShares(keeper, 10_000e18);
-
-        vm.prank(alice);
-        sy.approve(address(position), type(uint256).max);
-
-        vm.prank(bob);
-        sy.approve(address(position), type(uint256).max);
-
-        vm.prank(attacker);
-        sy.approve(address(position), type(uint256).max);
-
-        vm.prank(keeper);
-        sy.approve(address(position), type(uint256).max);
-    }
-
-    // ============================================================
-    // TEST 1: Exchange Rate Manipulation Between Preview and Execution
-    // ============================================================
-
-    /**
-     * @notice Documents the risk of rate manipulation between preview and stake
-     * @dev This is expected behavior - rate changes affect mint amounts
-     *      Slippage protection (minUAssetMinted) is the mitigation
-     */
-    function test_Adversarial_RateManipulationBetweenPreviewAndStake() external {
-        uint256 stakeAmount = 100e18;
-
-        // Step 1: Alice previews stake at rate 1e18
-        uint256 previewedAmount = position.previewStake(stakeAmount);
-        assertEq(previewedAmount, 100e18, "Preview should show 100 uAsset at rate 1e18");
-
-        // Step 2: Rate drops 50% (simulating market manipulation)
-        sy.setExchangeRate(5e17);
-
-        // Step 3: Alice stakes without slippage protection
-        vm.prank(alice);
-        (, uint256 actualMinted) = position.stake(stakeAmount, 30, alice, alice);
-
-        // Verify: Alice only gets 50 uAsset (50% less due to rate change)
-        assertEq(actualMinted, 50e18, "Actual mint should be 50 uAsset at rate 0.5e18");
-        assertEq(uAsset.balanceOf(alice), 50e18, "Alice should have 50 uAsset");
-        assertEq(previewedAmount, actualMinted * 2, "Preview was double actual due to rate drop");
-
-        // Document: This is EXPECTED behavior. Mitigation is to use minUAssetMinted
-        // (tested separately in integration tests with router)
-    }
-
-    /**
-     * @notice Documents rate manipulation between preview and redeem
-     */
-    function test_Adversarial_RateManipulationBetweenPreviewAndRedeem() external {
-        // Setup: Alice stakes 100e18 at rate 1e18
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position for SY transfer
-        sy.mintShares(address(position), 100e18);
-
-        // Alice previews redeem of 50e18 SY at rate 1e18
-        (uint256 previewedBurn,) = position.previewRedeem(positionId, 50e18, address(sy));
-        assertEq(previewedBurn, 50e18, "Preview should show 50 uAsset burn");
-
-        // Rate appreciates 2x
-        sy.setExchangeRate(2e18);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // Alice redeems - still burns 50 uAsset but position accounting changes
-        vm.prank(alice);
-        (uint256 actualBurn, uint256 syOut) = position.redeem(positionId, 50e18, alice, address(sy), 0);
-
-        // Verify: Burn amount matches pro-rata of original uAssetMinted
-        assertEq(actualBurn, 50e18, "Burn should match pro-rata of minted");
-        assertEq(syOut, 50e18, "SY out should match redeemed amount");
-
-        // Document: Rate change doesn't affect the uAsset burn ratio (pro-rata of minted)
-        // This is correct behavior - uAsset debt is fixed at mint time
-    }
-
-    // ============================================================
-    // TEST 2: Keeper Partial Redeem Griefing
-    // ============================================================
-
-    /**
-     * @notice Keeper dust redeem reverts when the proportional SY output rounds to zero
-     */
-    function test_Adversarial_KeeperPartialRedeemLeavesSmallPosition() external {
-        // Setup: Alice stakes 100e18 at rate 2e18, gets 200 uAsset
-        sy.setExchangeRate(2e18);
-        vm.prank(alice);
-        (uint256 positionId, uint256 positionDebt) = position.stake(100e18, 30, alice, alice);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position for SY transfer
-        sy.mintShares(address(position), 100e18);
-
-        // Alice transfers uAsset to keeper
-        vm.prank(alice);
-        uAsset.transfer(keeper, 200e18);
-
-        vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // 100e18 * 1 / 200e18 rounds down to 0, so no position state should change.
-        assertEq(Math.mulDiv(100e18, 1, positionDebt), 0, "test setup should create zero-output redeem");
-
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
-        position.keepRedeem(positionId, 1, keeper);
-    }
-
-    /**
-     * @notice Keeper cannot redeem more than position's uAsset minted
-     */
-    function test_Adversarial_KeeperCannotRedeemMoreThanPositionDebt() external {
-        // Setup: Alice stakes at rate 2e18, gets 200 uAsset
-        sy.setExchangeRate(2e18);
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position
-        sy.mintShares(address(position), 100e18);
-
-        // Alice transfers uAsset to keeper (200e18 from stake)
-        vm.prank(alice);
-        assertTrue(uAsset.transfer(keeper, 200e18));
-
-        vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // Keeper tries to redeem more than position debt (250e18 > 200e18)
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExceedsPositionDebt.selector, 250e18, 200e18));
-        position.keepRedeem(positionId, 250e18, keeper);
-    }
-
-    // ============================================================
-    // TEST 3: DrawUAsset Access Control
-    // ============================================================
-
-    /**
-     * @notice Non-owner cannot draw from another's position
-     */
-    function test_Adversarial_CannotDrawFromOtherPosition() external {
-        // Alice creates position
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        // Rate appreciates 2x (drawable amount > 0)
-        sy.setExchangeRate(2e18);
-
-        uint256 drawable = position.previewDrawUAsset(positionId);
-        assertGt(drawable, 0, "Should have drawable amount");
-
-        // Bob (non-owner) tries to draw
-        vm.prank(bob);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.drawUAsset(positionId, bob);
-
-        // Attacker tries to draw
-        vm.prank(attacker);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.drawUAsset(positionId, attacker);
-
-        // Verify: No uAsset minted to attackers
-        assertEq(uAsset.balanceOf(bob), 0, "Bob should have 0 uAsset");
-        assertEq(uAsset.balanceOf(attacker), 0, "Attacker should have 0 uAsset");
-
-        // Alice can still draw
-        vm.prank(alice);
-        uint256 drawn = position.drawUAsset(positionId, alice);
-        assertEq(drawn, 100e18, "Alice can draw 100 uAsset");
-        assertEq(uAsset.balanceOf(alice), 200e18, "Alice should have 200 uAsset total");
-    }
-
-    /**
-     * @notice Draw from non-existent position reverts
-     */
-    function test_Adversarial_DrawFromNonExistentPositionReverts() external {
-        vm.prank(attacker);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.drawUAsset(type(uint256).max, attacker);
-    }
-
-    // ============================================================
-    // TEST 4: Redeem Reentrancy and Accounting
-    // ============================================================
-
-    /**
-     * @notice Partial redeem burns the pro-rata uAsset debt, returns the redeemed
-     *      SY at par, and decreases syTotalStaking by exactly the redeemed amount
-     */
-    function test_Adversarial_PartialRedeemAccountingIsCorrect() external {
-        // Setup: Alice stakes
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position
-        sy.mintShares(address(position), 100e18);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // Record state before redeem
-        uint256 syTotalBefore = position.syTotalStaking();
-
-        // Alice redeems
-        vm.prank(alice);
-        (uint256 uAssetBurned, uint256 syOut) = position.redeem(positionId, 50e18, alice, address(sy), 0);
-
-        // Verify accounting is correct
-        assertEq(uAssetBurned, 50e18, "Burn should be 50 uAsset");
-        assertEq(syOut, 50e18, "SY out should be 50");
-        assertEq(position.syTotalStaking(), syTotalBefore - 50e18, "syTotalStaking should decrease correctly");
-    }
-
-    // ============================================================
-    // TEST 5: Wrap Pool Drain Attempts
-    // ============================================================
-
-    /**
-     * @notice Keeper wrap redemption succeeds at face value on a healthy pool
-     * @dev Replaces the former public wrapRedeem drain, which was closed in favor of
-     *      keeper-only redemption. The keeper burns wrap-minted
-     *      uAsset (transferred by depositors) and receives SY at face value.
-     */
-    function test_Adversarial_WrapRedeemCannotExceedWrapDebt() external {
-        // Alice wrap stakes 100e18
-        vm.prank(alice);
-        uint256 minted1 = position.wrapStake(100e18, alice);
-        assertEq(minted1, 100e18);
-
-        // Bob wrap stakes 100e18
-        vm.prank(bob);
-        uint256 minted2 = position.wrapStake(100e18, bob);
-        assertEq(minted2, 100e18);
-
-        // Total wrap debt = 200e18
-        assertEq(position.wrapUAssetDebt(), 200e18);
-
-        // Depositors hand their wrap-minted uAsset to the keeper, who burns it on redemption.
-        vm.prank(alice);
-        uAsset.transfer(keeper, 100e18);
-        vm.prank(bob);
-        uAsset.transfer(keeper, 100e18);
-        vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // Keeper redeems 100e18 of the 200e18 debt at face value (healthy pool at rate 1e18).
-        vm.prank(keeper);
-        uint256 syOut = position.keepWrapRedeem(100e18, keeper);
-        assertEq(syOut, 100e18, "Keeper should get 100 SY");
-        assertEq(position.wrapUAssetDebt(), 100e18, "Wrap debt should be 100");
-    }
-
-    /**
-     * @notice Keeper wrap redemption cannot burn more uAsset than the wrap pool owes
-     */
-    function test_Adversarial_WrapRedeemCannotExceedTotalWrapDebt() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // The debt guard runs before the keeper must hold any uAsset, so no transfer is needed.
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.ExceedsWrapDebt.selector, 101e18, 100e18));
-        position.keepWrapRedeem(101e18, keeper);
-    }
-
-    // ============================================================
-    // TEST 6: Harvest Wrap Yield Access Control
-    // ============================================================
-
-    /**
-     * @notice Only owner can harvest wrap yield
-     */
-    function test_Adversarial_OnlyOwnerCanHarvestWrapYield() external {
-        // Setup wrap pool with yield
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // Rate appreciates 2x
-        sy.setExchangeRate(2e18);
-
-        // Non-owner tries to harvest
-        vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker));
-        position.harvestWrapYield(address(sy), 0);
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
-        position.harvestWrapYield(address(sy), 0);
-
-        // Only owner can harvest
+        uAsset.setMintingCap(address(this), type(uint256).max);
+        genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
-        uint256 harvested = position.harvestWrapYield(address(sy), 0);
-
-        assertGt(harvested, 0, "Owner should harvest yield");
-        assertEq(sy.balanceOf(revenuePool), harvested, "Revenue pool should receive yield");
+        position.setGenesisLauncher(address(genesisLauncher));
     }
 
-    // ============================================================
-    // TEST 7: Parallel Position Operations Do Not Cross-Contaminate
-    // ============================================================
-
-    /**
-     * @notice Multiple position operations do not interfere with each other
-     */
-    function test_Adversarial_ParallelPositionOpsDoNotCrossContaminate() external {
-        // Alice stakes
-        vm.prank(alice);
-        (uint256 alicePosId,) = position.stake(100e18, 30, alice, alice);
-
-        // Bob stakes
-        vm.prank(bob);
-        (uint256 bobPosId,) = position.stake(200e18, 60, bob, bob);
-
-        // Rate appreciates 2x
-        sy.setExchangeRate(2e18);
-
-        // Alice draws
-        vm.prank(alice);
-        uint256 aliceDrawn = position.drawUAsset(alicePosId, alice);
-
-        // Bob draws
-        vm.prank(bob);
-        uint256 bobDrawn = position.drawUAsset(bobPosId, bob);
-
-        // Verify independent state
-        (, uint256 aliceSyStaked, uint256 aliceUAssetMinted,) = position.positions(alicePosId);
-        (, uint256 bobSyStaked, uint256 bobUAssetMinted,) = position.positions(bobPosId);
-
-        assertEq(aliceSyStaked, 100e18, "Alice SY staked should be 100");
-        assertEq(aliceUAssetMinted, 200e18, "Alice uAsset minted should be 200 (100 initial + 100 draw)");
-        assertEq(aliceDrawn, 100e18, "Alice should draw 100");
-
-        assertEq(bobSyStaked, 200e18, "Bob SY staked should be 200");
-        assertEq(bobUAssetMinted, 400e18, "Bob uAsset minted should be 400 (200 initial + 200 draw)");
-        assertEq(bobDrawn, 200e18, "Bob should draw 200");
-
-        // Verify balances
-        assertEq(uAsset.balanceOf(alice), 200e18, "Alice should have 200 uAsset");
-        assertEq(uAsset.balanceOf(bob), 400e18, "Bob should have 400 uAsset");
+    /// @notice Opens a 10e18-SY genesis position for `who` at the current (default 1e18) rate.
+    function _stakeTenSy(address who) internal returns (uint256 positionId, uint256 principal) {
+        return _stakeTenSyForGenesis(address(sy), address(position), address(genesisLauncher), who);
     }
 
-    /**
-     * @notice Position state is correctly isolated after partial redemptions
-     */
-    function test_Adversarial_PositionsIsolatedAfterPartialRedeems() external {
-        // Alice and Bob stake
-        vm.prank(alice);
-        (uint256 alicePosId,) = position.stake(100e18, 30, alice, alice);
+    /// @notice A zero exchange rate must fail closed at the single rate-reading home before any
+    ///         transfer or state write on every pricing entrypoint.
+    function test_RevertWhen_ExchangeRateIsZeroStakeFailsClosed() external {
+        sy.setExchangeRate(0);
+        sy.mintShares(alice, 10e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 10e18);
+        vm.expectRevert(ZERO_EXCHANGE_RATE_SELECTOR);
+        position.stakeForGenesis(10e18, alice, 42, 0);
+        vm.stopPrank();
 
-        vm.prank(bob);
-        (uint256 bobPosId,) = position.stake(100e18, 30, bob, bob);
+        vm.expectRevert(ZERO_EXCHANGE_RATE_SELECTOR);
+        position.previewStake(10e18);
 
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position
-        sy.mintShares(address(position), 200e18);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(bob);
-        uAsset.approve(address(position), type(uint256).max);
-
-        // Alice redeems half
-        vm.prank(alice);
-        position.redeem(alicePosId, 50e18, alice, address(sy), 0);
-
-        // Verify Bob's position is unaffected
-        (, uint256 bobSyStaked, uint256 bobUAssetMinted,) = position.positions(bobPosId);
-        assertEq(bobSyStaked, 100e18, "Bob SY staked should still be 100");
-        assertEq(bobUAssetMinted, 100e18, "Bob uAsset minted should still be 100");
-
-        // Alice's position should be reduced
-        (, uint256 aliceSyStaked, uint256 aliceUAssetMinted,) = position.positions(alicePosId);
-        assertEq(aliceSyStaked, 50e18, "Alice SY staked should be 50");
-        assertEq(aliceUAssetMinted, 50e18, "Alice uAsset minted should be 50");
+        // Nothing moved: no SY pulled, no position created.
+        assertEq(sy.balanceOf(address(position)), 0, "no SY entered the SP");
+        assertEq(position.idCounter(), 0, "no position was created");
     }
 
-    // ============================================================
-    // TEST 8: Mint Cap Enforcement
-    // ============================================================
-
-    /**
-     * @notice Mint cap prevents overshooting uAsset supply
-     */
-    function test_Adversarial_MintCapPreventsOvershoot() external {
-        // Deploy position with limited mint cap
-        MockUAssetForAdversarial cappedUAsset = new MockUAssetForAdversarial();
-        OutrunStakingPositionUpgradeable cappedPosition = OutrunStakingPositionUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(cappedUAsset), keeper)
-                )
-            )
-        );
-
-        // Set cap to 1000e18
-        cappedUAsset.setMintingCap(address(cappedPosition), 1000e18);
-
-        vm.prank(alice);
-        sy.approve(address(cappedPosition), type(uint256).max);
-
-        // Stake 900e18 - should succeed
-        vm.prank(alice);
-        cappedPosition.stake(900e18, 30, alice, alice);
-        assertEq(cappedUAsset.balanceOf(alice), 900e18);
-
-        // Stake another 200e18 - should fail (only 100 remaining)
-        vm.prank(alice);
-        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
-        cappedPosition.stake(200e18, 30, alice, alice);
-
-        // Stake exactly 100e18 - should succeed
-        vm.prank(alice);
-        cappedPosition.stake(100e18, 30, alice, alice);
-        assertEq(cappedUAsset.balanceOf(alice), 1000e18);
-
-        // Any further stake fails
-        vm.prank(alice);
-        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
-        cappedPosition.stake(1, 30, alice, alice);
-    }
-
-    /**
-     * @notice DrawUAsset also respects mint cap
-     */
-    function test_Adversarial_DrawUAssetRespectsMintCap() external {
-        MockUAssetForAdversarial cappedUAsset = new MockUAssetForAdversarial();
-        OutrunStakingPositionUpgradeable cappedPosition = OutrunStakingPositionUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(cappedUAsset), keeper)
-                )
-            )
-        );
-
-        // Set cap to 200e18
-        cappedUAsset.setMintingCap(address(cappedPosition), 200e18);
-
-        vm.prank(alice);
-        sy.approve(address(cappedPosition), type(uint256).max);
-
-        // Stake 100e18 at rate 1e18
-        vm.prank(alice);
-        (uint256 posId,) = cappedPosition.stake(100e18, 30, alice, alice);
-        assertEq(cappedUAsset.balanceOf(alice), 100e18);
-
-        // Rate doubles (drawable = 100e18, cap remaining = 100e18)
-        sy.setExchangeRate(2e18);
-
-        vm.prank(alice);
-        uint256 drawn = cappedPosition.drawUAsset(posId, alice);
-        assertEq(drawn, 100e18);
-        assertEq(cappedUAsset.balanceOf(alice), 200e18);
-
-        // Rate doubles again (drawable = 200e18, but cap = 0)
-        sy.setExchangeRate(4e18);
-
-        vm.prank(alice);
-        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
-        cappedPosition.drawUAsset(posId, alice);
-    }
-
-    /**
-     * @notice WrapStake respects mint cap
-     */
-    function test_Adversarial_WrapStakeRespectsMintCap() external {
-        MockUAssetForAdversarial cappedUAsset = new MockUAssetForAdversarial();
-        OutrunStakingPositionUpgradeable cappedPosition = OutrunStakingPositionUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(cappedUAsset), keeper)
-                )
-            )
-        );
-
-        cappedUAsset.setMintingCap(address(cappedPosition), 100e18);
-
-        vm.prank(alice);
-        sy.approve(address(cappedPosition), type(uint256).max);
-
-        // Wrap stake within cap
-        vm.prank(alice);
-        cappedPosition.wrapStake(100e18, alice);
-
-        // Wrap stake exceeding cap
-        vm.prank(alice);
-        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
-        cappedPosition.wrapStake(1, alice);
-    }
-
-    /**
-     * @notice Non-owner cannot pause
-     */
-    function test_Adversarial_NonOwnerCannotPause() external {
+    /// @notice Only the recorded owner may redeem; anyone else is denied without state changes.
+    function test_RevertWhen_NonOwnerRedeems() external {
+        (uint256 positionId,) = _stakeTenSy(alice);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker));
-        position.pause();
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
-        position.pause();
+        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
+        position.redeem(positionId, 10e18, attacker, address(sy), 0);
     }
 
-    /**
-     * @notice Non-owner cannot unpause
-     */
-    function test_Adversarial_NonOwnerCannotUnpause() external {
+    /// @notice The SP-level pause freezes both user entrypoints while views stay usable.
+    function test_RevertWhen_PausedStakeIsBlockedAndViewsStayUsable() external {
+        (uint256 positionId,) = _stakeTenSy(alice);
+
         vm.prank(owner);
         position.pause();
 
-        vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, attacker));
-        position.unpause();
-
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
-        position.unpause();
+        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
+        position.stakeForGenesis(10e18, alice, 42, 0);
+        vm.prank(alice);
+        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
+        position.redeem(positionId, 10e18, alice, address(sy), 0);
+
+        // Views are not gated by the pause.
+        assertEq(position.previewStake(10e18), 10e18, "preview stays available while paused");
+        assertEq(position.positionDebt(positionId), 10e18, "debt view stays available while paused");
     }
 
-    // ============================================================
-    // TEST 10: Edge Cases and Additional Security Checks
-    // ============================================================
+    /// @notice Zero-address and zero/dust input guards across every user entrypoint.
+    function test_RevertWhen_ZeroAndDustInputsOnEveryEntrypoint() external {
+        sy.mintShares(alice, 10e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 10e18);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        position.stakeForGenesis(0, alice, 42, 0);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        position.stakeForGenesis(1e18, address(0), 42, 0);
+        vm.stopPrank();
 
-    /**
-     * @notice Cannot redeem from position with zero SY redeemed
-     */
-    function test_Adversarial_RedeemZeroReverts() external {
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        position.previewStake(0);
 
-        vm.warp(block.timestamp + 31 days);
-
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
+        (uint256 positionId,) = _stakeTenSy(alice);
         vm.prank(alice);
         vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
         position.redeem(positionId, 0, alice, address(sy), 0);
-    }
-
-    /**
-     * @notice Cannot wrap redeem zero
-     */
-    function test_Adversarial_WrapRedeemZeroReverts() external {
-        vm.prank(alice);
-        position.wrapStake(100e18, alice);
-
-        // Keeper check passes; the zero-amount guard then reverts before any state change.
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.keepWrapRedeem(0, keeper);
-    }
-
-    /**
-     * @notice Position owner cannot be overwritten
-     */
-    function test_Adversarial_PositionOwnerCannotBeOverwritten() external {
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        // Try to create position with same ID (impossible due to auto-increment)
-        // But verify the position owner is set correctly
-        (address posOwner,,,) = position.positions(positionId);
-        assertEq(posOwner, alice, "Owner should be Alice");
-
-        // Bob cannot draw from Alice's position
-        vm.prank(bob);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.drawUAsset(positionId, bob);
-
-        // Bob cannot redeem Alice's position (even if he has uAsset)
-        vm.warp(block.timestamp + 31 days);
-        sy.mintShares(address(position), 100e18);
-
-        vm.prank(alice);
-        uAsset.transfer(bob, 100e18);
-
-        vm.prank(bob);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(bob);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.redeem(positionId, 100e18, bob, address(sy), 0);
-    }
-
-    /**
-     * @notice Access check precedes zero-address validation on drawUAsset and redeem
-     * @dev Regression for the guard merge: the onlyPositionOwner modifier runs
-     *      before the function-body ZeroInput checks, so a non-owner calling with a
-     *      zero recipient/receiver reverts with PositionAccessDenied, not ZeroInput.
-     */
-    function test_Adversarial_AccessCheckPrecedesZeroAddressInputCheck() external {
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
-
-        // Non-owner + zero recipient: access denial wins over ZeroInput.
-        vm.prank(bob);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.drawUAsset(positionId, address(0));
-
-        // Non-owner + zero receiver: same revert precedence on redeem.
-        vm.prank(bob);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.redeem(positionId, 50e18, address(0), address(sy), 0);
-
-        // Owner path: the in-body zero-address checks still fire once the access check passes.
         vm.prank(alice);
         vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.drawUAsset(positionId, address(0));
-
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.redeem(positionId, 50e18, address(0), address(sy), 0);
+        position.redeem(positionId, 1e18, address(0), address(sy), 0);
     }
 
-    /**
-     * @notice Non-keeper cannot call keepRedeem
-     */
-    function test_Adversarial_NonKeeperCannotKeepRedeem() external {
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
+    /// @notice The minStake boundary: exactly the threshold passes, one wei below reverts.
+    function test_MinStakeBoundaryIsInclusive() external {
+        vm.prank(owner);
+        position.setMinStake(1e18);
 
-        vm.warp(block.timestamp + 31 days);
-
-        // Non-keeper tries to call keepRedeem
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.PermissionDenied.selector);
-        position.keepRedeem(positionId, 50e18, alice);
-
-        vm.prank(attacker);
-        vm.expectRevert(IOutrunStakeManager.PermissionDenied.selector);
-        position.keepRedeem(positionId, 50e18, attacker);
+        sy.mintShares(alice, 1e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 1e18);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.MinStakeInsufficient.selector, 1e18));
+        position.stakeForGenesis(1e18 - 1, alice, 42, 0);
+        uint256 positionId = position.stakeForGenesis(1e18, alice, 42, 0);
+        vm.stopPrank();
+        assertGt(positionId, 0, "exact-threshold stake succeeds");
+        (,, uint256 principal,,) = position.positions(positionId);
+        assertEq(principal, 1e18, "threshold stake mints at value parity");
     }
 
-    /**
-     * @notice Lock time is correctly enforced
-     */
-    function test_Adversarial_LockTimeCorrectlyEnforced() external {
-        vm.prank(alice);
-        (uint256 positionId,) = position.stake(100e18, 30, alice, alice);
+    /// @notice No third party can touch another borrower's position: without liquidation, a
+    ///         stranger's only interaction with a live position is a read-only revert (redeem
+    ///         denies) and zero value extraction — repeated with deep pockets.
+    function test_StrangerCannotTouchLivePosition() external {
+        (uint256 positionId,) = _stakeTenSy(alice);
+        uAsset.mint(attacker, 1e24);
+        vm.startPrank(attacker);
+        uAsset.approve(address(position), 1e24);
+        for (uint256 i = 0; i < 5; ++i) {
+            vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
+            position.redeem(positionId, 10e18, attacker, address(sy), 0);
+        }
+        vm.stopPrank();
 
-        uint128 deadline = uint128(block.timestamp + 30 days);
-
-        // Try to redeem before lock expires
-        vm.prank(alice);
-        uAsset.approve(address(position), type(uint256).max);
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeNotExpired.selector, deadline));
-        position.redeem(positionId, 50e18, alice, address(sy), 0);
-
-        // Warp to just before deadline
-        vm.warp(block.timestamp + 29 days);
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockTimeNotExpired.selector, deadline));
-        position.redeem(positionId, 50e18, alice, address(sy), 0);
-
-        // Warp past deadline
-        vm.warp(block.timestamp + 2 days);
-
-        // Now redeem should work
-        sy.mintShares(address(position), 100e18);
-
-        vm.prank(alice);
-        (uint256 burned, uint256 syOut) = position.redeem(positionId, 50e18, alice, address(sy), 0);
-
-        assertEq(burned, 50e18, "Should burn 50 uAsset");
-        assertEq(syOut, 50e18, "Should get 50 SY");
+        (address positionOwner, uint256 syStaked, uint256 principalDebt,,) = position.positions(positionId);
+        assertEq(positionOwner, alice, "owner unchanged");
+        assertEq(syStaked, 10e18, "collateral unchanged");
+        assertEq(principalDebt, 10e18, "debt unchanged at value parity");
+        assertEq(uAsset.balanceOf(attacker), 1e24, "attacker extracted nothing");
+        assertEq(sy.balanceOf(attacker), 0, "attacker got no SY");
     }
 
-    /**
-     * @notice Min stake is enforced
-     */
-    function test_Adversarial_MinStakeEnforced() external {
-        OutrunStakingPositionUpgradeable highMinPosition = OutrunStakingPositionUpgradeable(
+    /// @notice The owner can always exit at face value through the SY path: redeeming the full
+    ///         stake retires the exact value-parity debt and returns all collateral, even after
+    ///         the rate moved (settlement is face-value, never re-priced).
+    function test_OwnerAlwaysExitsAtFaceValue() external {
+        (uint256 positionId, uint256 principal) = _stakeTenSy(alice);
+        sy.setExchangeRate(0.94e18); // rate drop changes external value, not settlement
+        assertEq(principal, 10e18, "value-parity principal");
+
+        uAsset.mint(alice, principal);
+        vm.startPrank(alice);
+        uAsset.approve(address(position), principal);
+        (uint256 burned, uint256 paid, uint256 syOut) = position.redeem(positionId, 10e18, alice, address(sy), 0);
+        vm.stopPrank();
+
+        assertEq(burned, principal, "principal leg exact");
+        assertEq(paid, 0, "same-block exit carries no interest");
+        assertEq(syOut, 10e18, "full collateral returned");
+        assertEq(sy.balanceOf(alice), 10e18, "owner holds the collateral");
+        (, uint256 amountInMinted) = uAsset.mintingStatusTable(address(position));
+        assertEq(amountInMinted, 0, "debt fully retired");
+    }
+
+    /// @notice An owner with insufficient balance (not allowance) fails atomically on the repay
+    ///         leg and the position survives.
+    function test_RevertWhen_RedeemerBalanceShortfallRevertsAtomically() external {
+        (uint256 positionId,) = _stakeTenSy(alice);
+        vm.startPrank(alice);
+        uAsset.approve(address(position), type(uint256).max); // allowance fine, balance zero
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, 0, 10e18));
+        position.redeem(positionId, 10e18, alice, address(sy), 0);
+        vm.stopPrank();
+
+        (address positionOwner,,,,) = position.positions(positionId);
+        assertEq(positionOwner, alice, "position survived the failed redeem");
+        assertEq(sy.balanceOf(alice), 0, "no SY left the SP");
+    }
+}
+
+/**
+ * @title PositionReentrancyTest
+ * @notice Reentrancy surface: a malicious SY that calls back from its transfer/transferFrom seam
+ *         cannot nest a second position entrypoint (transient guard), and CEI holds — the
+ *         position state is already applied/deleted when the repay legs run (probed inside the
+ *         uAsset repay call).
+ */
+contract PositionReentrancyTest is CommonTestHelpers, PositionRefModel {
+    bytes4 internal constant GUARD_SELECTOR = ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector;
+
+    address internal owner = address(0xA11CE);
+    address internal treasury = address(0xFEE);
+    address internal alice = address(0xA11CE1);
+
+    MockERC20ForAdversarial internal underlying;
+    ReentrantPositionSY internal sy;
+    MockUAsset internal uAsset; // full mock: probes position state during repay
+    OutrunStakingPositionUpgradeable internal position;
+    MockGenesisLauncher internal genesisLauncher;
+
+    // Absolute-timestamp tracker (same defensive pattern as the position suites: every warp goes
+    // through this variable instead of the chain register).
+    // `_warp`/`warpAt` provided by `CommonTestHelpers`
+
+    function setUp() external {
+        underlying = new MockERC20ForAdversarial("Mock Asset", "mAST");
+        sy = new ReentrantPositionSY(address(underlying));
+        uAsset = new MockUAsset();
+        position = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1000e18, revenuePool, address(sy), address(uAsset), keeper)
-                )
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-        uAsset.setMintingCap(address(highMinPosition), type(uint256).max);
-
-        vm.prank(alice);
-        sy.approve(address(highMinPosition), type(uint256).max);
-
-        // Try to stake below minimum
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.MinStakeInsufficient.selector, 1000e18));
-        highMinPosition.stake(999e18, 30, alice, alice);
-
-        // Stake at exactly minimum
-        vm.prank(alice);
-        (uint256 posId,) = highMinPosition.stake(1000e18, 30, alice, alice);
-        assertGt(posId, 0, "Position should be created");
-
-        // Stake above minimum
-        vm.prank(alice);
-        (posId,) = highMinPosition.stake(1001e18, 30, alice, alice);
-        assertGt(posId, 0, "Position should be created");
+        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(this), type(uint256).max);
+        genesisLauncher = new MockGenesisLauncher(address(uAsset));
+        vm.prank(owner);
+        position.setGenesisLauncher(address(genesisLauncher));
+        // Genesis segment: the cumulative rate starts at RAY (1e27) at the init timestamp.
+        _seedGenesisSegment(warpAt, SPTestDefaults.DUTY);
     }
 
-    /**
-     * @notice Cannot stake with zero owner
-     */
-    function test_Adversarial_StakeZeroOwnerReverts() external {
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.stake(100e18, 30, address(0), alice);
+    /// @notice Opens a 10e18-SY genesis position for `who` at the default rate.
+    function _stakeTenSy(address who) internal returns (uint256 positionId, uint256 principal) {
+        return _stakeTenSyForGenesis(address(sy), address(position), address(genesisLauncher), who);
     }
 
-    /**
-     * @notice Cannot stake with zero receiver
-     */
-    function test_Adversarial_StakeZeroReceiverReverts() external {
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.stake(100e18, 30, alice, address(0));
+    /// @dev Asserts the recorded reentrancy attempt was blocked by the transient guard.
+    function _assertReentrancyBlocked(string memory what) internal view {
+        assertEq(sy.attempts(), 1, "exactly one reentrancy attempt fired");
+        (bool ok, bytes memory revertData) = sy.attackOutcome();
+        assertFalse(ok, what);
+        assertGe(revertData.length, 4, "guard revert data present");
+        // Casting to bytes4 is safe: the guard's custom error selector is the first 4 bytes.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        assertEq(bytes4(revertData), GUARD_SELECTOR, "reentrant call blocked by the guard");
     }
 
-    /**
-     * @notice Cannot wrap stake with zero recipient
-     */
-    function test_Adversarial_WrapStakeZeroRecipientReverts() external {
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.wrapStake(100e18, address(0));
+    /// @notice Reentry from the SY pull during a genesis open is blocked; the outer open completes.
+    function test_ReentrantGenesisOpenDuringSyPullIsBlocked() external {
+        sy.mintShares(alice, 20e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 20e18);
+        sy.arm(address(position), IOutrunStakeManager.stakeForGenesis.selector);
+        uint256 positionId = position.stakeForGenesis(10e18, alice, 42, 0);
+        vm.stopPrank();
+
+        _assertReentrancyBlocked("nested genesis open must be blocked");
+        assertGt(positionId, 0, "outer open completed");
+        (,, uint256 principal,,) = position.positions(positionId);
+        assertEq(principal, 10e18, "outer open minted at value parity");
+        assertEq(position.idCounter(), 1, "only one position exists");
+        assertEq(sy.balanceOf(address(position)), 10e18, "only the outer SY entered");
     }
 
-    /**
-     * @notice Cannot wrap stake zero amount
-     */
-    function test_Adversarial_WrapStakeZeroAmountReverts() external {
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.wrapStake(0, alice);
+    /// @notice Reentry from the SY payout during a full redeem is blocked, and CEI holds: the
+    ///         position is already deleted when the repay leg runs (probed inside repay).
+    function test_ReentrantRedeemDuringSyPayoutIsBlockedAndCeiHolds() external {
+        (uint256 positionId, uint256 principal) = _stakeTenSy(alice);
+        uAsset.probePositionDuringRepay(IOutrunStakeManager(address(position)), positionId);
+
+        uAsset.mint(alice, principal);
+        vm.startPrank(alice);
+        uAsset.approve(address(position), principal);
+        sy.arm(address(position), IOutrunStakeManager.redeem.selector);
+        (uint256 burned, uint256 paid,) = position.redeem(positionId, 10e18, alice, address(sy), 0);
+        vm.stopPrank();
+
+        _assertReentrancyBlocked("nested redeem must be blocked");
+        assertEq(burned, principal, "outer redeem burned the principal");
+        assertEq(paid, 0, "same-block redeem has no interest leg");
+        (address positionOwner,,,,) = position.positions(positionId);
+        assertEq(positionOwner, address(0), "position deleted by the outer redeem");
+        // CEI evidence: when the repay leg executed, the position was already deleted.
+        assertEq(uAsset.principalDebtDuringRepay(), 0, "position debt was applied before the repay leg");
     }
 
-    // ============================================================
-    // TEST 13: Position Redeem Reentrancy Fix (Deterministic)
-    // ============================================================
+    /// @notice Reentry from the SY payout during a redeem that also carries a non-zero interest
+    ///         leg is blocked: both debt legs complete before the output transfer fires.
+    function test_ReentrantRedeemWithInterestLegIsBlocked() external {
+        (uint256 positionId, uint256 principal) = _stakeTenSy(alice);
+        _warp(20);
+        // RAY compounding reference over the single segment (open at init, no duty change):
+        // any non-zero leg exercises the interest-bearing payout path.
+        uint256 interest = _refInterest(principal, _refUnit(warpAt) - RAY);
+        uAsset.mint(alice, principal + interest);
+        vm.startPrank(alice);
+        uAsset.approve(address(position), principal + interest);
+        sy.arm(address(position), IOutrunStakeManager.redeem.selector);
+        (uint256 burned, uint256 paid,) = position.redeem(positionId, 10e18, alice, address(sy), 0);
+        vm.stopPrank();
 
-    /**
-     * @notice Deterministic reentrancy test: confirm that after position.redeem
-     *      completes, no additional SY shares can be claimed from the same call,
-     *      and that the global `syTotalStaking` counter shows no reentrancy double-claim.
-     */
-    function test_Adversarial_RedeemStateIsProtectedAgainstReentrancyAttacks() external {
-        // Deploy malicious SY
-        MaliciousSY maliciousSY = new MaliciousSY(address(underlying));
-        maliciousSY.mintShares(alice, 100e18);
+        _assertReentrancyBlocked("nested redeem during an interest-bearing payout must be blocked");
+        assertEq(burned, principal, "principal leg completed");
+        assertEq(paid, interest, "interest leg completed");
+    }
 
-        // Deploy position with malicious SY
-        MockUAssetForAdversarial malUAsset = new MockUAssetForAdversarial();
-        OutrunStakingPositionUpgradeable malPosition = OutrunStakingPositionUpgradeable(
+    /// @notice Reentry from the launcher window during a genesis open is blocked on every position
+    ///      entrypoint; the launcher still consumes in full and the outer open completes with the
+    ///      conservation assertions intact.
+    function test_ReentrantStakeForGenesisDuringLauncherWindowIsBlocked() external {
+        ReenteringGenesisLauncher launcher = new ReenteringGenesisLauncher(address(position), address(uAsset));
+        vm.prank(owner);
+        position.setGenesisLauncher(address(launcher));
+        uint256 spUAssetBefore = uAsset.balanceOf(address(position));
+
+        sy.mintShares(alice, 10e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 10e18);
+        uint256 positionId = position.stakeForGenesis(10e18, alice, 1, 0);
+        vm.stopPrank();
+
+        assertEq(launcher.firstFailure(), launcher.NO_FAILURE(), "reentrant entry was not blocked by the guard");
+        assertEq(uAsset.balanceOf(address(position)), spUAssetBefore, "SP uAsset balance conserved");
+        assertEq(uAsset.allowance(address(position), address(launcher)), 0, "launcher allowance fully consumed");
+        (address positionOwner,,,,) = position.positions(positionId);
+        assertEq(positionOwner, alice, "outer genesis open completed");
+    }
+
+    /// @notice A launcher that fully consumes but additionally donates its own pre-funded uAsset
+    ///      into the SP inside the window pushes the balance above the pre-mint baseline: the
+    ///      post-assertion fires on the balance dimension alone (the allowance is fully consumed)
+    ///      and the whole open rolls back.
+    function test_RevertWhen_LauncherDonatesUAssetDuringGenesisWindow() external {
+        uint256 donated = 1e18;
+        DonatingGenesisLauncher launcher = new DonatingGenesisLauncher(address(uAsset), donated);
+        uAsset.mint(address(launcher), donated); // pre-fund from the test contract's minter record
+        vm.prank(owner);
+        position.setGenesisLauncher(address(launcher));
+        uint256 supplyBefore = uAsset.totalSupply();
+        uint256 spSyBefore = sy.balanceOf(address(position));
+
+        sy.mintShares(alice, 10e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 10e18);
+        vm.expectRevert(abi.encodeWithSelector(GenesisGateLib.GenesisUAssetNotConsumed.selector, donated, 0));
+        position.stakeForGenesis(10e18, alice, 1, 0);
+        vm.stopPrank();
+
+        (address positionOwner,,,,) = position.positions(1);
+        assertEq(positionOwner, address(0), "no position survived the rollback");
+        assertEq(position.idCounter(), 0, "no position id was consumed");
+        assertEq(uAsset.totalSupply(), supplyBefore, "the genesis mint rolled back with the call");
+        assertEq(sy.balanceOf(address(position)), spSyBefore, "no SY stayed in the SP");
+        assertEq(uAsset.balanceOf(address(launcher)), donated, "launcher kept exactly its pre-fund");
+    }
+}
+
+/**
+ * @title OracleFailClosedTest
+ * @notice Oracle fail-closed on the real production read path: a Chainlink-style feed through
+ *         the exchange-oracle adapter into a real L2 SY. When the feed goes stale, every pricing
+ *         read of the position (previewStake, stakeForGenesis) reverts atomically with the
+ *         adapter's StaleOracleAnswer, and no position is created from an unusable rate. The
+ *         owner's SY-direct redeem exit never reads the rate and stays open.
+ */
+contract OracleFailClosedTest is CommonTestHelpers {
+    address internal owner = address(0xA11CE);
+    address internal treasury = address(0xFEE);
+    address internal alice = address(0xA11CE1);
+
+    PositionMockToken internal token;
+    MockAggregator internal feed;
+    OutrunExchangeOracleAdapter internal adapter;
+    OutrunL2StakedTokenSYUpgradeable internal sy;
+    OutrunUniversalAssetsUpgradeable internal uAsset;
+    OutrunStakingPositionUpgradeable internal position;
+
+    function setUp() external {
+        token = new PositionMockToken();
+        feed = new MockAggregator(8);
+        feed.setLatestAnswer(1e8); // 1.00 rate, fresh
+        adapter = new OutrunExchangeOracleAdapter(address(feed), 1 hours, address(0), 0);
+        sy = OutrunL2StakedTokenSYUpgradeable(
+            payable(ProxyTestHelper.deploy(
+                    address(new OutrunL2StakedTokenSYUpgradeable()),
+                    abi.encodeCall(
+                        OutrunL2StakedTokenSYUpgradeable.initialize,
+                        ("Oracle SY", "OSY", owner, address(token), address(adapter), address(token), 18)
+                    )
+                ))
+        );
+        uAsset = _deployUAsset(owner);
+        position = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(maliciousSY), address(malUAsset), keeper)
-                )
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-        malUAsset.setMintingCap(address(malPosition), type(uint256).max);
+        vm.startPrank(owner);
+        uAsset.setMintingCap(address(position), type(uint256).max);
+        vm.stopPrank();
+        // Wire the launcher so the stale-rate revert (not the kill switch) is what fails the
+        // pricing surface: the launcher gate intentionally runs before pricing.
+        MockGenesisLauncher staleLauncher = new MockGenesisLauncher(address(uAsset));
+        vm.prank(owner);
+        position.setGenesisLauncher(address(staleLauncher));
+    }
 
-        vm.prank(alice);
-        maliciousSY.approve(address(malPosition), type(uint256).max);
+    /// @notice Deposits `amount` token 1:1 into SY for `who`.
+    function _mintSy(address who, uint256 amount) internal {
+        _mintSyFor(address(token), address(sy), who, amount);
+    }
 
-        // Fund the callback caller so the nested stake reaches the reentrancy guard.
-        maliciousSY.mintShares(address(maliciousSY), 1e18);
-        vm.prank(address(maliciousSY));
-        maliciousSY.approve(address(malPosition), type(uint256).max);
-
-        // Configure malicious SY to try reentrancy on redeem via stake
-        maliciousSY.setAttackTarget(malPosition, IOutrunStakeManager.stake.selector);
-
-        // Alice stakes
-        vm.prank(alice);
-        (uint256 positionId,) = malPosition.stake(100e18, 30, alice, alice);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position
-        maliciousSY.mintShares(address(malPosition), 100e18);
-
-        vm.prank(alice);
-        malUAsset.approve(address(malPosition), type(uint256).max);
-
-        // Execute redeem - the malicious SY tries to re-enter stake during redeem
-        vm.prank(alice);
-        (uint256 uAssetBurned, uint256 syOut) = malPosition.redeem(positionId, 50e18, alice, address(underlying), 0);
-
-        assertEq(uAssetBurned, 50e18, "uAsset burned should be exactly 50");
-        assertEq(syOut, 50e18, "SY output should be exactly 50");
-
-        (bool attackSucceeded, bytes memory attackRevertData) = maliciousSY.attackResult();
-        assertFalse(attackSucceeded, "nested stake should be blocked by the reentrancy guard");
-        assertEq(attackRevertData.length, 4, "nested call should return the guard selector");
-        assertEq(
-            keccak256(attackRevertData),
-            keccak256(abi.encodeWithSelector(REENTRANCY_GUARD_SELECTOR)),
-            "nested call should revert with ReentrancyGuardReentrantCall"
-        );
-
-        // Verify position state: only 50 SY staked remains, exactly 50 uAsset debt
-        (address posOwner,, uint256 posUAssetMinted,) = malPosition.positions(positionId);
-        assertEq(posOwner, alice, "position owner should remain alice");
-        assertEq(posUAssetMinted, 50e18, "position debt should be reduced to 50");
-
-        // Verify total SY staking was reduced by exactly 50 (no reentrancy double-claim)
-        assertEq(malPosition.syTotalStaking(), 50e18, "syTotalStaking should be reduced by 50");
+    /// @notice A stale feed fails the pricing surface closed.
+    function test_RevertWhen_StaleFeedFailsStakeClosed() external {
+        // Advance the clock first: the suite's initial timestamp is 1, so a naive subtraction
+        // would underflow. A 2h-old round sits beyond the 1h staleness window.
+        vm.warp(3 hours);
+        feed.setLatestRoundData(1e8, 1 hours);
+        vm.expectRevert(IExchangeRateOracle.StaleOracleAnswer.selector);
+        position.previewStake(10e18);
+        _mintSy(alice, 10e18);
+        vm.startPrank(alice);
+        sy.approve(address(position), 10e18);
+        vm.expectRevert(IExchangeRateOracle.StaleOracleAnswer.selector);
+        position.stakeForGenesis(10e18, alice, 42, 0);
+        vm.stopPrank();
+        assertEq(position.idCounter(), 0, "no position was created from a stale feed");
     }
 }

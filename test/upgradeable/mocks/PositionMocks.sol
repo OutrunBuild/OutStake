@@ -2,11 +2,11 @@
 pragma solidity ^0.8.35;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {MockSY} from "./PositionTestMocks.sol";
+import {IExchangeRateOracle} from "../../../src/libraries/oracle/interfaces/IExchangeRateOracle.sol";
 
 /// @title PositionMockToken
 /// @notice Simple ERC20 with a public mint, used as the underlying yield token in position tests.
+/// @dev Decimals model: fixed 18 (no decimals override; OpenZeppelin default).
 contract PositionMockToken is ERC20 {
     constructor() ERC20("Yield Token", "YBT") {}
 
@@ -17,20 +17,23 @@ contract PositionMockToken is ERC20 {
 
 /// @title PositionMockOracle
 /// @notice Fixed 1:1 exchange rate oracle for position tests.
-contract PositionMockOracle {
-    function getExchangeRate() external pure returns (uint256) {
+contract PositionMockOracle is IExchangeRateOracle {
+    function getExchangeRate() external pure override returns (uint256) {
         return 1e18;
     }
 }
 
-/// @title RejectZeroTransferMockSY
-/// @notice Mock SY that reverts on zero-amount transfers, used to verify keepRedeem
-///         skips the owner transfer when the excess is zero.
-contract RejectZeroTransferMockSY is MockSY {
-    constructor(address underlying_) MockSY(underlying_) {}
+/// @title PositionSettableOracle
+/// @notice Exchange rate oracle whose answer the test controls, for scenarios that need the
+///         collateral rate to move after deployment (liquidation triggers, pause matrices).
+contract PositionSettableOracle is IExchangeRateOracle {
+    uint256 public rate = 1e18;
 
-    function transfer(address to, uint256 amount) public override(ERC20, IERC20) returns (bool) {
-        require(amount != 0, "zero transfer rejected");
-        return super.transfer(to, amount);
+    function setExchangeRate(uint256 newRate) external {
+        rate = newRate;
+    }
+
+    function getExchangeRate() external view override returns (uint256) {
+        return rate;
     }
 }

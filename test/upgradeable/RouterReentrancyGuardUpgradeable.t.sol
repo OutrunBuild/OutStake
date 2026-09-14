@@ -5,10 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
-import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
-import {RouterMockSY, RouterMockUAsset, RouterMockLauncher} from "./mocks/RouterMocks.sol";
+import {MockGenesisLauncher, MockPOLend} from "./mocks/LauncherMocks.sol";
+import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
+import {RouterMockSY, RouterMockUAsset} from "./mocks/RouterMocks.sol";
 import {ReentrantTokenMock} from "./mocks/ReentrantTokenMock.sol";
 
 /**
@@ -25,16 +26,18 @@ contract ReenteringAttacker {
     RouterMockSY internal immutable sy;
     ReentrantTokenMock internal immutable token;
     address internal immutable position;
+    address internal immutable uAsset;
     uint256 internal attackAmount;
 
     /// @notice Index of the first router entry whose nested call was not blocked; NO_FAILURE when all were blocked.
     uint256 public firstFailure = NO_FAILURE;
 
-    constructor(OutrunRouter router_, RouterMockSY sy_, ReentrantTokenMock token_, address position_) {
+    constructor(OutrunRouter router_, RouterMockSY sy_, ReentrantTokenMock token_, address position_, address uAsset_) {
         router = router_;
         sy = sy_;
         token = token_;
         position = position_;
+        uAsset = uAsset_;
     }
 
     /**
@@ -65,18 +68,14 @@ contract ReenteringAttacker {
     // solhint-disable-next-line no-complex-fallback
     fallback() external {
         address self = address(this);
-        IOutrunRouter.StakeParam memory stakeParam =
-            IOutrunRouter.StakeParam({lockupDays: 1, minSyOut: 0, minUAssetMinted: 0, owner: self, receiver: self});
 
-        bytes[] memory attempts = new bytes[](8);
+        bytes[] memory attempts = new bytes[](6);
         attempts[0] = abi.encodeCall(router.mintSYFromToken, (address(sy), address(token), self, attackAmount, 0));
         attempts[1] = abi.encodeCall(router.redeemSyToToken, (address(sy), self, address(token), 1, 0));
-        attempts[2] = abi.encodeCall(router.stakeFromToken, (position, address(token), 1, stakeParam));
-        attempts[3] = abi.encodeCall(router.stakeFromSY, (position, 1, stakeParam));
-        attempts[4] = abi.encodeCall(router.wrapStakeFromToken, (position, address(token), 1, 0, self, 0));
-        attempts[5] = abi.encodeCall(router.wrapStakeFromSY, (position, 1, self, 0));
-        attempts[6] = abi.encodeCall(router.genesisByToken, (position, address(token), 1, 0, 1, 1, self, 0));
-        attempts[7] = abi.encodeCall(router.genesisBySY, (position, 1, 1, 1, self, 0));
+        attempts[2] = abi.encodeCall(router.genesisByPSM, (uAsset, address(token), 1, 1, self));
+        attempts[3] = abi.encodeCall(router.genesisBySY, (position, 1, 1, self, 0));
+        attempts[4] = abi.encodeCall(router.genesisByToken, (position, address(token), 1, 0, 1, self, 0));
+        attempts[5] = abi.encodeCall(router.leveragedGenesisByPSM, (uAsset, address(token), 1, 1, self));
 
         for (uint256 i = 0; i < attempts.length; ++i) {
             (bool ok, bytes memory ret) = address(router).call(attempts[i]);
@@ -108,9 +107,10 @@ contract RouterReentrancyGuardUpgradeableTest is Test {
     RouterMockUAsset internal uAsset;
     OutrunStakingPositionUpgradeable internal position;
     OutrunRouter internal router;
+    MockPOLend internal polend;
 
     address internal owner = address(0xA11CE);
-    address internal revenuePool = address(0xFEE);
+    address internal treasury = address(0xFEE);
 
     function setUp() external {
         token = new ReentrantTokenMock();
@@ -119,18 +119,20 @@ contract RouterReentrancyGuardUpgradeableTest is Test {
         position = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, 1, revenuePool, address(sy), address(uAsset), address(0xC0FFEE))
-                )
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-        router = new OutrunRouter(owner, address(new RouterMockLauncher(address(uAsset))));
+        router = new OutrunRouter(owner, address(new MockGenesisLauncher(address(uAsset))));
 
         vm.prank(owner);
         router.setTrustedSY(address(sy), true);
         vm.prank(owner);
         router.setTrustedSP(address(position), address(sy));
+        // POLend target for the leveragedGenesisByPSM sweep entry: verse 1 bound to this fixture's uAsset.
+        polend = new MockPOLend(address(uAsset), 1e17);
+        polend.setMarketUAsset(1, address(uAsset));
+        vm.prank(owner);
+        router.setPolend(address(polend));
     }
 
     /// @notice Reentry from the input token's transferFrom callback must revert with the
@@ -138,7 +140,7 @@ contract RouterReentrancyGuardUpgradeableTest is Test {
     ///      delivers SY to the caller.
     function test_MintSYFromTokenBlocksReentrantCall() external {
         uint256 amount = 10 ether;
-        ReenteringAttacker attacker = new ReenteringAttacker(router, sy, token, address(position));
+        ReenteringAttacker attacker = new ReenteringAttacker(router, sy, token, address(position), address(uAsset));
         token.mint(address(attacker), amount);
 
         // Outer call must complete despite the malicious callback firing mid-transfer.

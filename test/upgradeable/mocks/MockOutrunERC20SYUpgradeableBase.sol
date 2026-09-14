@@ -59,7 +59,9 @@ abstract contract MockOutrunERC20SYUpgradeableBase is SYBaseUpgradeable {
     function _deposit(address tokenIn, uint256 amountDeposited) internal override returns (uint256 amountSharesOut) {
         if (tokenIn == mockUSDC()) {
             address ybt = yieldBearingToken();
-            _safeApproveInf(tokenIn, ybt);
+            // The wrap leg pulls exactly amountDeposited via transferFrom, so the approval is
+            // per-deposit exact — no lingering allowance remains after the wrap.
+            _safeApprove(tokenIn, ybt, amountDeposited);
             return _wrap(ybt, amountDeposited);
         }
 

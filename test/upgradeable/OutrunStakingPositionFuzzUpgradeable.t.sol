@@ -1,1228 +1,504 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {Test} from "forge-std/Test.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {PositionGhostModel} from "./helpers/PositionGhostModel.sol";
+import {PositionRefModel} from "./helpers/PositionRefModel.sol";
 
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
-import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol";
-import {SYUtils} from "../../src/libraries/SYUtils.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
+import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
+import {CommonTestHelpers} from "./helpers/CommonTestHelpers.sol";
+import {MockGenesisLauncher} from "./mocks/LauncherMocks.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
 
 /**
- * @title Fuzz tests for OutrunStakingPosition
- * @dev Covers arithmetic correctness, pro-rata calculations, rounding, preview consistency,
- *      and accounting invariants under various input ranges and exchange rates.
+ * @title OutrunStakingPositionFuzzTest
+ * @notice Randomized genesis-open/redeem/warp sequences against the open-term CDP position
+ *         with per-step property checks: every mint equals the collateral value at the mint-time
+ *         rate (value parity, two floored stages), per-position interest matches an independent
+ *         reference implementation wei for wei, redeem legs decompose the repayment exactly
+ *         (principal burn + interest transfer), the backing invariant holds per position at its
+ *         mint-time rate, and the SP's SY balance decomposes into position collateral (exactly
+ *         without donations, or with the delta equal to cumulative donations in the donation
+ *         flow).
+ * @dev Deterministic LCG-driven sequences so each fuzz run exercises a different interleaving;
+ *      runs default to 256. Ghost state (per-position principal/snapshot and the rate
+ *      segment table) mirrors the spec formulas, not the contract internals.
  */
-contract OutrunStakingPositionFuzzTest is Test {
+contract OutrunStakingPositionFuzzTest is PositionGhostModel, CommonTestHelpers {
+    address internal owner = address(0xA11CE);
+    address internal user = address(0xB0B);
+    address internal treasury = address(0xFEE);
+
+    uint256 internal constant DUTY = SPTestDefaults.DUTY;
+    // Absolute duty cap (15% annual per-second RAY value); mirrors the production cap.
+    uint256 internal constant DUTY_CAP = SPTestDefaults.DUTY_CAP;
+    // Random-walk step for duty changes (~0.3% annual equivalent); stays far inside (RAY, DUTY_CAP].
+    uint256 internal constant DUTY_STEP = 1e17;
+    uint256 internal constant VERSE_ID = 42;
     MockERC20 internal underlying;
     MockSY internal sy;
     MockUAsset internal uAsset;
     OutrunStakingPositionUpgradeable internal position;
+    MockGenesisLauncher internal genesisLauncher;
 
-    address internal owner = address(0xA11CE);
-    address internal keeper = address(0xB0B);
-    address internal revenuePool = address(0xFEE);
-    address internal user1 = address(0x1111);
-    address internal user2 = address(0x2222);
+    // Absolute-timestamp tracking: the reference model and every warp go through `warpAt`
+    // instead of the chain register; `_warp`/`warpAt` provided by `CommonTestHelpers`.
 
-    // Constants for bounds
-    uint256 internal constant MIN_STAKE = 1;
-    uint256 internal constant MAX_STAKE = 10_000e18;
-    uint256 internal constant RATE_MIN = 1e17; // 0.1
-    uint256 internal constant RATE_MAX = 5e18; // 5.0
+    // Mint-time collateral values (syAmount x rate, 18/18) per position id, for the backing
+    // invariant check (each position is checked against its own mint-time rate).
+    mapping(uint256 => uint256) internal ghostMintCollateral;
 
     function setUp() external {
         underlying = new MockERC20("Mock Asset", "mAST");
         sy = new MockSY(address(underlying));
         uAsset = new MockUAsset();
-
         position = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, MIN_STAKE, revenuePool, address(sy), address(uAsset), keeper)
-                )
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-
         uAsset.setMintingCap(address(position), type(uint256).max);
-
-        // Mint SY to users
-        sy.mintShares(owner, 100_000e18);
-        sy.mintShares(user1, 100_000e18);
-        sy.mintShares(user2, 100_000e18);
-
-        // Approve position to spend SY
+        uAsset.setMintingCap(address(this), type(uint256).max);
+        // Genesis-gate fixture: a full-consumption launcher wired as the SP's target.
+        genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
-        sy.approve(address(position), type(uint256).max);
-        vm.prank(user1);
-        sy.approve(address(position), type(uint256).max);
-        vm.prank(user2);
-        sy.approve(address(position), type(uint256).max);
-
-        // Approve position to spend uAsset (the keeper burns its own uAsset in keep* redeems)
-        vm.prank(owner);
+        position.setGenesisLauncher(address(genesisLauncher));
+        // Participants get generous balances and allowances so only the properties under test can
+        // fail (interest coverage mirrors open-market acquisition).
+        uAsset.mint(user, 1e30);
+        vm.prank(user);
         uAsset.approve(address(position), type(uint256).max);
-        vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
+
+        _seedGenesisSegment(warpAt, DUTY);
     }
 
-    // ============================================
-    // Helper functions
-    // ============================================
-
-    function _boundAmount(uint256 amount) internal pure returns (uint256) {
-        return bound(amount, MIN_STAKE, MAX_STAKE);
+    /// @notice Collateral value reference: SY -> canonical asset -> uAsset, both floors, 18/18.
+    function _refCollateral(uint256 syAmount, uint256 rate) internal pure returns (uint256) {
+        return syAmount * rate / 1e18;
     }
 
-    function _boundRate(uint256 rate) internal pure returns (uint256) {
-        return bound(rate, RATE_MIN, RATE_MAX);
-    }
+    // ==========================================================================
+    // Property checks run after every step
+    // ==========================================================================
 
-    function _syToAsset(uint256 syAmount, uint256 rate) internal pure returns (uint256) {
-        return SYUtils.syToAsset(rate, syAmount);
-    }
-
-    function _assetToSy(uint256 assetAmount, uint256 rate) internal pure returns (uint256) {
-        return SYUtils.assetToSy(rate, assetAmount);
-    }
-
-    function _assetToSyUp(uint256 assetAmount, uint256 rate) internal pure returns (uint256) {
-        return SYUtils.assetToSyUp(rate, assetAmount);
-    }
-
-    function _expectedRedeemBurn(uint256 positionUAssetMinted, uint256 syRedeemed, uint256 syStaked)
-        internal
-        pure
-        returns (uint256)
-    {
-        if (syRedeemed == syStaked) return positionUAssetMinted;
-        return Math.mulDiv(positionUAssetMinted, syRedeemed, syStaked, Math.Rounding.Ceil);
-    }
-
-    // ============================================
-    // 1. Stake + DrawUAsset Fuzz
-    // ============================================
-
-    function testFuzz_StakeAndDrawUAsset(uint256 amountInSY, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        // Require at least 100% appreciation (rate = 2e18) to ensure drawable amount exists even for tiny amounts
-        // For amountInSY=1: at rate 1e18, minted=1; at rate 2e18, value=2, drawable=1
-        newRate = bound(newRate, 2e18, RATE_MAX);
-
-        // Stake at initial rate 1e18
-        vm.prank(owner);
-        (uint256 positionId, uint256 initialMinted) = position.stake(amountInSY, 30, owner, owner);
-
-        assertEq(initialMinted, amountInSY, "initial mint should equal amount at rate 1e18");
-
-        // Change rate to appreciate
-        sy.setExchangeRate(newRate);
-
-        // Draw additional uAsset
-        vm.prank(owner);
-        uint256 drawAmount = position.drawUAsset(positionId, owner);
-
-        uint256 expectedCurrentValue = _syToAsset(amountInSY, newRate);
-        uint256 expectedDrawAmount = expectedCurrentValue - initialMinted;
-
-        assertEq(drawAmount, expectedDrawAmount, "draw amount should match appreciation");
-
-        // Verify position state after draw
-        (, uint256 syStaked, uint256 positionUAssetMinted,) = position.positions(positionId);
-        assertEq(syStaked, amountInSY, "syStaked should remain unchanged");
-        assertEq(positionUAssetMinted, expectedCurrentValue, "UAssetMinted should equal current value after draw");
-        assertEq(uAsset.balanceOf(owner), expectedCurrentValue, "owner should have total minted uAsset");
-    }
-
-    // ============================================
-    // 2. Pro-Rata Redeem Fuzz
-    // ============================================
-
-    function testFuzz_ProRataRedeem(uint256 amountInSY, uint256 syRedeemed, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        syRedeemed = bound(syRedeemed, 1, amountInSY);
-        // Require at least 100% appreciation to ensure drawable amount exists even for tiny amounts
-        newRate = bound(newRate, 2e18, RATE_MAX);
-
-        // Stake
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amountInSY, 30, owner, owner);
-
-        // Change rate and draw
-        sy.setExchangeRate(newRate);
-        vm.prank(owner);
-        position.drawUAsset(positionId, owner);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Fund position with SY for redemption
-        sy.mintShares(address(position), syRedeemed);
-
-        // Redeem
-        vm.prank(owner);
-        (uint256 uAssetBurned, uint256 syOut) = position.redeem(positionId, syRedeemed, owner, address(sy), 0);
-
-        // Calculate expected pro-rata burn
-        uint256 totalUAssetMinted = _syToAsset(amountInSY, newRate);
-        uint256 expectedBurn = _expectedRedeemBurn(totalUAssetMinted, syRedeemed, amountInSY);
-
-        assertEq(uAssetBurned, expectedBurn, "pro-rata burn should match calculation");
-        assertEq(syOut, syRedeemed, "SY out should equal redeemed amount");
-
-        // Verify remaining position state
-        (, uint256 remainingSyStaked, uint256 remainingUAssetMinted,) = position.positions(positionId);
-        assertEq(remainingSyStaked, amountInSY - syRedeemed, "remaining syStaked incorrect");
-        assertEq(remainingUAssetMinted, totalUAssetMinted - expectedBurn, "remaining UAssetMinted incorrect");
-    }
-
-    function testRedeem_PartialLowRateRevertsWhenRoundedBurnConsumesAllDebt() public {
-        bytes4 partialCloseError = bytes4(keccak256("PartialRedeemMustLeaveDebt()"));
-
-        sy.setExchangeRate(5e17);
-
-        vm.prank(owner);
-        (uint256 positionId, uint256 minted) = position.stake(2, 30, owner, owner);
-        assertEq(minted, 1, "minted debt should be 1 at low rate");
-
-        vm.warp(block.timestamp + 31 days);
-
-        vm.expectRevert(partialCloseError);
-        position.previewRedeem(positionId, 1, address(sy));
-
-        vm.prank(owner);
-        vm.expectRevert(partialCloseError);
-        position.redeem(positionId, 1, owner, address(sy), 0);
-    }
-
-    function testRedeem_PartialRoundsDebtBurnUpForPreviewAndExecution() public {
-        sy.setExchangeRate(8e17);
-
-        vm.prank(owner);
-        (uint256 positionId, uint256 minted) = position.stake(3, 30, owner, owner);
-        assertEq(minted, 2, "minted debt should be 2 at low rate");
-
-        vm.warp(block.timestamp + 31 days);
-
-        (uint256 previewBurn, uint256 previewSyOut) = position.previewRedeem(positionId, 1, address(sy));
-        assertEq(previewBurn, 1, "preview should round debt burn up");
-        assertEq(previewSyOut, 1, "preview SY out should match redeemed SY");
-
-        vm.prank(owner);
-        (uint256 actualBurn, uint256 actualSyOut) = position.redeem(positionId, 1, owner, address(sy), 0);
-
-        assertEq(actualBurn, 1, "redeem should round debt burn up");
-        assertEq(actualSyOut, 1, "redeem SY out should match redeemed SY");
-
-        (, uint256 remainingSyStaked, uint256 remainingUAssetMinted,) = position.positions(positionId);
-        assertEq(remainingSyStaked, 2, "remaining SY should be preserved");
-        assertEq(remainingUAssetMinted, 1, "remaining debt should reflect rounded burn");
-    }
-
-    function testRedeem_FullLowRateBurnsExactRemainingDebt() public {
-        sy.setExchangeRate(5e17);
-
-        vm.prank(owner);
-        (uint256 positionId, uint256 minted) = position.stake(2, 30, owner, owner);
-        assertEq(minted, 1, "minted debt should be 1 at low rate");
-
-        vm.warp(block.timestamp + 31 days);
-
-        (uint256 previewBurn, uint256 previewSyOut) = position.previewRedeem(positionId, 2, address(sy));
-        assertEq(previewBurn, minted, "full preview should burn all remaining debt");
-        assertEq(previewSyOut, 2, "full preview SY out should match redeemed SY");
-
-        vm.prank(owner);
-        (uint256 actualBurn, uint256 actualSyOut) = position.redeem(positionId, 2, owner, address(sy), 0);
-
-        assertEq(actualBurn, minted, "full redeem should burn exact remaining debt");
-        assertEq(actualSyOut, 2, "full redeem SY out should match redeemed SY");
-
-        (address positionOwner, uint256 remainingSyStaked, uint256 remainingUAssetMinted,) =
-            position.positions(positionId);
-        assertEq(positionOwner, address(0), "position should be deleted after full redeem");
-        assertEq(remainingSyStaked, 0, "full redeem should leave no SY");
-        assertEq(remainingUAssetMinted, 0, "full redeem should leave no debt");
-    }
-
-    // ============================================
-    // 3. Full Redeem Deletes Position
-    // ============================================
-
-    function testFuzz_FullRedeemDeletesPosition(uint256 amountInSY) public {
-        amountInSY = _boundAmount(amountInSY);
-
-        // Stake
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amountInSY, 30, owner, owner);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        uint256 syTotalBefore = position.syTotalStaking();
-
-        // Fund position with SY for redemption
-        sy.mintShares(address(position), amountInSY);
-
-        // Full redeem
-        vm.prank(owner);
-        position.redeem(positionId, amountInSY, owner, address(sy), 0);
-
-        // Verify position deleted
-        (address positionOwner,,,) = position.positions(positionId);
-        assertEq(positionOwner, address(0), "position should be deleted after full redeem");
-
-        // Verify accounting
-        assertEq(position.syTotalStaking(), syTotalBefore - amountInSY, "syTotalStaking should be reduced");
-    }
-
-    // ============================================
-    // 4. KeepRedeem Split Fuzz
-    // ============================================
-
-    function testFuzz_KeepRedeemSplit(uint256 amountInSY, uint256 burnUAsset, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        // Keep rate at or above 1e18 to ensure totalMinted >= amountInSY > 0
-        newRate = bound(newRate, 1e18, RATE_MAX);
-
-        // Change rate first if needed
-        if (newRate != 1e18) {
-            sy.setExchangeRate(newRate);
+    /// @dev SY conservation: without donations the SP balance decomposes exactly; with donations
+    ///      the balance is at least the decomposition and the delta is exactly the donations.
+    function _checkSyConservation() internal view {
+        uint256 decomposed = _decomposedSyByIds();
+        uint256 balance = sy.balanceOf(address(position));
+        if (donatedCum == 0) {
+            assertEq(balance, decomposed, "strict SY conservation");
+        } else {
+            assertGe(balance, decomposed, "balance must cover the decomposition");
+            assertEq(balance - decomposed, donatedCum, "excess equals cumulative donations");
         }
-
-        // Stake at current rate
-        vm.prank(owner);
-        (uint256 positionId, uint256 totalMinted) = position.stake(amountInSY, 30, owner, owner);
-
-        // Skip if totalMinted is 0 (shouldn't happen with rate >= 1e18 and amountInSY >= 1)
-        vm.assume(totalMinted > 0);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Bound the burn amount so the proportional SY share is never zero (floor rounding) and the
-        // keeper's debt-equivalent SY is at least 1 wei (keeper-side dust guard); both dust revert
-        // paths and the undercollateralized path are covered by unit tests.
-        uint256 keeperDustFloor = Math.ceilDiv(newRate, 1e18);
-        uint256 minBurn = Math.max(Math.ceilDiv(totalMinted, amountInSY), keeperDustFloor);
-        // Stakes whose whole debt cannot fund even 1 wei of keeper SY have no non-dust keepRedeem.
-        vm.assume(minBurn <= totalMinted);
-        burnUAsset = bound(burnUAsset, minBurn, totalMinted);
-        uint256 syRedeemed = Math.mulDiv(amountInSY, burnUAsset, totalMinted);
-
-        // Transfer uAsset to keeper
-        vm.prank(owner);
-        uAsset.transfer(keeper, burnUAsset);
-
-        // Calculate expected values. Under the solvency guard the keeper's debt-equivalent share
-        // never exceeds the proportional share; an undercollateralized position reverts with
-        // InsufficientSyCollateral instead (unit-tested).
-        uint256 keeperPrincipalSYRaw = _assetToSy(burnUAsset, newRate);
-        uint256 expectedKeeperPrincipalSY = keeperPrincipalSYRaw;
-        uint256 expectedOwnerExcessSY = syRedeemed - expectedKeeperPrincipalSY;
-
-        // Fund position with SY for transfers
-        sy.mintShares(address(position), syRedeemed);
-
-        // KeepRedeem
-        vm.prank(keeper);
-        (uint256 uAssetBurned, uint256 keeperPrincipalSY, uint256 ownerExcessSY) =
-            position.keepRedeem(positionId, burnUAsset, keeper);
-
-        assertEq(uAssetBurned, burnUAsset, "burned amount should match input");
-        assertLe(keeperPrincipalSY, syRedeemed, "keeperPrincipalSY never exceeds syRedeemed");
-        assertEq(keeperPrincipalSY, expectedKeeperPrincipalSY, "keeperPrincipalSY calculation incorrect");
-        assertEq(ownerExcessSY, expectedOwnerExcessSY, "ownerExcessSY calculation incorrect");
-        assertEq(keeperPrincipalSY + ownerExcessSY, syRedeemed, "split should sum to syRedeemed");
     }
 
-    // ============================================
-    // 5. WrapStake + WrapRedeem Roundtrip
-    // ============================================
-
-    function testFuzz_WrapStakeRedeemRoundtrip(uint256 amountInSY, uint256 redeemUAsset, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        // Rate >= 1e18 keeps the pool healthy (wrap SY value covers debt face), so keepWrapRedeem
-        // redeems at face value instead of reverting WrapPoolUndercollateralized.
-        newRate = bound(newRate, 1e18, RATE_MAX);
-
-        // WrapStake at initial rate 1e18
-        vm.prank(owner);
-        uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
-
-        assertEq(uAssetMinted, amountInSY, "wrap stake should mint equal uAsset at rate 1e18");
-        assertEq(position.syWrapStaking(), amountInSY, "syWrapStaking incorrect");
-        assertEq(position.wrapUAssetDebt(), amountInSY, "wrapUAssetDebt incorrect");
-
-        // Change rate
-        sy.setExchangeRate(newRate);
-
-        redeemUAsset = bound(redeemUAsset, 1, uAssetMinted);
-
-        // Independent expectation, not the contract's own preview: a healthy pool redeems at face
-        // value (_assetToSy). Undercollateralized pools now revert (covered separately).
-        uint256 expectedSYOut = _assetToSy(redeemUAsset, newRate);
-        vm.assume(expectedSYOut > 0);
-
-        // The depositor hands the wrap-minted uAsset to the keeper, who burns it on redemption.
-        vm.prank(owner);
-        uAsset.transfer(keeper, redeemUAsset);
-
-        // KeepWrapRedeem (keeper-only)
-        vm.prank(keeper);
-        uint256 syOut = position.keepWrapRedeem(redeemUAsset, owner);
-
-        assertEq(syOut, expectedSYOut, "wrap redeem SY out incorrect");
-
-        // Verify accounting updates
-        assertEq(position.syWrapStaking(), amountInSY - expectedSYOut, "syWrapStaking after redeem incorrect");
-        assertEq(position.wrapUAssetDebt(), amountInSY - redeemUAsset, "wrapUAssetDebt after redeem incorrect");
-        assertEq(position.syTotalStaking(), amountInSY - expectedSYOut, "syTotalStaking should track wrap pool changes");
+    /// @dev Minter-ledger row: amountInMinted == sum of active principal debt, exactly.
+    function _checkMinterLedgerRow() internal view {
+        uint256 total = _ghostMinterTotalByIds();
+        (, uint256 amountInMinted) = uAsset.mintingStatusTable(address(position));
+        assertEq(amountInMinted, total, "minter ledger row equals active principal debt");
     }
 
-    // ============================================
-    // 6. Preview vs Actual Consistency
-    // ============================================
-
-    function testFuzz_PreviewStakeMatchesActual(uint256 amountInSY) public {
-        amountInSY = _boundAmount(amountInSY);
-
-        uint256 previewed = position.previewStake(amountInSY);
-
-        vm.prank(owner);
-        (, uint256 actual) = position.stake(amountInSY, 30, owner, owner);
-
-        assertEq(actual, previewed, "preview stake should match actual mint");
-    }
-
-    function testFuzz_PreviewRedeemMatchesActual(uint256 amountInSY, uint256 syRedeemed, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        syRedeemed = bound(syRedeemed, 1, amountInSY);
-        // Require at least 100% appreciation to ensure drawable amount exists even for tiny amounts
-        newRate = bound(newRate, 2e18, RATE_MAX);
-
-        // Stake
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amountInSY, 30, owner, owner);
-
-        // Change rate and draw
-        sy.setExchangeRate(newRate);
-        vm.prank(owner);
-        position.drawUAsset(positionId, owner);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Preview
-        (uint256 previewedBurn, uint256 previewedOut) = position.previewRedeem(positionId, syRedeemed, address(sy));
-
-        // Fund position for redemption
-        sy.mintShares(address(position), syRedeemed);
-
-        // Actual redeem
-        vm.prank(owner);
-        (uint256 actualBurn, uint256 actualOut) = position.redeem(positionId, syRedeemed, owner, address(sy), 0);
-
-        assertEq(actualBurn, previewedBurn, "preview redeem burn should match actual");
-        assertEq(actualOut, previewedOut, "preview redeem SY out should match actual");
-    }
-
-    function testFuzz_PreviewWrapRedeemMatchesActual(uint256 amountInSY, uint256 redeemUAsset, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        // Rate >= 1e18 keeps the pool healthy so preview and execution both succeed at face value;
-        // below 1e18 the pool is undercollateralized and both preview and keepWrapRedeem revert.
-        newRate = bound(newRate, 1e18, RATE_MAX);
-
-        // WrapStake at rate 1e18
-        vm.prank(owner);
-        uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
-
-        // Change rate
-        sy.setExchangeRate(newRate);
-
-        redeemUAsset = bound(redeemUAsset, 1, uAssetMinted);
-        uint256 expectedSYOut = _assetToSy(redeemUAsset, newRate);
-        vm.assume(expectedSYOut > 0);
-
-        // Preview (quote-only, mirrors keepWrapRedeem including the undercollateralized revert).
-        uint256 previewed = position.previewWrapRedeem(redeemUAsset);
-
-        // The depositor hands the wrap-minted uAsset to the keeper for burning.
-        vm.prank(owner);
-        uAsset.transfer(keeper, redeemUAsset);
-
-        // Actual (keeper-only)
-        vm.prank(keeper);
-        uint256 actual = position.keepWrapRedeem(redeemUAsset, owner);
-
-        assertEq(actual, previewed, "preview wrap redeem should match actual");
-    }
-
-    function testFuzz_PreviewDrawUAssetMatchesActual(uint256 amountInSY, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        // Require at least 100% appreciation to ensure drawable amount exists even for tiny amounts
-        newRate = bound(newRate, 2e18, RATE_MAX);
-
-        // Stake
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amountInSY, 30, owner, owner);
-
-        // Change rate
-        sy.setExchangeRate(newRate);
-
-        // Preview
-        uint256 previewed = position.previewDrawUAsset(positionId);
-
-        // Actual
-        vm.prank(owner);
-        uint256 actual = position.drawUAsset(positionId, owner);
-
-        assertEq(actual, previewed, "preview draw should match actual");
-    }
-
-    // ============================================
-    // 7. HarvestWrapYield Fuzz
-    // ============================================
-
-    function testHarvestWrapYieldRetainsCeilingDebtCoverageForNonDivisibleRate() public {
-        uint256 amountInSY = 1e18;
-
-        vm.prank(owner);
-        uint256 wrapUAssetMinted = position.wrapStake(amountInSY, owner);
-        assertEq(wrapUAssetMinted, amountInSY, "wrap stake should mint debt at rate 1e18");
-
-        sy.setExchangeRate(3e18);
-
-        vm.prank(owner);
-        position.harvestWrapYield(address(sy), 0);
-
-        uint256 remainingWrapSY = position.syWrapStaking();
-        uint256 expectedRemainingWrapSY = SYUtils.assetToSyUp(3e18, position.wrapUAssetDebt());
-
-        assertEq(remainingWrapSY, expectedRemainingWrapSY, "harvest should retain ceiling debt coverage");
-        assertGe(
-            SYUtils.syToAsset(3e18, remainingWrapSY),
-            position.wrapUAssetDebt(),
-            "remaining wrap SY must still cover wrap debt"
-        );
-    }
-
-    function testFuzz_HarvestWrapYield(uint256 amountInSY, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        newRate = bound(newRate, 1e18, RATE_MAX);
-
-        // WrapStake at rate 1e18
-        vm.prank(owner);
-        position.wrapStake(amountInSY, owner);
-
-        // Change rate (appreciation creates yield)
-        sy.setExchangeRate(newRate);
-
-        // Calculate expected harvest
-        uint256 wrapPoolSY = amountInSY;
-        uint256 wrapDebtInSY = _assetToSyUp(amountInSY, newRate);
-        uint256 expectedHarvest = wrapPoolSY > wrapDebtInSY ? wrapPoolSY - wrapDebtInSY : 0;
-
-        // Harvest
-        vm.prank(owner);
-        uint256 harvested = position.harvestWrapYield(address(sy), 0);
-
-        assertEq(harvested, expectedHarvest, "harvested amount incorrect");
-        assertEq(sy.balanceOf(revenuePool), expectedHarvest, "revenue pool should receive harvest");
-
-        // After harvest, syWrapStaking must retain ceiling SY coverage for wrap debt.
-        uint256 remainingWrapSY = position.syWrapStaking();
-        uint256 remainingDebtSY = _assetToSyUp(position.wrapUAssetDebt(), newRate);
-        assertGe(remainingWrapSY, remainingDebtSY, "remaining wrap SY should cover debt");
-        assertGe(
-            SYUtils.syToAsset(newRate, remainingWrapSY),
-            position.wrapUAssetDebt(),
-            "remaining wrap SY asset value should cover debt"
-        );
-    }
-
-    function testFuzz_HarvestWrapYieldReturnsZeroWhenNoYield(uint256 amountInSY, uint256 newRate) public {
-        amountInSY = _boundAmount(amountInSY);
-        newRate = bound(newRate, RATE_MIN, 1e18); // Rate <= 1e18 means no yield
-
-        // WrapStake at rate 1e18
-        vm.prank(owner);
-        position.wrapStake(amountInSY, owner);
-
-        // Change rate to same or lower
-        sy.setExchangeRate(newRate);
-
-        // Harvest should return 0
-        vm.prank(owner);
-        uint256 harvested = position.harvestWrapYield(address(sy), 0);
-
-        assertEq(harvested, 0, "harvest should be zero when no yield");
-        assertEq(sy.balanceOf(revenuePool), 0, "revenue pool should receive nothing");
-    }
-
-    // ============================================
-    // 8. Multi-Position Accounting
-    // ============================================
-
-    function testFuzz_MultiPositionAccounting(uint256[4] memory amounts, uint256 newRate) public {
-        // Bound all amounts
-        for (uint256 i = 0; i < 4; i++) {
-            amounts[i] = _boundAmount(amounts[i]);
+    /// @dev Per-position accrual matches the reference for every active position: pendingInterest
+    ///      is the unsettled increment only (the settled accrued residual is excluded), and
+    ///      positionDebt decomposes into principal + settled accrued + that increment.
+    function _checkAccrualAgainstReference() internal view {
+        for (uint256 i = 0; i < ghostIds.length; ++i) {
+            uint256 id = ghostIds[i];
+            (address positionOwner,,,,) = position.positions(id);
+            if (positionOwner == address(0)) continue;
+            // Pure view with no settlement between the two checks: one read serves both.
+            uint256 pending = position.pendingInterest(id);
+            assertEq(
+                pending,
+                _refInterest(ghostPrincipal[id], _refUnit(warpAt) - ghostLastUnit[id]),
+                "pending interest matches the reference"
+            );
+            assertEq(
+                position.positionDebt(id),
+                ghostPrincipal[id] + ghostAccrued[id] + pending,
+                "position debt decomposes into principal, settled, and pending interest"
+            );
         }
-        // Ensure meaningful appreciation (at least 100% / 2x) to have drawable amounts
-        newRate = bound(newRate, 2e18, RATE_MAX);
-
-        // Create multiple positions
-        uint256[] memory positionIds = new uint256[](4);
-        uint256 totalStaked = 0;
-
-        vm.prank(owner);
-        (positionIds[0],) = position.stake(amounts[0], 30, owner, owner);
-        totalStaked += amounts[0];
-
-        vm.prank(user1);
-        (positionIds[1],) = position.stake(amounts[1], 30, user1, user1);
-        totalStaked += amounts[1];
-
-        vm.prank(user2);
-        (positionIds[2],) = position.stake(amounts[2], 30, user2, user2);
-        totalStaked += amounts[2];
-
-        // Wrap stake as well
-        vm.prank(owner);
-        position.wrapStake(amounts[3], owner);
-        totalStaked += amounts[3];
-
-        // Verify initial accounting
-        assertEq(position.syTotalStaking(), totalStaked, "syTotalStaking should equal sum of all stakes");
-
-        // Change rate
-        sy.setExchangeRate(newRate);
-
-        // Draw on some positions (will have drawable amount since rate doubled)
-        vm.prank(owner);
-        position.drawUAsset(positionIds[0], owner);
-
-        vm.prank(user1);
-        position.drawUAsset(positionIds[1], user1);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Partial redemption on first position
-        uint256 partialRedeem = amounts[0] / 2;
-        if (partialRedeem > 0) {
-            sy.mintShares(address(position), partialRedeem);
-            vm.prank(owner);
-            position.redeem(positionIds[0], partialRedeem, owner, address(sy), 0);
-        }
-
-        // Verify accounting after partial redemption
-        uint256 expectedTotal = (amounts[0] - partialRedeem) + amounts[1] + amounts[2] + amounts[3];
-        assertEq(position.syTotalStaking(), expectedTotal, "syTotalStaking after partial redeem incorrect");
     }
 
-    // ============================================
-    // 9. Edge Cases - Zero Appreciation
-    // ============================================
+    /// @dev Backing invariant: every active position's principal debt never exceeds its mint-time
+    ///      collateral value (value-parity floors at open; the rate never moves in this suite).
+    function _checkBackingInvariant() internal view {
+        for (uint256 i = 0; i < ghostIds.length; ++i) {
+            uint256 id = ghostIds[i];
+            (address positionOwner,, uint256 principal,,) = position.positions(id);
+            if (positionOwner == address(0)) continue;
+            assertLe(principal, ghostMintCollateral[id], "mint-time backing invariant");
+        }
+    }
 
-    function testFuzz_DrawUAssetZeroWhenNoAppreciation(uint256 amountInSY, uint256 rate) public {
-        amountInSY = _boundAmount(amountInSY);
-        rate = bound(rate, RATE_MIN, 1e18); // Rate <= 1e18
+    // ==========================================================================
+    // Randomized sequence drivers
+    // ==========================================================================
 
-        // Stake
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amountInSY, 30, owner, owner);
+    /// @notice Random genesis-open/redeem/warp sequences with strict conservation (no donations).
+    function testFuzz_SequencePreservesParityAccrualAndTwoLegConservation(uint256 seed, uint8 rawSteps) external {
+        _runSequence(seed, rawSteps, false);
+    }
 
-        // Set rate to same or lower
+    /// @notice Same randomized sequences plus a SY donation flow: the balance stays at or above
+    ///         the decomposition with the difference exactly equal to cumulative donations.
+    function testFuzz_DonationFlowConservationTracksExcess(uint256 seed, uint8 rawSteps) external {
+        _runSequence(seed, rawSteps, true);
+    }
+
+    /// @dev Shared sequence driver: both fuzz entrypoints run the same op dispatch and the same
+    ///      per-step checks. `withDonation` only widens the op bound from 0..5 to 0..6 so the
+    ///      donation leg (op == 6) is reachable; the 0..5 mapping is identical either way.
+    function _runSequence(uint256 seed, uint8 rawSteps, bool withDonation) internal {
+        uint8 steps = uint8(bound(rawSteps, 4, 12));
+        for (uint256 i = 0; i < steps; ++i) {
+            seed = _nextRandom(seed);
+            uint8 op = uint8(_pick(seed, 0, withDonation ? 6 : 5));
+            if (op == 0) {
+                _warpTime(seed);
+            } else if (op == 1 || op == 2) {
+                _stakeForGenesisRandom(seed);
+            } else if (op == 3) {
+                _partialRedeemRandom(seed);
+            } else if (op == 4) {
+                _fullRedeemRandom(seed);
+            } else if (op == 5) {
+                _changeDuty(seed);
+            } else {
+                _donateSy(seed);
+            }
+            _checkSyConservation();
+            _checkMinterLedgerRow();
+            _checkAccrualAgainstReference();
+            _checkBackingInvariant();
+        }
+    }
+
+    /// @notice Across rates (including rate increases) and dust amounts, the minted debt never
+    ///         exceeds the collateral value, preview == execution, and dust deliberately diverges
+    ///         (quote 0 vs executor revert).
+    function testFuzz_ValueParityHoldsAcrossRatesAndDust(uint96 syAmount, uint104 rawRate) external {
+        uint256 rate = bound(rawRate, 1e17, 5e18);
         sy.setExchangeRate(rate);
+        syAmount = uint96(bound(syAmount, 1, 1e24));
 
-        // Preview should return 0
-        uint256 previewed = position.previewDrawUAsset(positionId);
-        assertEq(previewed, 0, "preview should be zero when no appreciation");
-    }
+        uint256 previewed = position.previewStake(syAmount);
+        uint256 collateral = _refCollateral(syAmount, rate);
+        assertLe(previewed, collateral, "minted debt never exceeds collateral value");
 
-    // ============================================
-    // 10. Edge Cases - Rate Below 1
-    // ============================================
-
-    function testFuzz_WrapRedeemAtLowRate(uint256 amountInSY, uint256 lowRate, uint256 redeemBp) public {
-        amountInSY = _boundAmount(amountInSY);
-        lowRate = bound(lowRate, RATE_MIN, 9e17); // Rate < 1e18
-        redeemBp = bound(redeemBp, 1, 100);
-
-        // WrapStake at rate 1e18
-        vm.prank(owner);
-        uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
-
-        // Drop rate below 1: pool value < debt face → undercollateralized, keepWrapRedeem reverts
-        // (all-or-nothing semantics; previously this paid pro-rata).
-        sy.setExchangeRate(lowRate);
-
-        uint256 redeemUAsset = Math.mulDiv(uAssetMinted, redeemBp, 100, Math.Rounding.Floor);
-        vm.assume(redeemUAsset > 0); // skip dust redeem amounts (floor to zero)
-
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
-        position.keepWrapRedeem(redeemUAsset, keeper);
-    }
-
-    // ============================================
-    // 11. Large Amount Handling (Beyond uint128)
-    // ============================================
-
-    function testFuzz_LargeAmountStake(uint128 amountInSY) public {
-        // Use uint128 to avoid overflow in fuzzing, but still test large values
-        // forge-lint: disable-next-line(unsafe-typecast)
-        vm.assume(amountInSY >= uint128(MIN_STAKE));
-
-        uint256 largeAmount = uint256(amountInSY);
-
-        // Mint enough SY
-        sy.mintShares(owner, largeAmount);
-
-        vm.prank(owner);
-        (uint256 positionId, uint256 uAssetMinted) = position.stake(largeAmount, 30, owner, owner);
-
-        assertEq(uAssetMinted, largeAmount, "large amount stake mint incorrect");
-        assertEq(position.syTotalStaking(), largeAmount, "syTotalStaking for large amount incorrect");
-
-        (, uint256 syStaked, uint256 positionUAssetMinted,) = position.positions(positionId);
-        assertEq(syStaked, largeAmount, "position syStaked incorrect");
-        assertEq(positionUAssetMinted, largeAmount, "position UAssetMinted incorrect");
-    }
-
-    // ============================================
-    // 12. Rounding Direction Tests
-    // ============================================
-
-    function testFuzz_RoundingDirectionSYConversion(uint256 amountInSY, uint256 rate) public pure {
-        amountInSY = _boundAmount(amountInSY);
-        rate = _boundRate(rate);
-
-        // syToAsset rounds down: (syAmount * rate) / 1e18
-        uint256 asset = _syToAsset(amountInSY, rate);
-
-        // assetToSy rounds down: (asset * 1e18) / rate
-        uint256 syBack = _assetToSy(asset, rate);
-
-        // Due to rounding, syBack <= amountInSY
-        assertLe(syBack, amountInSY, "round trip should not increase SY amount");
-    }
-
-    // ============================================
-    // 13. Accounting Invariants After Multiple Operations
-    // ============================================
-
-    function testFuzz_AccountingInvariantsAfterMixedOps(
-        uint256 stakeAmount1,
-        uint256 stakeAmount2,
-        uint256 wrapAmount,
-        uint256 rate1,
-        uint256 rate2
-    ) public {
-        stakeAmount1 = _boundAmount(stakeAmount1);
-        stakeAmount2 = _boundAmount(stakeAmount2);
-        wrapAmount = _boundAmount(wrapAmount);
-        // Ensure meaningful appreciation (at least 100%) for drawable amounts
-        rate1 = bound(rate1, 2e18, RATE_MAX);
-        rate2 = bound(rate2, 2e18, RATE_MAX);
-
-        // Create positions and wrap stake
-        vm.prank(owner);
-        (uint256 pos1,) = position.stake(stakeAmount1, 30, owner, owner);
-
-        vm.prank(user1);
-        position.stake(stakeAmount2, 30, user1, user1);
-
-        vm.prank(owner);
-        position.wrapStake(wrapAmount, owner);
-
-        uint256 expectedTotal = stakeAmount1 + stakeAmount2 + wrapAmount;
-        assertEq(position.syTotalStaking(), expectedTotal, "initial total incorrect");
-
-        // Change rate and draw (guaranteed to have drawable amount with 100%+ appreciation)
-        sy.setExchangeRate(rate1);
-        vm.prank(owner);
-        position.drawUAsset(pos1, owner);
-
-        // Verify syTotalStaking unchanged after draw
-        assertEq(position.syTotalStaking(), expectedTotal, "total should not change on draw");
-
-        // Change rate again
-        sy.setExchangeRate(rate2);
-
-        // Warp and partial redeem
-        vm.warp(block.timestamp + 31 days);
-
-        uint256 partialRedeem = stakeAmount1 / 2;
-        if (partialRedeem > 0) {
-            sy.mintShares(address(position), partialRedeem);
-            vm.prank(owner);
-            position.redeem(pos1, partialRedeem, owner, address(sy), 0);
-
-            expectedTotal -= partialRedeem;
-            assertEq(position.syTotalStaking(), expectedTotal, "total after partial redeem incorrect");
+        sy.mintShares(user, syAmount);
+        vm.startPrank(user);
+        sy.approve(address(position), syAmount);
+        if (previewed == 0) {
+            vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+            position.stakeForGenesis(syAmount, user, VERSE_ID, 0);
+            vm.stopPrank();
+            return;
         }
+        uint256 positionId = position.stakeForGenesis(syAmount, user, VERSE_ID, 0);
+        vm.stopPrank();
+        (,, uint256 principalDebt,,) = position.positions(positionId);
+        assertEq(principalDebt, previewed, "genesis minted the previewed amount");
+    }
 
-        // Harvest wrap yield if any
+    /// @notice Partial redeem legs decompose the repayment exactly: ceiled pro-rata legs, the
+    ///         burn reduces the minter ledger by the same amount, and only the interest moves.
+    function testFuzz_PartialRedeemLegsDecomposeRepayment(uint96 syAmount, uint96 rawRedeem, uint16 rawSeconds)
+        external
+    {
+        syAmount = uint96(bound(syAmount, 2e18, 1e24));
+        uint256 syRedeemed = bound(rawRedeem, 1, uint256(syAmount) - 1);
+        uint256 principal = _openGenesis(user, syAmount);
+        uint256 positionId = position.idCounter();
+        // The open settles the rate at the opening second; the snapshot is the settled value.
+        uint256 unitAtOpen = position.rate();
+
+        _warp(bound(rawSeconds, 0, 600));
+        uint256 settledInterest = _refInterest(principal, _refUnit(warpAt) - unitAtOpen);
+
+        uint256 expectedPrincipal = SPTestDefaults.ceilDiv(principal * syRedeemed, syAmount);
+        if (expectedPrincipal >= principal) {
+            vm.prank(user);
+            vm.expectRevert(IOutrunStakeManager.PartialRedeemMustLeaveDebt.selector);
+            position.redeem(positionId, syRedeemed, user, address(sy), 0);
+            return;
+        }
+        uint256 expectedInterest = SPTestDefaults.ceilDiv(settledInterest * syRedeemed, syAmount);
+
+        uint256 treasuryBefore = uAsset.balanceOf(treasury);
+        (, uint256 burnedBefore) = uAsset.mintingStatusTable(address(position));
+        vm.prank(user);
+        (uint256 burned, uint256 paid,) = position.redeem(positionId, syRedeemed, user, address(sy), 0);
+        assertEq(burned, expectedPrincipal, "principal leg is the ceiled share");
+        assertEq(paid, expectedInterest, "interest leg is the ceiled share");
+        assertEq(uAsset.balanceOf(treasury) - treasuryBefore, expectedInterest, "treasury received the interest leg");
+        (, uint256 burnedAfter) = uAsset.mintingStatusTable(address(position));
+        assertEq(burnedBefore - burnedAfter, expectedPrincipal, "ledger reduced by the principal leg only");
+    }
+
+    /// @notice Zero-fee fuzz: at duty 1e27 the rate never advances and interest never accrues,
+    ///         across warps and partial/full redeems.
+    function testFuzz_ZeroFeeDutyNeverAccrues(uint16 rawSeconds, uint96 rawRedeem) external {
         vm.prank(owner);
-        uint256 harvested = position.harvestWrapYield(address(sy), 0);
+        position.setDuty(SPTestDefaults.ZERO_FEE_DUTY);
 
-        if (harvested > 0) {
-            expectedTotal -= harvested;
-            assertEq(position.syTotalStaking(), expectedTotal, "total after harvest incorrect");
+        uint256 syAmount = 10e18;
+        uint256 principal = _openGenesis(user, syAmount);
+        uint256 positionId = position.idCounter();
+
+        _warp(bound(rawSeconds, 0, 365 days));
+        assertEq(position.rate(), 1e27, "zero-fee rate frozen");
+        assertEq(position.pendingInterest(positionId), 0, "zero pending interest");
+
+        uint256 syRedeemed = bound(rawRedeem, 1, syAmount);
+        if (syRedeemed == syAmount) {
+            vm.prank(user);
+            (uint256 burned, uint256 paid,) = position.redeem(positionId, syRedeemed, user, address(sy), 0);
+            assertEq(burned, principal, "full principal leg");
+            assertEq(paid, 0, "zero interest leg");
+        } else {
+            uint256 expectedPrincipal = SPTestDefaults.ceilDiv(principal * syRedeemed, syAmount);
+            if (expectedPrincipal >= principal) return; // legitimate contract rejection
+            vm.prank(user);
+            (uint256 burned, uint256 paid,) = position.redeem(positionId, syRedeemed, user, address(sy), 0);
+            assertEq(burned, expectedPrincipal, "partial principal leg");
+            assertEq(paid, 0, "zero interest leg");
+        }
+        assertEq(uAsset.balanceOf(treasury), 0, "treasury received nothing under zero fee");
+    }
+
+    // ==========================================================================
+    // Sequence operations
+    // ==========================================================================
+
+    /// @notice Opens a genesis position for `who` and returns the value-parity minted principal.
+    function _openGenesis(address who, uint256 amount) internal returns (uint256 principal) {
+        sy.mintShares(who, amount);
+        vm.startPrank(who);
+        sy.approve(address(position), amount);
+        uint256 positionId = position.stakeForGenesis(amount, who, VERSE_ID, 0);
+        vm.stopPrank();
+        (,, principal,,) = position.positions(positionId);
+    }
+
+    function _warpTime(uint256 seed) internal {
+        _warp(_pick(_nextRandom(seed), 1, 600));
+    }
+
+    /// @dev Genesis open with the SP-side conservation asserted per call: the SP's uAsset balance
+    ///      is identical before and after (the mint is consumed inside the transaction), the
+    ///      launcher allowance is zero, and the ghost model records the mint-time collateral value.
+    function _stakeForGenesisRandom(uint256 seed) internal {
+        uint256 amount = _pick(_nextRandom(seed), 2e18, 100e18);
+        uint256 spUAssetBefore = uAsset.balanceOf(address(position));
+        uint256 rate = sy.exchangeRate();
+
+        sy.mintShares(user, amount);
+        vm.startPrank(user);
+        sy.approve(address(position), amount);
+        uint256 positionId = position.stakeForGenesis(amount, user, VERSE_ID, 0);
+        vm.stopPrank();
+
+        assertEq(uAsset.balanceOf(address(position)), spUAssetBefore, "SP uAsset balance conserved");
+        assertEq(uAsset.allowance(address(position), address(genesisLauncher)), 0, "launcher allowance cleared");
+
+        (,, uint256 minted,,) = position.positions(positionId);
+        // Value parity at the mint rate: minted <= collateral, exactly the two-floor quote.
+        assertLe(minted, _refCollateral(amount, rate), "mint-time backing ceiling");
+        ghostIds.push(positionId);
+        ghostPrincipal[positionId] = minted;
+        ghostMintCollateral[positionId] = _refCollateral(amount, rate);
+        ghostLastUnit[positionId] = _refUnit(warpAt);
+        ghostAccrued[positionId] = 0;
+        _settleGhostSegment(warpAt);
+    }
+
+    function _partialRedeemRandom(uint256 seed) internal {
+        uint256 positionId = _randomActiveId(_nextRandom(seed));
+        if (positionId == 0) return;
+        (, uint256 syStaked, uint256 principal,,) = position.positions(positionId);
+        if (syStaked < 2) return;
+        uint256 syRedeemed = _pick(_nextRandom(seed), 1, syStaked - 1);
+
+        uint256 settledInterest = _refSettledInterest(positionId, warpAt);
+        uint256 expectedPrincipal = SPTestDefaults.ceilDiv(principal * syRedeemed, syStaked);
+        // A partial whose ceiled principal leg would exhaust the debt is a legitimate contract
+        // rejection: skip it instead of calling (assertions must not hide behind a catch).
+        if (expectedPrincipal >= principal) return;
+        uint256 expectedInterest = SPTestDefaults.ceilDiv(settledInterest * syRedeemed, syStaked);
+
+        vm.prank(user);
+        (uint256 burned, uint256 paid,) = position.redeem(positionId, syRedeemed, user, address(sy), 0);
+        assertEq(burned, expectedPrincipal, "partial principal leg");
+        assertEq(paid, expectedInterest, "partial interest leg");
+        ghostPrincipal[positionId] = principal - burned;
+        ghostAccrued[positionId] = settledInterest - expectedInterest; // residual stays booked
+        ghostLastUnit[positionId] = _refUnit(warpAt);
+        _settleGhostSegment(warpAt);
+    }
+
+    function _fullRedeemRandom(uint256 seed) internal {
+        uint256 positionId = _randomActiveId(_nextRandom(seed));
+        if (positionId == 0) return;
+        (, uint256 syStaked,,,) = position.positions(positionId);
+        uint256 principal = ghostPrincipal[positionId];
+        uint256 settledInterest = _refSettledInterest(positionId, warpAt);
+
+        uint256 treasuryBefore = uAsset.balanceOf(treasury);
+        (, uint256 ledgerBefore) = uAsset.mintingStatusTable(address(position));
+        vm.prank(user);
+        (uint256 burned, uint256 paid,) = position.redeem(positionId, syStaked, user, address(sy), 0);
+        assertEq(burned, principal, "full redeem principal leg");
+        assertEq(paid, settledInterest, "full redeem interest leg");
+        assertEq(uAsset.balanceOf(treasury) - treasuryBefore, settledInterest, "treasury interest delta");
+        (, uint256 ledgerAfter) = uAsset.mintingStatusTable(address(position));
+        assertEq(ledgerBefore - ledgerAfter, principal, "ledger delta equals the burn");
+
+        delete ghostPrincipal[positionId];
+        delete ghostLastUnit[positionId];
+        delete ghostAccrued[positionId];
+        _settleGhostSegment(warpAt);
+    }
+
+    function _changeDuty(uint256 seed) internal {
+        uint256 current = position.duty();
+        // One bounded step: the setter rejects sub-RAY duties and duties above the cap. The walk
+        // may cross the zero-fee sentinel (1e27) — a legal rate — so only sub-RAY is skipped.
+        uint256 raw = _pick(_nextRandom(seed), 1, 2 * DUTY_STEP);
+        (uint256 newDuty, bool skip) = _dutyStepCandidate(current, raw, DUTY_STEP, DUTY_CAP);
+        if (skip) return;
+
+        vm.prank(owner);
+        position.setDuty(newDuty);
+        // Segment boundary, recorded only after the setter succeeds so the ghost table never
+        // diverges from the contract: settle pending seconds at the old duty, then the new duty applies.
+        segments.push(Segment({startAt: warpAt, unitAtStart: _refUnit(warpAt), duty: newDuty}));
+    }
+
+    function _donateSy(uint256 seed) internal {
+        uint256 amount = _pick(_nextRandom(seed), 1, 10e18);
+        sy.mintShares(user, amount);
+        vm.startPrank(user);
+        sy.transfer(address(position), amount);
+        vm.stopPrank();
+        donatedCum += amount;
+    }
+
+    // ==========================================================================
+    // PRNG and small helpers
+    // ==========================================================================
+
+    function _nextRandom(uint256 seed) internal pure returns (uint256) {
+        // Deliberately wrapping LCG: fuzzed seeds span the full uint256 domain.
+        unchecked {
+            return seed * 6364136223846793005 + 1442695040888963407;
         }
     }
 
-    // ============================================
-    // 14. KeepRedeem Split Edge Cases
-    // ============================================
+    // ---- PositionGhostModel virtual overrides (fuzz suite) ----
 
-    function testFuzz_KeepRedeemSplitAtLowRate(uint256 amountInSY, uint256 lowRate) public {
-        lowRate = bound(lowRate, RATE_MIN, 5e17); // Very low rate
-
-        // Dust stakes revert with DustRoundedToZero, so bound the stake amount to always mint at least
-        // 1 uAsset (bound maps inputs instead of discarding them, per repo test rules).
-        amountInSY = bound(amountInSY, Math.ceilDiv(1e18, lowRate), MAX_STAKE);
-
-        // Set low rate
-        sy.setExchangeRate(lowRate);
-
-        // Stake at low rate
-        vm.prank(owner);
-        (uint256 positionId, uint256 totalMinted) = position.stake(amountInSY, 30, owner, owner);
-
-        // Warp past lockup
-        vm.warp(block.timestamp + 31 days);
-
-        // Full keepRedeem
-        vm.prank(owner);
-        uAsset.transfer(keeper, totalMinted);
-
-        uint256 syRedeemed = amountInSY;
-        uint256 keeperPrincipalRaw = _assetToSy(totalMinted, lowRate);
-
-        sy.mintShares(address(position), syRedeemed);
-
-        vm.prank(keeper);
-        (, uint256 keeperPrincipalSY, uint256 ownerExcessSY) = position.keepRedeem(positionId, totalMinted, keeper);
-
-        // Under the full-position solvency guard, the keeper's debt-equivalent share can never exceed
-        // the proportional SY share; an undercollateralized position reverts with
-        // InsufficientSyCollateral instead (covered by unit tests). Floor conversion rounds down.
-        assertEq(keeperPrincipalSY, keeperPrincipalRaw, "keeper principal should equal debt-equivalent SY");
-        assertEq(ownerExcessSY, syRedeemed - keeperPrincipalRaw, "owner gets remainder");
-
-        assertEq(keeperPrincipalSY + ownerExcessSY, syRedeemed, "total should equal syRedeemed");
+    function _ghostIsActive(uint256 positionId) internal view override returns (bool) {
+        (address positionOwner,,,,) = position.positions(positionId);
+        return positionOwner != address(0);
     }
 
-    // ============================================
-    // 15. Wrap pool undercollateralized -> recover state machine (genuinely worth covering)
-    // ============================================
-
-    function testFuzz_WrapPoolUndercollateralizedThenRecovers(
-        uint256 amountInSY,
-        uint256 dipRate,
-        uint256 recoverRate,
-        uint256 redeemUAsset
-    ) public {
-        amountInSY = _boundAmount(amountInSY);
-        dipRate = bound(dipRate, RATE_MIN, 9e17); // <1e18 → undercollateralized
-        recoverRate = bound(recoverRate, 1e18, RATE_MAX);
-
-        // WrapStake at 1e18 (healthy)
-        vm.prank(owner);
-        uint256 uAssetMinted = position.wrapStake(amountInSY, owner);
-        assertEq(uAssetMinted, amountInSY);
-
-        // Dip: pool becomes undercollateralized → keepWrapRedeem must revert all-or-nothing
-        sy.setExchangeRate(dipRate);
-        redeemUAsset = bound(redeemUAsset, 1, uAssetMinted);
-        vm.prank(owner);
-        uAsset.transfer(keeper, redeemUAsset);
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
-        position.keepWrapRedeem(redeemUAsset, keeper);
-
-        // No state changed during revert
-        assertEq(position.wrapUAssetDebt(), amountInSY);
-        assertEq(position.syWrapStaking(), amountInSY);
-
-        // Recover: rate back to >=1e18 → same redeem should succeed at face value
-        sy.setExchangeRate(recoverRate);
-        uint256 expectedSYOut = _assetToSy(redeemUAsset, recoverRate);
-        vm.assume(expectedSYOut > 0);
-        vm.prank(keeper);
-        uint256 syOut = position.keepWrapRedeem(redeemUAsset, keeper);
-        assertEq(syOut, expectedSYOut);
-        assertEq(position.wrapUAssetDebt(), amountInSY - redeemUAsset);
+    function _ghostSyStaked(uint256 positionId) internal view override returns (uint256) {
+        (, uint256 syStaked,,,) = position.positions(positionId);
+        return syStaked;
     }
 
-    // ============================================
-    // 16. Bandwidth guard — removed with the deprecated exchange-rate band
-    // ============================================
-    // `setExchangeRateBounds` / `ExchangeRateOutOfBounds` band removed: chain-side guard is now
-    // only `ZeroExchangeRate` with off-chain `StaleOracleAnswer` / `ZeroExchangeRate` monitoring.
-    // (Previous band tests deleted; see git history for original `testFuzz_BandwidthGuard*`.)
+    function _ghostPrincipalDebt(uint256 positionId) internal view override returns (uint256) {
+        (,, uint256 principal,,) = position.positions(positionId);
+        return principal;
+    }
 }
 
 /**
- * @title Stateless property tests for OutrunStakingPosition
- * @notice Boundary-exact and access-control properties: position and wrap-pool solvency boundaries
- *        , the uAsset mint-cap ledger, keeper allowance accounting,
- *         deadline and position-id edges, and the exchange-rate bandwidth guard.
- * @dev Each test derives its expectations from formulas that are independent of the contract's own
- *      preview paths, so a shared bug cannot mask itself.
+ * @title OutrunStakingPositionPropertyTest
+ * @notice Focused deterministic properties that complement the randomized sequences: partial
+ *         redeem ceil behavior, interest continuity across a partial redeem, and rate-change
+ *         segmentation on a live position.
  */
-contract OutrunStakingPositionPropertyTest is Test {
+contract OutrunStakingPositionPropertyTest is CommonTestHelpers, PositionRefModel {
+    address internal owner = address(0xA11CE);
+    address internal user = address(0xB0B);
+
+    // `warpAt`/`_warp` provided by `CommonTestHelpers`; RAY compounding reference
+    // (`Segment`/`_refUnit`/`_refInterest`) provided by `PositionRefModel`.
+
     MockERC20 internal underlying;
     MockSY internal sy;
     MockUAsset internal uAsset;
     OutrunStakingPositionUpgradeable internal position;
+    MockGenesisLauncher internal genesisLauncher;
 
-    address internal owner = address(0xA11CE);
-    address internal keeper = address(0xB0B);
-    address internal revenuePool = address(0xFEE);
-
-    uint256 internal constant MIN_STAKE = 1;
-    uint256 internal constant MAX_STAKE = 10_000e18;
+    // `warpAt`/`_warp` provided by `CommonTestHelpers`.
 
     function setUp() external {
         underlying = new MockERC20("Mock Asset", "mAST");
         sy = new MockSY(address(underlying));
         uAsset = new MockUAsset();
-
         position = OutrunStakingPositionUpgradeable(
             ProxyTestHelper.deploy(
                 address(new OutrunStakingPositionUpgradeable()),
-                abi.encodeCall(
-                    OutrunStakingPositionUpgradeable.initialize,
-                    (owner, MIN_STAKE, revenuePool, address(sy), address(uAsset), keeper)
-                )
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), address(0xFEE))
             )
         );
-
         uAsset.setMintingCap(address(position), type(uint256).max);
-        // Register the test contract itself as a minter so it can fund the keeper with uAsset
-        // directly (MockUAsset's owner is this contract, the deployer of the mock).
         uAsset.setMintingCap(address(this), type(uint256).max);
-
-        // Mint SY for the owner (the only actor that stakes in this suite)
-        sy.mintShares(owner, 100_000e18);
-
-        // Approve position to spend SY
+        genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
-        sy.approve(address(position), type(uint256).max);
-
-        // Approve position to spend uAsset (the keeper burns its own uAsset in keep* redeems)
-        vm.prank(owner);
+        position.setGenesisLauncher(address(genesisLauncher));
+        uAsset.mint(user, 1e27);
+        vm.prank(user);
         uAsset.approve(address(position), type(uint256).max);
-        vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
+        // Genesis segment: the cumulative rate starts at RAY (1e27) at the init timestamp.
+        _seedGenesisSegment(warpAt, SPTestDefaults.DUTY);
     }
 
-    // ============================================
-    // 1. Position solvency boundary
-    // ============================================
-
-    function testFuzz_KeeperSolvencyBoundaryExact(uint256 amountSeed, uint256 rateSeed) public {
-        // rate >= 2e18 keeps rPass >= 2, so rPass - 1 never triggers ZeroExchangeRate.
-        uint256 rate = bound(rateSeed, 2e18, 5e18);
-        uint256 amount = bound(amountSeed, 1e15, 1e24);
-        // The setUp funds owner with 1e23 SY; amounts up to 1e24 need a top-up for the two stakes below.
-        sy.mintShares(owner, 2 * amount);
-
-        sy.setExchangeRate(rate);
-        vm.prank(owner);
-        (uint256 positionId, uint256 debt) = position.stake(amount, 30, owner, owner);
-        uint256 syStaked = amount;
-
-        // Exact solvency boundary: assetToSyUp(debt, r) <= syStaked holds iff r >= ceilDiv(debt*1e18, syStaked).
-        uint256 rPass = Math.ceilDiv(debt * 1e18, syStaked);
-
-        // PART A: at rPass a full-debt keepRedeem passes; the keeper/owner split conserves
-        // the whole staked SY (a full burn redeems syRedeemed == syStaked).
-        sy.setExchangeRate(rPass);
-        (,,, uint128 deadline) = position.positions(positionId);
-        vm.warp(deadline + 1);
-        uAsset.mint(keeper, debt);
-        uint256 keeperSYBefore = sy.balanceOf(keeper);
-
-        vm.prank(keeper);
-        (uint256 burned, uint256 keeperPrincipalSY, uint256 ownerExcessSY) =
-            position.keepRedeem(positionId, debt, keeper);
-
-        assertEq(burned, debt, "full-debt burn amount mismatch");
-        assertEq(keeperPrincipalSY + ownerExcessSY, syStaked, "split must conserve all staked SY");
-        assertLe(keeperPrincipalSY, syStaked, "keeper share cannot exceed staked SY");
-        assertEq(sy.balanceOf(keeper) - keeperSYBefore, keeperPrincipalSY, "keeper SY balance delta mismatch");
-
-        // PART B: at rPass - 1 the same-shaped position is rejected by the solvency guard.
-        sy.setExchangeRate(rate); // restore the original rate so the second stake reproduces the debt
-        vm.prank(owner);
-        (uint256 positionId2, uint256 debt2) = position.stake(amount, 30, owner, owner);
-        assertEq(debt2, debt, "same parameters must reproduce the same debt");
-        sy.setExchangeRate(rPass - 1);
-        (,,, uint128 deadline2) = position.positions(positionId2);
-        vm.warp(deadline2 + 1);
-
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.InsufficientSyCollateral.selector);
-        position.keepRedeem(positionId2, debt2, keeper);
+    /// @notice Opens a genesis position for `user` and returns the id and minted principal.
+    function _openGenesis(uint256 amount) internal returns (uint256 positionId, uint256 minted) {
+        sy.mintShares(user, amount);
+        vm.startPrank(user);
+        sy.approve(address(position), amount);
+        positionId = position.stakeForGenesis(amount, user, 42, 0);
+        vm.stopPrank();
+        (,, minted,,) = position.positions(positionId);
     }
 
-    // ============================================
-    // 2. Wrap pool solvency boundary
-    // ============================================
+    /// @notice A half partial redeem ceils both legs, halves the collateral, keeps positive
+    ///         principal debt, and interest continues on the reduced principal.
+    function test_PartialRedeemCeilsLegsAndLeavesDebt() external {
+        (uint256 positionId, uint256 minted) = _openGenesis(10e18);
 
-    function testFuzz_WrapPoolSolvencyBoundaryExact(uint256 amountSeed, uint256 rateSeed) public {
-        uint256 rate = bound(rateSeed, 2e18, 5e18);
-        uint256 amount = bound(amountSeed, 1e15, 1e24);
-        sy.mintShares(owner, 2 * amount);
+        uint256 half = 5e18;
+        uint256 expectedPrincipal = (minted * half + 10e18 - 1) / 10e18; // ceil(principal / 2)
+        (uint256 principalPortion, uint256 interestPortion,) = position.previewRedeem(positionId, half, address(sy));
+        assertEq(principalPortion, expectedPrincipal, "ceiled principal leg");
+        assertEq(interestPortion, 0, "same-block partial carries no interest");
 
-        sy.setExchangeRate(rate);
-        vm.prank(owner);
-        uint256 debt = position.wrapStake(amount, owner);
-        uint256 rPass = Math.ceilDiv(debt * 1e18, amount);
+        vm.prank(user);
+        (uint256 principalBurned,,) = position.redeem(positionId, half, user, address(sy), 0);
+        assertEq(principalBurned, expectedPrincipal, "redeemed principal leg");
 
-        // PART A: at rPass a half-debt redemption succeeds and leaves the pool covered
-        // for its remaining debt.
-        sy.setExchangeRate(rPass);
-        uAsset.mint(keeper, debt);
-        uint256 half = debt / 2; // >= 1 because debt >= 2
+        (address positionOwner, uint256 syStaked, uint256 principalDebt,,) = position.positions(positionId);
+        assertEq(positionOwner, user, "partial redeem keeps the position");
+        assertEq(syStaked, half, "collateral halved");
+        assertEq(principalDebt, minted - expectedPrincipal, "principal reduced by the leg");
+        assertGt(principalDebt, 0, "partial redeem leaves debt");
 
-        vm.prank(keeper);
-        position.keepWrapRedeem(half, keeper);
-
-        assertLe(SYUtils.assetToSyUp(rPass, debt - half), position.syWrapStaking(), "post-redemption coverage");
-
-        // PART B: exact boundary of the CURRENT pool state. rPass2 is derived
-        // from the combined (debt, SY) pair after both wrap stakes: the PART A floor payout leaves
-        // residual coverage in the pool, so the marginal (debt2, amount) pair alone does not
-        // determine the pool-wide boundary. At rPass2 - 1 the redemption must revert atomically.
-        vm.prank(owner);
-        uint256 debt2 = position.wrapStake(amount, owner);
-        uint256 totalDebt = position.wrapUAssetDebt();
-        uint256 totalWrapSY = position.syWrapStaking();
-        uint256 rPass2 = Math.ceilDiv(totalDebt * 1e18, totalWrapSY);
-
-        uint256 syWrapBefore = position.syWrapStaking();
-        uint256 wrapDebtBefore = position.wrapUAssetDebt();
-
-        sy.setExchangeRate(rPass2 - 1);
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.WrapPoolUndercollateralized.selector);
-        position.keepWrapRedeem(debt2, keeper);
-
-        // Revert atomicity: no accounting moved.
-        assertEq(position.syWrapStaking(), syWrapBefore, "revert must not change syWrapStaking");
-        assertEq(position.wrapUAssetDebt(), wrapDebtBefore, "revert must not change wrapUAssetDebt");
-
-        // At the boundary itself the guard passes, making the boundary two-sided.
-        sy.setExchangeRate(rPass2);
-        uAsset.mint(keeper, debt2);
-        vm.prank(keeper);
-        position.keepWrapRedeem(debt2, keeper);
-    }
-
-    // ============================================
-    // 3. Mint cap boundary
-    // ============================================
-
-    function testFuzz_MintCapBoundaryReachedExactly(uint256 amountSeed, uint256 extraSeed) public {
-        sy.setExchangeRate(1e18); // identity rate: debt == amount, exact arithmetic
-        uint256 amount1 = bound(amountSeed, 1, 10_000e18);
-        uint256 remaining = bound(extraSeed, 0, 10_000e18);
-        uint256 cap = amount1 + remaining;
-
-        // MockUAsset's owner is this test contract (the deployer), so the cap can be set directly.
-        uAsset.setMintingCap(address(position), cap);
-
-        vm.prank(owner);
-        (, uint256 minted1) = position.stake(amount1, 30, owner, owner);
-        assertEq(minted1, amount1, "identity rate must mint debt == amount");
-        (, uint256 amountInMinted) = uAsset.mintingStatusTable(address(position));
-        assertEq(amountInMinted, amount1, "minted debt must be recorded exactly");
-
-        // One wei above the remaining headroom must hit the cap.
-        vm.prank(owner);
-        vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
-        position.stake(remaining + 1, 30, owner, owner);
-
-        // The exact remaining headroom still fits and lands the ledger precisely on the cap.
-        if (remaining > 0) {
-            vm.prank(owner);
-            position.stake(remaining, 30, owner, owner);
-            (, uint256 amountInMintedAfter) = uAsset.mintingStatusTable(address(position));
-            assertEq(amountInMintedAfter, cap, "ledger must reach the cap exactly");
-        }
-    }
-
-    // ============================================
-    // 4. Keeper allowance accounting
-    // ============================================
-
-    function testFuzz_KeeperAllowanceTracksBurnsExactly(uint256 allowanceSeed, uint256 burn1Seed) public {
-        sy.setExchangeRate(1e18);
-        uint256 amount = 1e18; // identity rate: debt == amount, split into two non-zero burns
-        vm.prank(owner);
-        (uint256 positionId, uint256 debt) = position.stake(amount, 30, owner, owner);
-        (,,, uint128 deadline) = position.positions(positionId);
-        vm.warp(deadline + 1);
-        uAsset.mint(keeper, debt);
-
-        // Upper bound 2*debt - 1 guarantees the leftover allowance after the full burn is strictly
-        // below the next position's debt, exercising the insufficient-allowance revert below.
-        uint256 allowance = bound(allowanceSeed, debt, 2 * debt - 1);
-        uint256 burn1 = bound(burn1Seed, 1, debt - 1);
-        uint256 burn2 = debt - burn1;
-
-        vm.prank(keeper);
-        uAsset.approve(address(position), allowance);
-
-        // Each burn decrements the allowance by exactly the burned amount (OZ semantics).
-        vm.prank(keeper);
-        (uint256 burned1,,) = position.keepRedeem(positionId, burn1, keeper);
-        assertEq(burned1, burn1, "first burn amount mismatch");
-        assertEq(uAsset.allowance(keeper, address(position)), allowance - burn1, "allowance after first burn");
-
-        // burn1 + burn2 == debt: the position is fully redeemed and deleted.
-        vm.prank(keeper);
-        (uint256 burned2,,) = position.keepRedeem(positionId, burn2, keeper);
-        assertEq(burned2, burn2, "second burn amount mismatch");
-        assertEq(uAsset.allowance(keeper, address(position)), allowance - debt, "allowance after full burn");
-
-        // Atomicity: a revert inside repay must leave the new position, the keeper balance,
-        // and the allowance untouched.
-        vm.prank(owner);
-        (uint256 positionId2, uint256 debt2) = position.stake(amount, 30, owner, owner);
-        (,,, uint128 deadline2) = position.positions(positionId2);
-        vm.warp(deadline2 + 1);
-        uAsset.mint(keeper, debt2);
-
-        (address ownerBefore, uint256 syStakedBefore, uint256 debtBefore, uint128 deadlineBefore) =
-            position.positions(positionId2);
-        uint256 keeperBalanceBefore = uAsset.balanceOf(keeper);
-
-        vm.prank(keeper);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                bytes4(keccak256("ERC20InsufficientAllowance(address,uint256,uint256)")),
-                address(position),
-                allowance - debt,
-                debt2
-            )
+        _warp(10);
+        assertEq(
+            position.pendingInterest(positionId),
+            _refInterest(principalDebt, _refUnit(warpAt) - RAY), // open at init so the snapshot is RAY
+            "interest continues on the reduced principal"
         );
-        position.keepRedeem(positionId2, debt2, keeper);
-
-        (address ownerAfter, uint256 syStakedAfter, uint256 debtAfter, uint128 deadlineAfter) =
-            position.positions(positionId2);
-        assertEq(ownerAfter, ownerBefore, "revert must not change the position owner");
-        assertEq(syStakedAfter, syStakedBefore, "revert must not change staked SY");
-        assertEq(debtAfter, debtBefore, "revert must not change position debt");
-        assertEq(uint256(deadlineAfter), uint256(deadlineBefore), "revert must not change the deadline");
-        assertEq(uAsset.balanceOf(keeper), keeperBalanceBefore, "revert must not change keeper balance");
-        assertEq(uAsset.allowance(keeper, address(position)), allowance - debt, "revert must not change allowance");
-
-        // Max exemption: an infinite approval is never decremented by burns.
-        vm.prank(owner);
-        (uint256 positionId3, uint256 debt3) = position.stake(amount, 30, owner, owner);
-        (,,, uint128 deadline3) = position.positions(positionId3);
-        vm.warp(deadline3 + 1);
-        uAsset.mint(keeper, debt3);
-
-        vm.prank(keeper);
-        uAsset.approve(address(position), type(uint256).max);
-        vm.prank(keeper);
-        position.keepRedeem(positionId3, debt3, keeper);
-        assertEq(uAsset.allowance(keeper, address(position)), type(uint256).max, "max approval must never decrement");
-    }
-
-    // ============================================
-    // 5. Deadline uint128 boundary
-    // ============================================
-
-    function testFuzz_DeadlineUint128Boundary(uint256 tsSeed) public {
-        vm.warp(bound(tsSeed, 1, type(uint128).max - 200 days));
-        uint256 maxDays = (type(uint128).max - block.timestamp) / 1 days;
-        uint256 amount = 1e18;
-
-        // The largest lockup whose deadline still fits in uint128 succeeds.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 maxLockup = uint128(maxDays);
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amount, maxLockup, owner, owner);
-        (,,, uint128 deadline) = position.positions(positionId);
-        assertEq(uint256(deadline), block.timestamp + maxDays * 1 days, "boundary deadline mismatch");
-
-        // One more day overflows the uint128 deadline and must be rejected.
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.LockupDaysOutOfRange.selector, maxLockup + 1));
-        position.stake(amount, maxLockup + 1, owner, owner);
-    }
-
-    // ============================================
-    // 6. Deleted position id is not reusable
-    // ============================================
-
-    function testFuzz_ReusedPositionIdIsRejected(uint256 amountSeed) public {
-        uint256 amount = bound(amountSeed, 1, MAX_STAKE);
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amount, 30, owner, owner);
-        (,,, uint128 deadline) = position.positions(positionId);
-        vm.warp(deadline + 1);
-
-        // Full redeem (syRedeemed == syStaked, tokenOut == SY) deletes the position.
-        vm.prank(owner);
-        (, uint256 syOut) = position.redeem(positionId, amount, owner, address(sy), 0);
-        assertEq(syOut, amount, "full redeem must return the staked SY");
-        (address positionOwner,,,) = position.positions(positionId);
-        assertEq(positionOwner, address(0), "deleted position must have a zero owner");
-
-        // Every id-resolving entry must reject the reused id.
-        vm.prank(owner);
-        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
-        position.drawUAsset(positionId, owner);
-
-        vm.prank(owner);
-        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
-        position.redeem(positionId, 1, owner, address(sy), 0);
-
-        vm.prank(keeper);
-        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
-        position.keepRedeem(positionId, 1, keeper);
-    }
-
-    // ============================================
-    // 7. previewRedeem mirrors the SY adapter
-    // ============================================
-
-    function testFuzz_PreviewRedeemMirrorsSYForNonSyTokenOut(uint256 amountSeed, uint256 rateSeed) public {
-        uint256 rate = bound(rateSeed, 2e18, 5e18);
-        uint256 amount = bound(amountSeed, 2, MAX_STAKE); // >= 2 so half the stake is non-zero
-        sy.setExchangeRate(rate);
-
-        vm.prank(owner);
-        (uint256 positionId,) = position.stake(amount, 30, owner, owner);
-        (,,, uint128 deadline) = position.positions(positionId);
-        vm.warp(deadline + 1);
-
-        uint256 syRedeemed = amount / 2;
-
-        // The quote must mirror the SY adapter's own preview (MockSY is 1:1, so the quote also
-        // equals the redeemed amount).
-        (, uint256 outPreview) = position.previewRedeem(positionId, syRedeemed, address(underlying));
-        assertEq(outPreview, sy.previewRedeem(address(underlying), syRedeemed), "preview must mirror SY previewRedeem");
-        assertEq(outPreview, syRedeemed, "MockSY 1:1 quote mismatch");
-
-        vm.prank(owner);
-        (, uint256 outActual) = position.redeem(positionId, syRedeemed, owner, address(underlying), 0);
-        assertEq(outActual, outPreview, "actual redeem output must match the preview");
     }
 }

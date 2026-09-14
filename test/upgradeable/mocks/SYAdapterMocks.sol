@@ -269,54 +269,6 @@ contract MockWstETH is MockToken {
     }
 }
 
-/// @notice Mock L2 stETH that converts between shares and tokens via a configurable TOKENS_PER_SHARE ratio.
-contract MockL2StETH is MockToken {
-    address public immutable WSTETH;
-    uint256 public immutable TOKENS_PER_SHARE;
-
-    constructor(address wstETH_, uint256 tokensPerShare_) MockToken("L2 stETH", "stETH", 18) {
-        WSTETH = wstETH_;
-        TOKENS_PER_SHARE = tokensPerShare_;
-    }
-
-    function balanceOf(address account) public view override returns (uint256) {
-        return getTokensByShares(super.balanceOf(account));
-    }
-
-    function transfer(address to, uint256 amount) public override returns (bool) {
-        _transfer(msg.sender, to, getSharesByTokens(amount));
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
-        _spendAllowance(from, msg.sender, amount);
-        _transfer(from, to, getSharesByTokens(amount));
-        return true;
-    }
-
-    function wrap(uint256 sharesAmount) external returns (uint256) {
-        MockToken(WSTETH).transferFrom(msg.sender, address(this), sharesAmount);
-        uint256 tokenAmount = getTokensByShares(sharesAmount);
-        _mint(msg.sender, sharesAmount);
-        return tokenAmount;
-    }
-
-    function unwrap(uint256 tokenAmount) external returns (uint256) {
-        uint256 sharesAmount = getSharesByTokens(tokenAmount);
-        _burn(msg.sender, sharesAmount);
-        MockToken(WSTETH).mint(msg.sender, sharesAmount);
-        return sharesAmount;
-    }
-
-    function getTokensByShares(uint256 sharesAmount) public view returns (uint256) {
-        return (sharesAmount * TOKENS_PER_SHARE) / 1 ether;
-    }
-
-    function getSharesByTokens(uint256 tokenAmount) public view returns (uint256) {
-        return (tokenAmount * 1 ether) / TOKENS_PER_SHARE;
-    }
-}
-
 /// @notice Mock ERC-4626 vault with a configurable asset-per-share rate.
 /// @dev `assetsPerShare` is the asset value of one vault share. Default 1e18 is identity.
 /// Tests set a non-1e18 rate so previewDeposit and deposit traverse genuinely different arithmetic.

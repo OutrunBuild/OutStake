@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.35;
 
-import {IOutrunStakeManager} from "../../../src/position/interfaces/IOutrunStakeManager.sol";
 import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.sol";
 import {OutrunOFTUpgradeable} from "../../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -11,7 +10,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 /// does not inherit from the production contract (which will use `layout at`).
 /// Inherits the OFT chain for cross-chain view functions needed by upgrade validation.
 contract MockUAssetUUPSV2 is OutrunOFTUpgradeable, UUPSUpgradeable {
-    /// @dev Matches OutrunUniversalAssetsUpgradeable.OutrunUniversalAssetsStorage exactly.
+    /// @dev Partial mirror of OutrunUniversalAssetsUpgradeable.OutrunUniversalAssetsStorage — mirrors only mintingStatusTable; does not mirror reserveMinters (appended mapping in same ERC-7201 namespace, so prior field slot is unchanged).
     struct OutrunUniversalAssetsStorage {
         mapping(address minter => IUniversalAssets.MintingStatus) mintingStatusTable;
     }
@@ -66,59 +65,9 @@ contract MockUAssetUUPSV2DifferentLocalDecimals is MockUAssetUUPSV2 {
 }
 
 /// @notice V2 upgrade mock for OutrunStakingPositionUpgradeable.
-/// Standalone contract that replicates the production storage namespace so it
-/// does not inherit from the production contract (which will use `layout at`).
+/// Standalone UUPS target for the storage-layout tests: it must not inherit from the production
+/// contract (which uses `layout at`), and the layout assertions read raw storage slots directly,
+/// so it carries no state mirrors or accessors — only the upgrade authorization.
 contract MockPositionUUPSV2 is UUPSUpgradeable {
-    /// @dev Matches OutrunStakingPositionUpgradeable.OutrunStakingPositionStorage exactly.
-    struct OutrunStakingPositionStorage {
-        address SY;
-        uint8 canonicalAssetDecimals;
-        uint8 uAssetDecimals;
-        uint256 minStake;
-        uint256 syTotalStaking;
-        uint256 syWrapStaking;
-        uint256 wrapUAssetDebt;
-        address uAsset;
-        address revenuePool;
-        address keeper;
-        mapping(uint256 positionId => IOutrunStakeManager.Position) positions;
-    }
-
-    // keccak256(abi.encode(uint256(keccak256("outrun.storage.OutrunStakingPosition")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant OUTRUN_STAKING_POSITION_STORAGE_LOCATION =
-        0xd6ebf98633cd133425e2ec4f5c3d5a1e15a1a3a82505bb0f6ed101932bed5200;
-
-    function _getStorage() private pure returns (OutrunStakingPositionStorage storage $) {
-        assembly {
-            $.slot := OUTRUN_STAKING_POSITION_STORAGE_LOCATION
-        }
-    }
-
-    /// @notice Returns the total SY staked across all positions and the wrap pool.
-    ///      Called through the proxy after upgrade, so post-upgrade state reads keep working.
-    function syTotalStaking() public view returns (uint256) {
-        return _getStorage().syTotalStaking;
-    }
-
-    /// @notice Returns the Standardized Yield token address.
-    function SY() public view returns (address) {
-        return _getStorage().SY;
-    }
-
-    /// @notice Returns frozen canonical asset decimals (immutability check).
-    function canonicalAssetDecimals() public view returns (uint8) {
-        return _getStorage().canonicalAssetDecimals;
-    }
-
-    /// @notice Returns frozen uAsset decimals (immutability check).
-    function uAssetDecimals() public view returns (uint8) {
-        return _getStorage().uAssetDecimals;
-    }
-
-    /// @notice Returns version 2 to confirm the upgrade took effect.
-    function version() external pure returns (uint256) {
-        return 2;
-    }
-
     function _authorizeUpgrade(address) internal override {}
 }
