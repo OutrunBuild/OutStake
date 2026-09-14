@@ -558,36 +558,36 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
     // Resident-backing reconciliation for the vault-backed mainnet families (sUSDe, sUSDS, wstETH):
     // each family deposits the yield-bearing token directly 1:1, so the adapter's resident balance
     // equals the outstanding SY supply; the boundary semantics mirror the Sky L2 pair below.
-    function testVaultBackedAdaptersExchangeRateRevertsWhenBackingBelowShares() external {
-        // Each family runs in its own block to keep this frame's stack flat under --ir-minimum
-        // coverage builds; the per-family assertion is identical.
-        {
-            (address sy, address ybt) = _depositEthenaSusdeBacking();
-            _assertBackingShortfallReverts(sy, ybt);
-        }
-        {
-            (address sy, address ybt) = _depositSkySusdsBacking();
-            _assertBackingShortfallReverts(sy, ybt);
-        }
-        {
-            (address sy, address ybt) = _depositWstEthBacking();
-            _assertBackingShortfallReverts(sy, ybt);
-        }
+    // Each family is its own test function: the inlined per-family chain already sits at the
+    // --ir-minimum coverage-build stack ceiling, so sharing one frame across families overflows it.
+    function testEthenaSusdeExchangeRateRevertsWhenBackingBelowShares() external {
+        (address sy, address ybt) = _depositEthenaSusdeBacking();
+        _assertBackingShortfallReverts(sy, ybt);
     }
 
-    function testVaultBackedAdaptersExchangeRateAllowsBackingEqualToOutstandingShares() external {
-        {
-            (address sy, address ybt) = _depositEthenaSusdeBacking();
-            _assertBackingEqualToOutstandingAllowsQuote(sy, ybt);
-        }
-        {
-            (address sy, address ybt) = _depositSkySusdsBacking();
-            _assertBackingEqualToOutstandingAllowsQuote(sy, ybt);
-        }
-        {
-            (address sy, address ybt) = _depositWstEthBacking();
-            _assertBackingEqualToOutstandingAllowsQuote(sy, ybt);
-        }
+    function testSkySusdsExchangeRateRevertsWhenBackingBelowShares() external {
+        (address sy, address ybt) = _depositSkySusdsBacking();
+        _assertBackingShortfallReverts(sy, ybt);
+    }
+
+    function testWstEthExchangeRateRevertsWhenBackingBelowShares() external {
+        (address sy, address ybt) = _depositWstEthBacking();
+        _assertBackingShortfallReverts(sy, ybt);
+    }
+
+    function testEthenaSusdeExchangeRateAllowsBackingEqualToOutstandingShares() external {
+        (address sy, address ybt) = _depositEthenaSusdeBacking();
+        _assertBackingEqualToOutstandingAllowsQuote(sy, ybt);
+    }
+
+    function testSkySusdsExchangeRateAllowsBackingEqualToOutstandingShares() external {
+        (address sy, address ybt) = _depositSkySusdsBacking();
+        _assertBackingEqualToOutstandingAllowsQuote(sy, ybt);
+    }
+
+    function testWstEthExchangeRateAllowsBackingEqualToOutstandingShares() external {
+        (address sy, address ybt) = _depositWstEthBacking();
+        _assertBackingEqualToOutstandingAllowsQuote(sy, ybt);
     }
 
     /// @dev Family wiring for the backing-guard tests: deploy the adapter, then deposit the
@@ -1362,22 +1362,22 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
     // wstETH): once the adapter's resident backing falls below the outstanding supply, the staking
     // position's mint-side entry points fail closed on InsufficientBacking while the redeem exit
     // stays open. Shares its propagation leg with the Sky L2 position test above via the helper
-    // below.
-    function testVaultBackedBackingShortfallHaltsStakingPositionMintsAndKeepsRedeemOpen() external {
-        // Each family runs in its own block to keep this frame's stack flat under --ir-minimum
-        // coverage builds; the per-family SP propagation assertion is identical.
-        {
-            (address sy, address ybt) = _depositEthenaSusdeBacking();
-            _assertBackingShortfallHaltsPositionMints(sy, ybt);
-        }
-        {
-            (address sy, address ybt) = _depositSkySusdsBacking();
-            _assertBackingShortfallHaltsPositionMints(sy, ybt);
-        }
-        {
-            (address sy, address ybt) = _depositWstEthBacking();
-            _assertBackingShortfallHaltsPositionMints(sy, ybt);
-        }
+    // below. Each family is its own test function: the inlined per-family SP propagation chain
+    // already sits at the --ir-minimum coverage-build stack ceiling, so sharing one frame across
+    // families overflows it.
+    function testEthenaSusdeBackingShortfallHaltsStakingPositionMintsAndKeepsRedeemOpen() external {
+        (address sy, address ybt) = _depositEthenaSusdeBacking();
+        _assertBackingShortfallHaltsPositionMints(sy, ybt);
+    }
+
+    function testSkySusdsBackingShortfallHaltsStakingPositionMintsAndKeepsRedeemOpen() external {
+        (address sy, address ybt) = _depositSkySusdsBacking();
+        _assertBackingShortfallHaltsPositionMints(sy, ybt);
+    }
+
+    function testWstEthBackingShortfallHaltsStakingPositionMintsAndKeepsRedeemOpen() external {
+        (address sy, address ybt) = _depositWstEthBacking();
+        _assertBackingShortfallHaltsPositionMints(sy, ybt);
     }
 
     /// @dev SP propagation leg shared by the vault-backed families and the Sky L2 family.
@@ -1394,32 +1394,52 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         uint256 positionId = position.stakeForGenesis(AMOUNT, user, 42, 0);
         vm.stopPrank();
 
-        // Simulate backing leaving the SY outside deposit/redeem: the resident balance is one wei
-        // below the outstanding supply. Mint-side entry points read the rate through
-        // _currentExchangeRate, so the adapter's InsufficientBacking guard propagates and blocks
-        // new genesis opens; the quote reads the same rate and fails closed with it.
-        {
-            uint256 outstanding = _asSY(sy).totalSupply();
-            uint256 resident = outstanding - 1;
-            deal(ybt, sy, resident);
+        _assertShortfallBlocksPositionMintsAndQuotes(position, uAsset, sy, ybt);
+        _assertRedeemExitStaysOpenInShortfall(position, uAsset, sy, ybt, positionId);
+    }
 
-            bytes memory backingShortfall =
-                abi.encodeWithSelector(SYBaseUpgradeable.InsufficientBacking.selector, resident, outstanding);
-            uint256 uAssetSupplyBefore = uAsset.totalSupply();
-            vm.startPrank(user);
-            vm.expectRevert(backingShortfall);
-            position.stakeForGenesis(AMOUNT, user, 42, 0);
-            vm.stopPrank();
-            vm.expectRevert(backingShortfall);
-            position.previewStake(AMOUNT);
+    /// @dev Shortfall leg: simulates backing leaving the SY outside deposit/redeem (the resident
+    ///      balance is one wei below the outstanding supply). Mint-side entry points read the rate
+    ///      through _currentExchangeRate, so the adapter's InsufficientBacking guard propagates and
+    ///      blocks new genesis opens; the quote reads the same rate and fails closed with it.
+    ///      Extracted purely for stack depth under --ir-minimum coverage builds.
+    function _assertShortfallBlocksPositionMintsAndQuotes(
+        OutrunStakingPositionUpgradeable position,
+        OutrunUniversalAssetsUpgradeable uAsset,
+        address sy,
+        address ybt
+    ) internal {
+        uint256 outstanding = _asSY(sy).totalSupply();
+        uint256 resident = outstanding - 1;
+        deal(ybt, sy, resident);
 
-            // The blocked mints left the uAsset supply untouched.
-            assertEq(uAsset.totalSupply(), uAssetSupplyBefore);
-        }
+        bytes memory backingShortfall =
+            abi.encodeWithSelector(SYBaseUpgradeable.InsufficientBacking.selector, resident, outstanding);
+        uint256 uAssetSupplyBefore = uAsset.totalSupply();
+        vm.startPrank(user);
+        vm.expectRevert(backingShortfall);
+        position.stakeForGenesis(AMOUNT, user, 42, 0);
+        vm.stopPrank();
+        vm.expectRevert(backingShortfall);
+        position.previewStake(AMOUNT);
 
-        // Exit-channel contrast: redeem's direct-SY output never reads the exchange rate (staked SY
-        // leaves at face), so the position still exits while the quotes fail closed. The repay cover
-        // is funded from the test's minter record (the genesis mint went to the launcher).
+        // The blocked mints left the uAsset supply untouched.
+        assertEq(uAsset.totalSupply(), uAssetSupplyBefore);
+    }
+
+    /// @dev Exit-channel contrast: redeem's direct-SY output never reads the exchange rate (staked
+    ///      SY leaves at face), so the position still exits while the quotes fail closed. The repay
+    ///      cover is funded from the test's minter record (the genesis mint went to the launcher).
+    ///      The adapter's preview surface stays usable in the same shortfall state: previews quote
+    ///      the resident yield-bearing token leg directly and never run the backing reconciliation.
+    ///      Extracted purely for stack depth under --ir-minimum coverage builds.
+    function _assertRedeemExitStaysOpenInShortfall(
+        OutrunStakingPositionUpgradeable position,
+        OutrunUniversalAssetsUpgradeable uAsset,
+        address sy,
+        address ybt,
+        uint256 positionId
+    ) internal {
         vm.prank(owner);
         uAsset.setMintingCap(address(this), type(uint256).max);
         uAsset.mint(user, AMOUNT);
@@ -1433,8 +1453,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         assertEq(syOut, AMOUNT);
         assertEq(_asSY(sy).balanceOf(user), AMOUNT);
 
-        // The adapter's preview surface stays usable in the same shortfall state: previews quote
-        // the resident yield-bearing token leg directly and never run the backing reconciliation.
         assertEq(_asSY(sy).previewDeposit(ybt, AMOUNT), AMOUNT);
         assertEq(_asSY(sy).previewRedeem(ybt, AMOUNT), AMOUNT);
     }
