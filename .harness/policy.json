@@ -92,7 +92,8 @@
       "^remappings\\.txt$",
       "^script/harness/.*$",
       "^script/ops/.*\\.sh$",
-      "^\\.?solhint.*(\\.config\\.js|\\.json)$"
+      "^\\.?solhint.*(\\.config\\.js|\\.json)$",
+      "^\\.?solhintignore$"
     ],
     "solidity_prod": [
       "^src/.*\\.sol$",
@@ -118,7 +119,8 @@
           "change_tests": [
             "test/upgradeable/OutrunOFTUpgradeable.t.sol",
             "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
-            "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol"
+            "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol",
+            "test/psm/OutrunPSM.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/OutrunOFTUpgradeable.t.sol",
@@ -133,7 +135,6 @@
         "test/upgradeable/OutrunStakingPositionUpgradeable.t.sol",
         "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol",
         "test/upgradeable/OutrunStakingPositionInvariantUpgradeable.t.sol",
-        "test/upgradeable/KeepWrapRedeemAccess.t.sol",
         "test/upgradeable/OutrunStakingPositionStorageLayout.t.sol"
       ],
       "rules": [
@@ -145,14 +146,31 @@
           "change_tests": [
             "test/upgradeable/OutrunStakingPositionUpgradeable.t.sol",
             "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol",
-            "test/upgradeable/KeepWrapRedeemAccess.t.sol",
             "test/upgradeable/OutrunStakingPositionStorageLayout.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/OutrunStakingPositionUpgradeable.t.sol",
             "test/upgradeable/OutrunStakingPositionFuzzUpgradeable.t.sol",
-            "test/upgradeable/KeepWrapRedeemAccess.t.sol",
             "test/upgradeable/OutrunStakingPositionStorageLayout.t.sol"
+          ]
+        }
+      ]
+    },
+    "psm": {
+      "tests": [
+        "test/psm/OutrunPSM.t.sol"
+      ],
+      "rules": [
+        {
+          "id": "psm-core",
+          "paths": [
+            "^src/psm/.*\\.sol$"
+          ],
+          "change_tests": [
+            "test/psm/OutrunPSM.t.sol"
+          ],
+          "evidence_tests": [
+            "test/psm/OutrunPSM.t.sol"
           ]
         }
       ]
@@ -197,7 +215,8 @@
         "test/upgradeable/SYPerActorConservationUpgradeable.t.sol",
         "test/upgradeable/SkyL2DeviationGuardInvariantUpgradeable.t.sol",
         "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol",
-        "test/upgradeable/L2OracleBackedInit.t.sol"
+        "test/upgradeable/L2OracleBackedInit.t.sol",
+        "test/upgradeable/L2OracleRateBreakerUpgradeable.t.sol"
       ],
       "rules": [
         {
@@ -214,7 +233,8 @@
             "test/upgradeable/SYPerActorConservationUpgradeable.t.sol",
             "test/upgradeable/SkyL2DeviationGuardInvariantUpgradeable.t.sol",
             "test/upgradeable/CrossBlockPreviewDriftUpgradeable.t.sol",
-            "test/upgradeable/L2OracleBackedInit.t.sol"
+            "test/upgradeable/L2OracleBackedInit.t.sol",
+            "test/upgradeable/L2OracleRateBreakerUpgradeable.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/SYUpgradeable.t.sol",
@@ -303,6 +323,25 @@
           ],
           "evidence_tests": [
             "test/upgradeable/AdversarialTestsUpgradeable.t.sol"
+          ]
+        }
+      ]
+    },
+    "usr": {
+      "tests": [
+        "test/usr/OutrunUSRVault.t.sol"
+      ],
+      "rules": [
+        {
+          "id": "usr-core",
+          "paths": [
+            "^src/usr/.*\\.sol$"
+          ],
+          "change_tests": [
+            "test/usr/OutrunUSRVault.t.sol"
+          ],
+          "evidence_tests": [
+            "test/usr/OutrunUSRVault.t.sol"
           ]
         }
       ]

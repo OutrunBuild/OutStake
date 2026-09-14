@@ -1,4 +1,4 @@
-node_modules/
-lib/
-out/
-coverage/
+/node_modules/
+/lib/
+/out/
+/coverage/

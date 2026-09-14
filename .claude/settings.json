@@ -9,7 +9,6 @@
       "Grep"
     ],
     "deny": [
-      "Bash(git push *)",
       "Bash(git restore *)",
       "Bash(git checkout *)",
       "Bash(git clean *)",
@@ -21,9 +20,7 @@
       "Bash(git stash clear*)",
       "Bash(git stash save*)",
       "Bash(git stash branch*)",
-      "Bash(git stash store*)",
-      "Read(.env)",
-      "Read(.env.*)"
+      "Bash(git stash store*)"
     ]
   },
   "hooks": {

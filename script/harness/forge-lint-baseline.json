@@ -1,11 +1,14 @@
 {
   "version": 1,
-  "generated_at": "2026-08-30T20:31:32Z",
-  "finding_count": 63,
+  "generated_at": "2026-09-12T13:48:26Z",
+  "finding_count": 78,
   "notes": "Snapshot of forge-lint findings accepted under this repo's verified conventions (formerly the foundry.toml exclude_lints list): naming-style rules (mixed-case variable/function, screaming-snake immutable, pascal-case struct, interface naming/file-naming), block-timestamp, reentrancy-events (CEI trailing emits), unused-return (multi-return oracle destructures), non-reentrant-not-first, literal-instead-of-constant, inline-assembly, low-level-calls, internal-function-used-once, unwrapped-modifier-logic — patterns that misfire on verified codebase conventions. Detectors run at severity high/med/low. Any NEW finding beyond this set fails the gate and the wrapped build. Former inline `// forge-lint: disable-next-line(...)` directives were removed and their sites absorbed here after per-site review (arbitrary-send-eth ×6: exact-value native deposits to trusted configured adapters or the caller's own recipient; unsafe-typecast ×5: bounds argued in adjacent comments; missing-events ×5: accounting aggregates announced by function-level events; plus divide-before-multiply = LayerZero dust-removal formula, sequencer-feed zero sentinel, zero-default loop/rate locals); the baseline is now the single suppression inventory. Regen intentionally re-snapshots: it is an explicit, git-reviewed acceptance decision. Regenerate: bash script/harness/forge-lint-baseline.sh regen",
   "findings": [
     {
       "key": "arbitrary-send-eth|src/libraries/TokenHelper.sol|f7c812b70dcc34f5"
+    },
+    {
+      "key": "arbitrary-send-eth|src/router/OutrunRouter.sol|1ca3cba9e611eec8"
     },
     {
       "key": "arbitrary-send-eth|src/router/OutrunRouter.sol|f06bd551fd2e03c8"
@@ -41,37 +44,25 @@
       "key": "block-timestamp|src/libraries/oracle/OutrunExchangeOracleAdapter.sol|f4905e9306fe14b9"
     },
     {
-      "key": "block-timestamp|src/position/OutrunStakingPositionUpgradeable.sol|29f69632ddb2402a"
+      "key": "block-timestamp|src/position/OutrunStakingPositionUpgradeable.sol|4cdc13265db9f56c"
     },
     {
-      "key": "block-timestamp|src/position/OutrunStakingPositionUpgradeable.sol|6574c5f0e2dffe64"
+      "key": "block-timestamp|src/usr/OutrunUSRVaultUpgradeable.sol|ee5ae39ea1feb99e"
     },
     {
-      "key": "block-timestamp|src/position/OutrunStakingPositionUpgradeable.sol|964c1ec599edd068"
+      "key": "block-timestamp|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|ad4385d1cb0c52f7"
+    },
+    {
+      "key": "block-timestamp|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|fa91144229efd263"
     },
     {
       "key": "divide-before-multiply|src/assets/omnichain/OutrunOFTUpgradeable.sol|effd596448ee09e4"
     },
     {
-      "key": "missing-events-access-control|src/position/OutrunStakingPositionUpgradeable.sol|16eb7faf3fdd23f0"
-    },
-    {
-      "key": "missing-events-access-control|src/position/OutrunStakingPositionUpgradeable.sol|1a984da737368755"
-    },
-    {
-      "key": "missing-events-access-control|src/position/OutrunStakingPositionUpgradeable.sol|41c3a0c78b5f0acc"
-    },
-    {
-      "key": "missing-events-access-control|src/position/OutrunStakingPositionUpgradeable.sol|c6d15974ec512adb"
-    },
-    {
-      "key": "missing-events-access-control|src/position/OutrunStakingPositionUpgradeable.sol|c96695e729a6234e"
+      "key": "missing-events-access-control|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|a328b8723d55cf00"
     },
     {
       "key": "missing-zero-check|src/libraries/oracle/OutrunExchangeOracleAdapter.sol|164d6eb5b24d0e17"
-    },
-    {
-      "key": "non-reentrant-not-first|src/position/OutrunStakingPositionUpgradeable.sol|25f74b7658059534"
     },
     {
       "key": "non-reentrant-not-first|src/router/OutrunRouter.sol|e082a7831ee04d06"
@@ -95,10 +86,19 @@
       "key": "reentrancy-events|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|76667b390fc83694"
     },
     {
+      "key": "reentrancy-events|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|968defc24e2012be"
+    },
+    {
       "key": "reentrancy-events|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|b9d917fd23f1a96a"
     },
     {
+      "key": "reentrancy-events|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|bd80584723094e32"
+    },
+    {
       "key": "reentrancy-events|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|ca85d534c32e82be"
+    },
+    {
+      "key": "reentrancy-events|src/assets/base/OutrunUniversalAssetsUpgradeable.sol|d19ffae4dec7a7b3"
     },
     {
       "key": "reentrancy-events|src/assets/omnichain/OutrunOFTUpgradeable.sol|5add3e0e6777f2ed"
@@ -110,40 +110,61 @@
       "key": "reentrancy-events|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|bbc9817c0a3a9293"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|08394c01fffe5fa8"
+      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|162a3c5a7738e8c5"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|08e51da2c2b31d14"
+      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|2af11f980a86ff2e"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|47a1fd9711adc4c3"
+      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|3764c4b3e287cd24"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|4d81d4972b19dcb7"
+      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|5fdb1fe20b98a3a1"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|a7dc6b1ddd301cf5"
+      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|6881bb497e05f833"
     },
     {
       "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|d5a2faa6898ab1b9"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|e8da449d375cbc99"
+      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|e14716ec245eaa06"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|f53eef34002d372c"
+      "key": "reentrancy-events|src/psm/OutrunPSMUpgradeable.sol|143885c3220bd25b"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|f89259a1050309d8"
+      "key": "reentrancy-events|src/psm/OutrunPSMUpgradeable.sol|20a6d488c60ad278"
     },
     {
-      "key": "reentrancy-events|src/position/OutrunStakingPositionUpgradeable.sol|fb23e3572482f297"
+      "key": "reentrancy-events|src/psm/OutrunPSMUpgradeable.sol|425545bd156763fa"
+    },
+    {
+      "key": "reentrancy-events|src/psm/OutrunPSMUpgradeable.sol|eedbd0c428763539"
     },
     {
       "key": "reentrancy-events|src/router/OutrunRouter.sol|2cdac7f5e3b5b9cc"
     },
     {
+      "key": "reentrancy-events|src/usr/OutrunUSRVaultUpgradeable.sol|0479631434acd1da"
+    },
+    {
+      "key": "reentrancy-events|src/usr/OutrunUSRVaultUpgradeable.sol|0db8a02182d1fd48"
+    },
+    {
+      "key": "reentrancy-events|src/usr/OutrunUSRVaultUpgradeable.sol|6f663831c8135ea5"
+    },
+    {
       "key": "reentrancy-events|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|0acea7c771d369d5"
+    },
+    {
+      "key": "reentrancy-events|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|2a9c3aa428ebbf5c"
+    },
+    {
+      "key": "reentrancy-events|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|39f5faaf29f33a2a"
+    },
+    {
+      "key": "reentrancy-events|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|afd64003e68da8b1"
     },
     {
       "key": "reentrancy-events|src/yield/SYBaseUpgradeable.sol|2cdac7f5e3b5b9cc"
@@ -161,6 +182,18 @@
       "key": "require-revert-in-loop|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|96d2a3f9143c4f84"
     },
     {
+      "key": "require-revert-in-loop|src/position/OutrunStakingPositionUpgradeable.sol|07c32072dfe3aa36"
+    },
+    {
+      "key": "require-revert-in-loop|src/position/OutrunStakingPositionUpgradeable.sol|0dea7be6f07a28df"
+    },
+    {
+      "key": "require-revert-in-loop|src/position/OutrunStakingPositionUpgradeable.sol|2e494fdd6e03b7d9"
+    },
+    {
+      "key": "require-revert-in-loop|src/position/OutrunStakingPositionUpgradeable.sol|5b9f916d3edb4977"
+    },
+    {
       "key": "uninitialized-local|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|d93e9bafa2c468c4"
     },
     {
@@ -176,13 +209,22 @@
       "key": "unsafe-typecast|src/libraries/oracle/OutrunExchangeOracleAdapter.sol|5b74fab162df1bf5"
     },
     {
-      "key": "unsafe-typecast|src/position/OutrunStakingPositionUpgradeable.sol|6587744144674bcf"
+      "key": "unsafe-typecast|src/position/OutrunStakingPositionUpgradeable.sol|6837745bf7026ada"
     },
     {
       "key": "unsafe-typecast|src/router/OutrunRouter.sol|6611227bda4f96ef"
     },
     {
-      "key": "unused-return|src/libraries/oracle/OutrunExchangeOracleAdapter.sol|647d100c7440bea9"
+      "key": "unsafe-typecast|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|796268602774f9bc"
+    },
+    {
+      "key": "unsafe-typecast|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|afe316ff0dbea6a1"
+    },
+    {
+      "key": "unsafe-typecast|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|c3b2e4e44236260c"
+    },
+    {
+      "key": "unused-return|src/libraries/oracle/OutrunExchangeOracleAdapter.sol|6a9bc428153f15aa"
     },
     {
       "key": "unused-return|src/libraries/oracle/OutrunExchangeOracleAdapter.sol|d6d32d1cee28b85d"
@@ -192,6 +234,9 @@
     },
     {
       "key": "unused-return|src/position/OutrunStakingPositionUpgradeable.sol|c3c9ec288679f009"
+    },
+    {
+      "key": "unused-return|src/router/OutrunRouter.sol|c47398dc74376e2c"
     }
   ]
 }
