@@ -43,6 +43,14 @@ contract OutrunUSRVaultUpgradeable layout at erc7201("outrun.storage.OutrunUSRVa
 {
     /// @custom:storage-location erc7201:outrun.storage.OutrunUSRVault
     struct OutrunUSRVaultStorage {
+        // IMMUTABLE STORAGE LAYOUT: the contract-level layout at erc7201("outrun.storage.OutrunUSRVault")
+        // allocates this contract's own variables from the namespace base slot in declaration order, and this
+        // struct is the only own variable, so it sits at the base slot, one whole slot per field:
+        //   ns+0 = usrRate | ns+1 = accrualIndex | ns+2 = lastSettledAt
+        // accrualIndex is the per-share price for every depositor, so any reorder or insertion silently
+        // reprices all shares. Field ORDER and count are frozen; new storage is only allowed as a tail
+        // append. The layout is pinned by raw-slot assertions in
+        // test/upgradeable/OutrunUSRVaultStorageLayout.t.sol.
         // Family annualized rate in 18-dec point terms (10% = 1e17). Zero means accrual is off.
         uint256 usrRate;
         // Per-share price index in 1e18 terms; starts at par (1e18) and only moves at settlement.

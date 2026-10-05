@@ -17,15 +17,24 @@ import {OutrunRateLimiterHarness} from "./mocks/OutrunRateLimiterHarness.sol";
 ///
 /// The assertions below pin field order and width against the raw storage words, so any future
 /// reorder/resize/insertion of the struct fields breaks this test instead of silently misreading
-/// persisted in-flight state after an upgrade. See the IMMUTABLE STORAGE LAYOUT comment on
+/// persisted in-flight state after an upgrade. amountInFlight is seeded with a full-width all-ones
+/// value through the production outflow path before the raw-slot reads: over an all-zero region a
+/// zero-expected assertion cannot tell zero-valued field layouts apart, so every packed field is
+/// pinned against a nonzero seed. See the IMMUTABLE STORAGE LAYOUT comment on
 /// `OutrunRateLimiterUpgradeable.sol::RateLimit`.
 contract OutrunRateLimiterStorageLayoutTest is Test {
     function test_RateLimitMappingValueIsTwoSlotPackedLayout() external {
         OutrunRateLimiterHarness limiter = new OutrunRateLimiterHarness();
 
         uint32 dstEid = 101;
-        uint192 limit = uint192(1e24);
-        uint64 window = 7 days;
+        // Full-width canary seeds: every packed field is pinned by a value that fills its whole
+        // declared width and stays distinct from its slot neighbors. The all-ones limit admits an
+        // all-ones outflow below (so amountInFlight and limit each cover their full uint192 width
+        // and any narrowing truncates the stored word); the window keeps its top bits set without
+        // being all-ones, so a narrowed field truncates while a swap of the two slot1 fields still
+        // breaks the expected pattern (two all-ones neighbors would be interchangeable).
+        uint192 limit = type(uint192).max;
+        uint64 window = type(uint64).max - 1;
 
         OutrunRateLimiterUpgradeable.RateLimitConfig[] memory configs =
             new OutrunRateLimiterUpgradeable.RateLimitConfig[](1);
@@ -33,15 +42,27 @@ contract OutrunRateLimiterStorageLayoutTest is Test {
 
         // First write onto a fresh entry only sets limit/window (window was 0, so the checkpoint
         // inside _checkAndUpdateRateLimit early-returns), leaving lastUpdated untouched. A second
-        // write re-checkpoints the now-configured entry and stamps lastUpdated with the current
-        // block.timestamp, which vm.warp has set to a deterministic value. Asserting against the
-        // compile-time constant (never against block.timestamp read in the test itself, which is
-        // unreliable under via_ir cheatcode lifting) pins a NONZERO lastUpdated in slot0's high 64.
-        vm.warp(1_700_000_000);
+        // write re-checkpoints the now-configured entry with amount == 0. The warp base is a
+        // canary near the top of the uint64 range, not a realistic date: every stamped lastUpdated
+        // carries its top bits, so a width narrowing truncates the stored word, while staying
+        // distinct from the all-ones amountInFlight so a swap of the two slot0 fields also breaks
+        // the expected pattern. The lastUpdated value the assertions pin is stamped by the outflow
+        // below; asserting against the compile-time constant (never against block.timestamp read
+        // in the test itself, which is unreliable under via_ir cheatcode lifting) pins a NONZERO
+        // lastUpdated in slot0's high 64.
+        uint64 warpBase = type(uint64).max - 3 days;
+        vm.warp(warpBase);
         limiter.setRateLimits(configs);
-        vm.warp(1_700_000_000 + 1 days);
+        vm.warp(warpBase + 1 days);
         limiter.setRateLimits(configs);
-        uint64 expectedLastUpdated = uint64(1_700_000_000 + 1 days);
+        // Record a NONZERO full-width amountInFlight through the production outflow path. Without
+        // this the low 192 bits of slot0 stay all-zero and a zero-expected assertion over them
+        // accepts any layout of zero-valued fields. The outflow also re-stamps lastUpdated, so the
+        // pinned timestamp is the outflow time.
+        vm.warp(warpBase + 2 days);
+        uint192 pinnedInFlight = type(uint192).max;
+        limiter.outflow(dstEid, pinnedInFlight);
+        uint64 expectedLastUpdated = warpBase + 2 days;
 
         // rateLimits is the first (only) field of OutrunRateLimiterStorage -> its mapping occupies
         // the namespace base slot. A uint32 key's value slot is keccak256(abi.encode(key, slot)).
@@ -59,7 +80,7 @@ contract OutrunRateLimiterStorageLayoutTest is Test {
 
         // slot0 = amountInFlight:uint192 (low) | lastUpdated:uint64 (high).
         // forge-lint: disable-next-line(unsafe-typecast)
-        assertEq(uint192(uint256(slot0)), 0, "amountInFlight must sit in the low 192 bits of slot0");
+        assertEq(uint192(uint256(slot0)), pinnedInFlight, "amountInFlight must sit in the low 192 bits of slot0");
         // forge-lint: disable-next-line(unsafe-typecast)
         assertEq(
             uint64(uint256(slot0) >> 192), expectedLastUpdated, "lastUpdated must sit in the high 64 bits of slot0"

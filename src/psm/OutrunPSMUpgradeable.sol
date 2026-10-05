@@ -44,6 +44,14 @@ contract OutrunPSMUpgradeable layout at erc7201("outrun.storage.OutrunPSM")
     UUPSUpgradeable
 {
     struct OutrunPSMStorage {
+        // IMMUTABLE STORAGE LAYOUT: the contract-level layout at erc7201("outrun.storage.OutrunPSM") allocates
+        // this contract's own variables from the namespace base slot in declaration order, and this struct is
+        // the only own variable, so it sits at the base slot, one whole slot per field:
+        //   ns+0 = uAsset | ns+1 = reserveToken | ns+2 = feeRecipient | ns+3 = tin | ns+4 = tout
+        //   ns+5 = stockCap | ns+6 = netUAssetMinted
+        // Field ORDER and count are frozen (a reorder or insertion would silently rewire the swap route, the
+        // fees, and the stock cap); new storage is only allowed as a tail append. The layout is pinned by
+        // raw-slot assertions in test/upgradeable/OutrunPSMStorageLayout.t.sol.
         // Family uAsset bound at initialization; minted on mint, burned on redeem.
         address uAsset;
         // The single reserve bound at initialization; the NATIVE sentinel (address(0)) is the native leg.

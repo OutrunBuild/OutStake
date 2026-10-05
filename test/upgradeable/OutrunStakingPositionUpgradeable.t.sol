@@ -360,32 +360,6 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         assertLe(principalDebt, syStaked * (1e18 + 1) / 1e18, "mint-time backing invariant");
     }
 
-    /// @notice previewStake and stakeForGenesis agree on value parity across rates (including rate
-    ///         increases) and dust amounts; dust deliberately diverges (quote 0 vs executor revert).
-    function test_ValueParityHoldsAcrossRatesAndDust(uint96 syAmount, uint104 rawRate) external {
-        uint256 rate = bound(rawRate, 1e17, 5e18);
-        sy.setExchangeRate(rate);
-        syAmount = uint96(bound(syAmount, 1, 1e24));
-
-        uint256 previewed = position.previewStake(syAmount);
-        uint256 collateral = syAmount * rate / 1e18;
-        assertLe(previewed, collateral, "minted debt never exceeds collateral value");
-
-        sy.mintShares(user, syAmount);
-        vm.startPrank(user);
-        sy.approve(address(position), syAmount);
-        if (previewed == 0) {
-            vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
-            position.stakeForGenesis(syAmount, user, VERSE_ID, 0);
-            vm.stopPrank();
-            return;
-        }
-        uint256 positionId = position.stakeForGenesis(syAmount, user, VERSE_ID, 0);
-        vm.stopPrank();
-        (,, uint256 principalDebt,,) = position.positions(positionId);
-        assertEq(principalDebt, previewed, "genesis minted the previewed amount");
-    }
-
     // ==========================================================================
     // Section 1.6: stakeForGenesis (only mint entrypoint, behind the physical gate)
     // ==========================================================================

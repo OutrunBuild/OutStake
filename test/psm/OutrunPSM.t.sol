@@ -264,12 +264,21 @@ contract OutrunPSMTest is UAssetHelper {
 
         // redeem is non-payable, so an attached value is rejected by the compiler's implicit callvalue
         // guard before the body runs — verified through raw calls since the type system forbids the
-        // direct `{value: ...}` syntax on a non-payable function.
-        (bool nativeRedeemOk,) = address(psmNative).call{value: 1}(abi.encodeCall(IPSM.redeem, (alice, 1e18)));
+        // direct `{value: ...}` syntax on a non-payable function. The guard reverts with empty return
+        // data; any in-body failure carries an error selector instead, so the empty-data check is what
+        // pins the guard itself. The calls run as the funded and approved alice: if redeem ever became
+        // payable, the body would run and fail on her zero uAsset balance with a selector, failing here.
+        vm.prank(alice);
+        (bool nativeRedeemOk, bytes memory nativeRedeemData) =
+            address(psmNative).call{value: 1}(abi.encodeCall(IPSM.redeem, (alice, 1e18)));
         assertFalse(nativeRedeemOk);
+        assertEq(nativeRedeemData.length, 0);
 
-        (bool erc20RedeemOk,) = address(psm).call{value: 1}(abi.encodeCall(IPSM.redeem, (alice, 1e18)));
+        vm.prank(alice);
+        (bool erc20RedeemOk, bytes memory erc20RedeemData) =
+            address(psm).call{value: 1}(abi.encodeCall(IPSM.redeem, (alice, 1e18)));
         assertFalse(erc20RedeemOk);
+        assertEq(erc20RedeemData.length, 0);
 
         // No native stranded by any of the reverted calls.
         assertEq(address(psm).balance, 0);
