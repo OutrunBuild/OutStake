@@ -30,12 +30,15 @@ import {IOutrunStakeManager} from "../position/interfaces/IOutrunStakeManager.so
  * uAsset to itself and hands it to its own genesis launcher atomically, so this router never touches
  * uAsset on that path. Any EOA or contract may call `SP.stakeForGenesis` directly; the router is a
  * convenience layer, not a required path.
+ * Beyond the two gates, `leveragedGenesisByPSM` is a third genesis entry: it mints uAsset through the
+ * PSM gate at face value and pays the full amount as Memeverse leveraged-genesis interest to the
+ * owner-registered POLend target (no launcher delivery, no CDP position).
  */
 contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     // These targets are configured after deployment; owner setters remain live for dynamic addition under Ownable (multisig off-chain).
     mapping(address => bool) public trustedSY;
     mapping(address => address) public trustedSYForSP;
-    // (uAsset, reserveToken) -> PSM pairing for the PSM-gate genesis entrypoint (path A); zero value means unregistered.
+    // (uAsset, reserveToken) -> PSM pairing for the PSM-gate genesis entrypoints (path A and the leveraged-genesis entry); zero value means unregistered.
     mapping(address => mapping(address => address)) public psmForUAsset;
 
     // Memeverse is the launch platform; this address is called during genesis flows.
@@ -67,9 +70,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     function setTrustedSP(address SP, address SY) external onlyOwner {
         if (SP == address(0)) revert UntrustedRouterTarget(SP);
         if (SY != address(0)) {
-            if (!trustedSY[SY]) revert UntrustedRouterTarget(SY);
-            address actualSY = IOutrunStakeManager(SP).SY();
-            if (actualSY != SY) revert RouterTargetMismatch(SP, SY, actualSY);
+            _requireSpSyPair(SP, SY);
         }
         trustedSYForSP[SP] = SY;
         emit TrustedSPUpdated(SP, SY);
@@ -410,9 +411,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     function _trustedSYForSP(address SP) internal view returns (address SY) {
         SY = trustedSYForSP[SP];
         if (SY == address(0)) revert UntrustedRouterTarget(SP);
-        _requireTrustedSY(SY);
-        address actualSY = IOutrunStakeManager(SP).SY();
-        if (actualSY != SY) revert RouterTargetMismatch(SP, SY, actualSY);
+        _requireSpSyPair(SP, SY);
     }
 
     /// @dev Single source for the CDP-gate preamble shared by the execution and preview entries,
@@ -427,6 +426,15 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address routerLauncher = memeverseLauncher;
         address spLauncher = IOutrunStakeManager(SP).genesisLauncher();
         if (routerLauncher != spLauncher) revert GenesisLauncherMismatch(routerLauncher, spLauncher);
+    }
+
+    /// @dev Compares the SP's live canonical SY against the pair key, in gate order (trusted check,
+    ///      then the external SY read). Shared by registration and the per-call SP gate so the trusted
+    ///      check, the external read, their order, and their errors cannot drift between sites.
+    function _requireSpSyPair(address SP, address SY) private view {
+        _requireTrustedSY(SY);
+        address actualSY = IOutrunStakeManager(SP).SY();
+        if (actualSY != SY) revert RouterTargetMismatch(SP, SY, actualSY);
     }
 
     /// @dev Compares the PSM's live bindings against the registry keys, in binding order (uAsset leg,

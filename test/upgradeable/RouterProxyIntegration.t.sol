@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
+import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {PositionStackTestBase} from "./helpers/PositionStackTestBase.sol";
 import {EmptyMockLauncher} from "./mocks/EmptyMockLauncher.sol";
 import {MockGenesisLauncher} from "./mocks/LauncherMocks.sol";
@@ -46,6 +47,28 @@ contract RouterProxyIntegrationTest is PositionStackTestBase {
         assertEq(sy.balanceOf(address(sy)), prefund);
         assertEq(token.balanceOf(address(sy)), prefund);
         assertEq(sy.allowance(user, address(router)), 0);
+    }
+
+    /// @notice The mint entry always funds the deposit from the caller: even when the router already
+    ///         holds a same-token prefund, the caller is debited by exactly `amountInput` and the
+    ///         router's pre-existing balance stays untouched.
+    function testRouterMintSYFromTokenPullsCallerFundsAndKeepsRouterPrefund() external {
+        uint256 prefund = 20e18;
+        uint256 amountInput = 30e18;
+        address receiver = address(0xBEEF);
+        uint256 callerBefore = token.balanceOf(user);
+
+        token.mint(address(router), prefund);
+        vm.startPrank(user);
+        token.approve(address(router), amountInput);
+        uint256 syOut = router.mintSYFromToken(address(sy), address(token), receiver, amountInput, amountInput);
+        vm.stopPrank();
+
+        assertEq(syOut, amountInput, "identity deposit rate mints 1:1 SY");
+        assertEq(token.balanceOf(user), callerBefore - amountInput, "caller debited exactly amountInput");
+        assertEq(token.balanceOf(address(router)), prefund, "router prefund persists untouched");
+        assertEq(token.balanceOf(address(sy)), amountInput, "SY received exactly the pulled deposit");
+        assertEq(sy.balanceOf(receiver), amountInput, "SY shares delivered to the receiver");
     }
 
     function _prepareRedeem(uint256 amountInSY, uint256 prefund) internal {
@@ -115,6 +138,10 @@ contract RouterProxyIntegrationTest is PositionStackTestBase {
 
         vm.startPrank(user);
         token.approve(address(router), tokenAmount);
+        // The router itself is the SY deposit's caller and receiver on this path (it pulls the
+        // token and forwards the minted SY to the SP); pin the full event payload.
+        vm.expectEmit(true, true, true, true, address(sy));
+        emit IStandardizedYield.Deposit(address(router), address(router), address(token), tokenAmount, tokenAmount);
         router.genesisByToken(
             address(position), address(token), tokenAmount, tokenAmount, VERSE_ID, user, expectedMinted
         );

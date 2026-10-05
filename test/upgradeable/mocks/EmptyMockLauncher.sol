@@ -2,5 +2,7 @@
 pragma solidity ^0.8.35;
 
 /// @dev Minimal contract used as a placeholder launcher address for OutrunRouter tests.
-/// OutrunRouter requires memeverseLauncher to have code, so a plain address won't work.
+///      Registration accepts any launcher address without a code check; codeless launchers
+///      fail closed at runtime, where the strict consumption assertion reverts because the
+///      launcher consumed none of the minted uAsset.
 contract EmptyMockLauncher {}

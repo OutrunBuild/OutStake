@@ -224,6 +224,16 @@ contract OutrunRouterTest is Test {
         router.setTrustedSP(address(position), address(sy));
     }
 
+    /// @notice Registering an SP pair with a nonzero SY outside the trusted whitelist fails with the
+    ///         untrusted-target payload before any `SP.SY()` read.
+    function test_RevertWhen_SetTrustedSPWithUntrustedSY() external {
+        address untrustedSY = address(0xDEAD);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(UNTRUSTED_ROUTER_TARGET_SELECTOR, untrustedSY));
+        router.setTrustedSP(address(position), untrustedSY);
+    }
+
     // --------------------------------------------------------------------------
     // PSM registry (path A addressing)
     // --------------------------------------------------------------------------

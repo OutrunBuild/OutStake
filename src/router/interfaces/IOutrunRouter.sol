@@ -5,8 +5,9 @@ pragma solidity ^0.8.35;
  * @title Outrun router interface
  * @notice User-facing entry surface of the OutStake protocol: token-to-SY conversion and genesis
  *      flows. Implemented by OutrunRouter; every user-facing funded entrypoint is
- *      caller-funded (pulls its input from msg.sender) and, except deterministic PSM-gated `genesisByPSM`
- *      (which takes no floor parameter), enforces a per-flow slippage floor. Owner-managed target
+ *      caller-funded (pulls its input from msg.sender) and, except the deterministic PSM-gated entries
+ *      `genesisByPSM` and `leveragedGenesisByPSM` (which take no floor parameter), enforces a per-flow
+ *      slippage floor. Owner-managed target
  *      registration is required before a caller-supplied SY, SP, or uAsset-family PSM can reach any downstream
  *      contract.
  *      uAsset (Universal Asset) is the protocol's unified debt/liquidity layer token; `NATIVE` is `address(0)` and
@@ -99,11 +100,13 @@ interface IOutrunRouter {
     function setTrustedSP(address SP, address SY) external;
 
     /**
-     * @notice Registers or revokes the PSM paired with a (uAsset, reserveToken) pair for the PSM-gate genesis entrypoint.
+     * @notice Registers or revokes the PSM paired with a (uAsset, reserveToken) pair for the PSM-gate genesis
+     *      entrypoints.
      * @dev Owner-only configuration. Registration performs no code check. A nonzero PSM's `IPSM.uAsset()` must equal
      *      the registered `uAsset` (binding mismatch reverts PsmBindingMismatch) and its `IPSM.reserveToken()`
      *      must equal the registered `reserveToken` (mismatch reverts PsmReserveMismatch); revocation passes
-     *      `psm == address(0)` and only affects subsequent `genesisByPSM` calls for that pair.
+     *      `psm == address(0)` and only affects subsequent `genesisByPSM` and `leveragedGenesisByPSM`
+     *      calls for that pair (both entries resolve the pair through the same registry lookup).
      * @param uAsset Family uAsset served by the PSM.
      * @param reserveToken Reserve token served by the PSM (`NATIVE` = address(0) for the native currency).
      * @param psm PSM handling the pair's reserve-to-uAsset swaps, or address(0) to revoke.
@@ -313,6 +316,11 @@ interface IOutrunRouter {
 
     /// @notice Returns the POLend target serving `leveragedGenesisByPSM`.
     function polend() external view returns (address);
+
+    /// @notice Returns the memeverse launcher address the genesis gates hand minted uAsset to.
+    /// @dev Operational invariant: must equal each SP's `genesisLauncher()`; drift reverts `GenesisLauncherMismatch` on
+    ///      the SP-backed genesis entries and previews, while the PSM-gated path stays silent (see `setMemeverseLauncher`).
+    function memeverseLauncher() external view returns (address);
 
     /**
      * @notice Quotes the uAsset amount a genesis open from an input token would mint.
