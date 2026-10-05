@@ -82,15 +82,24 @@ contract OutrunL2StakedUsdsSYUpgradeable layout at erc7201("outrun.storage.Outru
     /// @param newRateProvider The new rate provider (1e27). Must not be zero.
     function setRateProvider(address newRateProvider) external onlyOwner {
         if (newRateProvider == address(0)) revert SYZeroAddress();
+        address oldRateProvider = outrunL2StakedUsdsSYStorage.rateProvider;
         outrunL2StakedUsdsSYStorage.rateProvider = newRateProvider;
+        emit RateProviderSet(oldRateProvider, newRateProvider);
     }
 
     /// @notice Sets the max PSM deviation bound. Owner-only.
     /// @param newMaxBps New bound in bps (e.g. 100 = 1%). Must be <= 10000.
     function setMaxDeviationBps(uint16 newMaxBps) external onlyOwner {
         if (newMaxBps == 0 || newMaxBps > 10000) revert InvalidMaxDeviationBps();
+        // Event payload reports the raw stored bound: initialize seeds 100 and this setter
+        // rejects 0, so the getter's 0->100 default mapping is unreachable and the raw value is exact.
+        uint16 oldMaxBps = outrunL2StakedUsdsSYStorage.maxDeviationBps;
         outrunL2StakedUsdsSYStorage.maxDeviationBps = newMaxBps;
+        emit MaxDeviationBpsSet(oldMaxBps, newMaxBps);
     }
+
+    event RateProviderSet(address indexed oldRateProvider, address indexed newRateProvider);
+    event MaxDeviationBpsSet(uint16 oldMaxDeviationBps, uint16 newMaxDeviationBps);
 
     error InvalidMaxDeviationBps();
     error RateDeviationExceeded(uint256 psmRate, uint256 ssrRate, uint256 maxBps);

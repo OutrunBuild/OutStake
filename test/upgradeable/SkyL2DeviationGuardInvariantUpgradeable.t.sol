@@ -184,4 +184,21 @@ contract SkyL2DeviationGuardInvariantUpgradeableTest is StdInvariant, Test {
         );
         sy.exchangeRate();
     }
+
+    /// @notice setRateProvider emits (old, new) provider addresses for governance observability.
+    function test_SetRateProviderEmitsOldAndNewProvider() external {
+        address newProvider = makeAddr("newProvider");
+        vm.prank(owner);
+        vm.expectEmit(true, true, false, true);
+        emit OutrunL2StakedUsdsSYUpgradeable.RateProviderSet(address(ssr), newProvider);
+        sy.setRateProvider(newProvider);
+    }
+
+    /// @notice setMaxDeviationBps emits (old, new) bounds; old is the raw stored default 100.
+    function test_SetMaxDeviationBpsEmitsOldAndNewBound() external {
+        vm.prank(owner);
+        vm.expectEmit(false, false, false, true);
+        emit OutrunL2StakedUsdsSYUpgradeable.MaxDeviationBpsSet(100, 500);
+        sy.setMaxDeviationBps(500);
+    }
 }
