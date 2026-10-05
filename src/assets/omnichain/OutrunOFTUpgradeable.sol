@@ -75,7 +75,9 @@ abstract contract OutrunOFTUpgradeable is
     /// @notice Returns the rate-limited amount that can currently be sent to a destination.
     /// @dev A configured rate limit can exceed the LayerZero uint64 shared-decimals wire envelope
     ///      (uint64.max * decimalConversionRate); the value is capped to that envelope and
-    ///      dust-aligned so it is sendable in one message, mirroring quoteOFT via _maxQuoteAmountLD.
+    ///      dust-aligned so it is sendable in one message. This getter and the quoteOFT cap
+    ///      compute their capacity through the same shared kernel (_cappedSendableLD), so the two
+    ///      values are equal by construction rather than by parallel implementations.
     /// @param dstEid Destination endpoint ID
     /// @return currentAmountInFlight Tokens currently in-flight to the destination
     function getAmountCanBeSent(uint32 dstEid)
@@ -85,12 +87,9 @@ abstract contract OutrunOFTUpgradeable is
         override
         returns (uint256 currentAmountInFlight, uint256 amountCanBeSent)
     {
-        RateLimit memory rl = rateLimits(dstEid);
-        if (rl.window == 0) return (0, _maxOFTAmountLD());
-        (currentAmountInFlight, amountCanBeSent) =
-            _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
-        uint256 maxAmountLD = _maxOFTAmountLD();
-        if (amountCanBeSent > maxAmountLD) amountCanBeSent = maxAmountLD;
+        (currentAmountInFlight, amountCanBeSent) = _cappedSendableLD(rateLimits(dstEid));
+        // Dust-align so the reported capacity is sendable in one message. No-op for the
+        // unconfigured (window == 0) branch: the envelope is a decimalConversionRate multiple.
         amountCanBeSent = _removeDust(amountCanBeSent);
         return (currentAmountInFlight, amountCanBeSent);
     }
@@ -201,15 +200,36 @@ abstract contract OutrunOFTUpgradeable is
         }
     }
 
+    /// @notice Single source of truth for the sendable capacity to a destination.
+    /// @dev Shared kernel behind getAmountCanBeSent and the quoteOFT cap: both read the capacity
+    ///      from here, so their results cannot drift apart. Collapses the window == 0
+    ///      unconfigured/deleted sentinel (nothing in flight, full envelope capacity) and the
+    ///      uint64 shared-decimals wire-envelope cap (uint64.max * decimalConversionRate) into
+    ///      one place. Dust alignment is left to the callers.
+    /// @param rl Current rate-limit state for the destination
+    /// @return currentAmountInFlight Tokens currently in-flight to the destination (0 when unconfigured)
+    /// @return cappedAmountLD Remaining sendable capacity in LD, capped at the wire envelope
+    function _cappedSendableLD(RateLimit memory rl)
+        internal
+        view
+        returns (uint256 currentAmountInFlight, uint256 cappedAmountLD)
+    {
+        uint256 maxAmountLD = _maxOFTAmountLD();
+        if (rl.window == 0) return (0, maxAmountLD);
+        (currentAmountInFlight, cappedAmountLD) =
+            _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
+        cappedAmountLD = cappedAmountLD < maxAmountLD ? cappedAmountLD : maxAmountLD;
+    }
+
     /// @notice Returns the maximum quoted amount for a destination, capped by the rate limit.
+    /// @dev Thin wrapper over the shared _cappedSendableLD kernel. Deliberately not routed
+    ///      through the virtual getAmountCanBeSent getter: a child overriding the getter must
+    ///      not change how the quote caps amounts.
     /// @param dstEid Destination endpoint ID
     /// @return Max amount that can be quoted (uint64 max * decimalConversionRate, or rate-limited)
     function _maxQuoteAmountLD(uint32 dstEid) internal view returns (uint256) {
-        uint256 maxAmountLD = _maxOFTAmountLD();
-        RateLimit memory rl = rateLimits(dstEid);
-        if (rl.window == 0) return maxAmountLD;
-        (, uint256 amountCanBeSent) = _amountCanBeSent(rl.amountInFlight, rl.lastUpdated, rl.limit, rl.window);
-        return amountCanBeSent < maxAmountLD ? amountCanBeSent : maxAmountLD;
+        (, uint256 cappedAmountLD) = _cappedSendableLD(rateLimits(dstEid));
+        return cappedAmountLD;
     }
 
     /// @notice Returns the absolute maximum OFT transfer amount: uint64 max scaled by decimal conversion rate.

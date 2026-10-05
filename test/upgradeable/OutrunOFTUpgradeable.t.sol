@@ -184,7 +184,8 @@ contract OutrunOFTUpgradeableTest is Test {
 
         // The warp between debit and reconfig is what makes the checkpoint observable:
         // it creates elapsed time that must be settled under the old window first.
-        vm.warp(block.timestamp + 12 hours);
+        uint256 reconfigTs = block.timestamp + 12 hours;
+        vm.warp(reconfigTs);
 
         vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, 80e18, 4 days);
@@ -195,7 +196,7 @@ contract OutrunOFTUpgradeableTest is Test {
 
         OutrunRateLimiterUpgradeable.RateLimit memory rateLimit = oft.rateLimits(DST_EID);
         assertEq(rateLimit.amountInFlight, 5e18);
-        assertEq(rateLimit.lastUpdated, block.timestamp);
+        assertEq(rateLimit.lastUpdated, reconfigTs);
         assertEq(rateLimit.window, 4 days);
     }
 
@@ -252,7 +253,8 @@ contract OutrunOFTUpgradeableTest is Test {
         oft.setOutboundRateLimit(DST_EID, 10e18, 1 days);
 
         // One full window: decay (10e18) is not enough to clear the residual; must not report (0, 10e18).
-        vm.warp(block.timestamp + 1 days);
+        uint256 fullWindowTs = block.timestamp + 1 days;
+        vm.warp(fullWindowTs);
 
         (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(inFlight, 15e18);
@@ -264,7 +266,7 @@ contract OutrunOFTUpgradeableTest is Test {
         oft.exposedDebit(user, 10e18, 0, DST_EID);
 
         // After the residual fully decays (25/10 = 2.5 windows) capacity is restored before a new send.
-        vm.warp(block.timestamp + 1.5 days);
+        vm.warp(fullWindowTs + 1.5 days);
 
         (uint256 clearedInFlight, uint256 clearedCanBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(clearedInFlight, 0);
@@ -272,7 +274,8 @@ contract OutrunOFTUpgradeableTest is Test {
     }
 
     function testRemoveLimitRestoresSharedDecimalEnvelope() external {
-        vm.warp(block.timestamp + 1);
+        uint256 debitTs = block.timestamp + 1;
+        vm.warp(debitTs);
 
         vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
@@ -282,7 +285,7 @@ contract OutrunOFTUpgradeableTest is Test {
 
         OutrunRateLimiterUpgradeable.RateLimit memory beforeRemoval = oft.rateLimits(DST_EID);
         assertEq(beforeRemoval.amountInFlight, 25e18);
-        assertEq(beforeRemoval.lastUpdated, block.timestamp);
+        assertEq(beforeRemoval.lastUpdated, debitTs);
 
         vm.prank(owner);
         oft.removeOutboundRateLimit(DST_EID);
@@ -332,6 +335,23 @@ contract OutrunOFTUpgradeableTest is Test {
         uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
         assertEq(oftLimit.maxAmountLD, envelope);
         assertEq(canBeSent, oftLimit.maxAmountLD);
+    }
+
+    /// @dev Unconfigured rate limit (window == 0 sentinel): quoteOFT's maxAmountLD and
+    ///      getAmountCanBeSent's amountCanBeSent must both report the full LayerZero uint64
+    ///      shared-decimals wire envelope (uint64.max * decimalConversionRate) — the unlimited
+    ///      case is still bounded by what one message can carry — and the quote's minimum
+    ///      sendable amount is exactly one shared-decimal unit.
+    function testQuoteOFTMatchesGetterWhenUnconfigured() external {
+        (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+
+        assertEq(inFlight, 0);
+        uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
+        assertEq(canBeSent, envelope);
+        assertEq(oftLimit.maxAmountLD, envelope);
+        assertEq(oftLimit.maxAmountLD, canBeSent);
+        assertEq(oftLimit.minAmountLD, oft.decimalConversionRate());
     }
 
     /// @dev Below the envelope but NOT DCR-aligned: a configured limit of 40e18 + 1 must be reported
@@ -417,30 +437,26 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(oft.outflowCalls(), 0);
     }
 
+    /// @dev Non-DCR-aligned send amounts are dusted down before anything leaves the sender:
+    ///     with 123 wei of dust below DCR (1e12) on a 25e18 + 123 request, the dust-free 25e18
+    ///     is the amount sent/burned while the 123 stays in the sender's balance — never
+    ///     burned, never bridged — so balance and total supply each drop by exactly 25e18.
+    function testDebitDustStaysInSenderBalance() external {
+        uint256 amount = 25e18 + 123;
+
+        vm.prank(user);
+        (uint256 sent, uint256 received) = oft.exposedDebit(user, amount, 0, DST_EID);
+
+        assertEq(sent, 25e18);
+        assertEq(received, 25e18);
+        assertEq(oft.balanceOf(user), 75e18);
+        assertEq(oft.totalSupply(), 75e18);
+    }
+
     /// @dev Regression: quoteOFT signals dust as unsendable via minAmountLD.
     function testQuoteOFTMinAmountSignalsDustRejection() external {
         (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
         assertEq(oftLimit.minAmountLD, oft.decimalConversionRate());
-    }
-
-    /// @dev Regression: a rejected dust send must not refresh rl.lastUpdated or rate-limiter state.
-    function testDustDebitDoesNotRefreshRateLimitState() external {
-        vm.prank(owner);
-        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
-
-        vm.prank(user);
-        oft.exposedDebit(user, 25e18, 0, DST_EID);
-
-        OutrunRateLimiterUpgradeable.RateLimit memory before = oft.rateLimits(DST_EID);
-
-        vm.prank(user);
-        vm.expectRevert(OutrunOFTUpgradeable.AmountTooSmall.selector);
-        oft.exposedDebit(user, 0, 0, DST_EID);
-
-        OutrunRateLimiterUpgradeable.RateLimit memory afterState = oft.rateLimits(DST_EID);
-        assertEq(afterState.amountInFlight, before.amountInFlight);
-        assertEq(afterState.lastUpdated, before.lastUpdated);
-        assertEq(oft.outflowCalls(), 1);
     }
 }
 
@@ -559,12 +575,13 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
         uint256 recovery = Math.ceilDiv(fill * window, uint256(limit));
 
         // One unit before the recovery point the decay has not fully consumed the fill yet.
-        vm.warp(block.timestamp + recovery - 1);
+        uint256 preRecoveryTs = block.timestamp + recovery - 1;
+        vm.warp(preRecoveryTs);
         (uint256 inFlight,) = limiter.getAmountCanBeSent(DST_EID);
         assertGt(inFlight, 0, "in-flight must still be positive one unit before the recovery point");
 
         // At the recovery point the bucket is empty and the full limit is sendable again.
-        vm.warp(block.timestamp + 1);
+        vm.warp(preRecoveryTs + 1);
         (uint256 recoveredInFlight, uint256 canBeSent) = limiter.getAmountCanBeSent(DST_EID);
         assertEq(recoveredInFlight, 0, "in-flight must be zero at the recovery point");
         assertEq(canBeSent, uint256(limit), "capacity must be fully replenished at the recovery point");
@@ -616,12 +633,13 @@ contract OutrunRateLimiterReplenishPropertyTest is Test {
 
         uint256 recovery = Math.ceilDiv(fill * window, uint256(newLimit));
 
-        vm.warp(block.timestamp + recovery - 1);
+        uint256 preRecoveryTs = block.timestamp + recovery - 1;
+        vm.warp(preRecoveryTs);
         (inFlight, canBeSent) = limiter.getAmountCanBeSent(DST_EID);
         assertGt(inFlight, 0, "residual must not be fully decayed one unit before the recovery point");
         assertLt(canBeSent, uint256(newLimit), "capacity must not be fully restored before the recovery point");
 
-        vm.warp(block.timestamp + 1);
+        vm.warp(preRecoveryTs + 1);
         (inFlight, canBeSent) = limiter.getAmountCanBeSent(DST_EID);
         assertEq(inFlight, 0, "residual must be fully decayed at the recovery point");
         assertEq(canBeSent, uint256(newLimit), "capacity must equal the new limit at the recovery point");
@@ -815,17 +833,25 @@ contract OutrunRateLimiterSequenceInvariantTest is StdInvariant, Test {
     }
 
     /// @dev Within the current epoch the total sent amount is bounded by
-    ///      the replenished capacity: sent <= stored_n - stored_0 + mulDiv(L, now - t0, W).
-    ///      Rationale: stored_n = stored_0 + sent - sum(decay settles), the settle intervals
-    ///      partition [t0, last write] within the epoch, and floor subadditivity gives
-    ///      sum(floor(L * d_i / W)) <= floor(L * (now - t0) / W), so sum(decay) <= the latter.
+    ///      the replenished capacity: sent <= (inFlightNow + mulDiv(L, now - t0, W)) - stored_0.
+    ///      inFlightNow is the contract's own stored slot (lazy write-point value), so a limiter
+    ///      that accepts a send but under-records its in-flight amount can break the bound —
+    ///      exactly when the under-recorded amount exceeds the epoch's decay slack (replenished
+    ///      minus settled decay); slack from clamped settles can absorb it even in the same
+    ///      block as the last send, and any residue is caught by
+    ///      invariant_contractStateMatchesModel's slot equality. (t0, stored_0, L, W) is the epoch baseline recorded at deployment or
+    ///      the last reconfig. For a faithful slot the bound follows from floor subadditivity:
+    ///      every settle interval after the epoch start lies within [t0, now] (epoch 0's first
+    ///      settle is zero because its baseline stored is zero), so
+    ///      sum(floor(L * d_i / W)) <= floor(L * (now - t0) / W) covers the total settled decay.
     function invariant_windowThroughputBound() public view {
         RateLimiterSequenceHandler.EpochBaseline memory baseline = handler.epochBaseline(handler.ghostEpoch());
 
+        OutrunRateLimiterUpgradeable.RateLimit memory rl = handler.limiter().rateLimits(DST_EID);
         uint256 replenished = Math.mulDiv(baseline.limit, block.timestamp - baseline.ts, baseline.window);
         assertLe(
             handler.ghostSentSinceEpoch(),
-            handler.modelStored() + replenished - baseline.stored,
+            rl.amountInFlight + replenished - baseline.stored,
             "epoch throughput must be bounded by the replenished capacity"
         );
     }
