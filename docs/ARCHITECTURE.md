@@ -22,7 +22,7 @@
 - 面值铸造（价值平价）：`mintedUAsset = floor₂(syStaked × SY.exchangeRate())`（两段 down，无 LTV 缩放、无利率乘数）——背书不变式 `positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)` 由取整方向构造成立。
 - 计息为 duty 域 virtual accrual（`rate = rmul(rpow(duty, dt), rate)`，timestamp 锚定）；v1 全族默认 `duty = 1e27` 零费（`rate` 永不前移、债务冻结、背书率单调上升），`setDuty` 保留（接受域 `[1e27, DUTY_CAP]`）。
 - 无清算：链上不设清算、LTV 或再融资机制；`OutrunStakingPositionUpgradeable.sol::redeem` 任意时刻按比例双腿销债（本金腿 burn 并冲销 minter 台账、利息腿转协议金库——v1 零费下恒 0）是唯一出清通道。
-- **oracle fail-closed 栈为铸造侧唯一链上防线**：v1 无 LTV/清算后，汇率虚高时面值铸造即超铸——正性/round 完整性/新鲜度/sequencer/归一化非零校验 + SY 基类锚点偏差熔断 + `ZeroExchangeRate` 单点守卫是背书完整性的唯一链上守卫（关键级上调，见 `docs/spec/yield/oracles-and-integrations.md`）。
+- **铸造侧率值链上守卫按族分形，oracle fail-closed 栈为 oracle-fed 族唯一链上防线**：v1 无 LTV/清算后，汇率虚高时面值铸造即超铸——oracle-fed 族由正性/round 完整性/新鲜度/sequencer/归一化非零校验 + SY 基类锚点偏差熔断守卫，Sky L2 族由 PSM3-SSR 双源偏差守卫守率值（`OutrunL2StakedUsdsSYUpgradeable.sol::exchangeRate`，偏离超 `maxDeviationBps` 即 revert `RateDeviationExceeded` fail-closed），另有族无关的 `ZeroExchangeRate` 单点守卫（关键级上调，语义真源 `docs/spec/yield/oracles-and-integrations.md`）。
 - **`mintingCap` 为唯一供给刹车**：uAsset minter 台账的 cap 直接限总供给，原「背书保护」（LTV）职责并入；背书由价值平价铸造构造保证。风险按五层瀑布承接（见 §7 风险模型）。
 - `OutrunStakingPositionUpgradeable` 作为 UUPS implementation 部署在 `ERC1967Proxy` 后；`SY`、`uAsset`、`protocolTreasury`（协议金库，利息腿接收方）等依赖由 initializer 写入 storage。
 - 行为规格真源：`docs/spec/position/accounting.md`（账务、计息、背书不变式与错误/事件真源）、`docs/spec/position/state-machines.md`（状态机与暂停矩阵）。
@@ -72,9 +72,9 @@
 - `src/router/interfaces/IMemeverseLauncher.sol`
 - `src/router/interfaces/IPOLendGenesis.sol`
 - 把 token <-> SY <-> CDP 仓位、PSM 兑换组合为单次入口，并承载 memeverseLauncher genesis 集成。
-- genesis 为双路径：路径 A（PSM 门）`OutrunRouter.sol::genesisByPSM` 以 reserve token 经 PSM 1:1 面值铸 uAsset 后全额交 launcher（无仓位、无债务，router 侧后置断言）；路径 B（CDP 门）双计价入口——`OutrunRouter.sol::genesisByToken`（token 计价正门）/ `OutrunRouter.sol::genesisBySY`——为薄转发便利层，转发至 SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（面值/价值平价铸出，uAsset 铸给 SP 自身、交易内全额交 launcher，SP 侧后置断言；任意 EOA/合约可直调 SP，router 非必经）。自由质押入口（`stakeFromToken`/`stakeFromSY`）随 v1 genesis-only 决策删除。
+- genesis 为双路径：路径 A（PSM 门）`OutrunRouter.sol::genesisByPSM` 以 reserve token 经 PSM 1:1 面值铸 uAsset 后全额交 launcher（无仓位、无债务，router 侧后置断言）；路径 B（CDP 门）双计价入口——`OutrunRouter.sol::genesisByToken`（token 计价正门）/ `OutrunRouter.sol::genesisBySY`——为薄转发便利层，转发至 SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（面值/价值平价铸出，uAsset 铸给 SP 自身、交易内全额交 launcher，SP 侧后置断言；任意 EOA/合约可直调 SP，router 非必经）。自由质押入口（`stakeFromToken`/`stakeFromSY`）随 v1 genesis-only 决策删除。双门之外另有杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`：reserve token 经 PSM 面值铸 uAsset 后全额作为 Memeverse 侧 POLend 杠杆创世利息（借出额度记 `genesisUser`），无仓位、无 launcher 交付，`polend` 地址经 owner 测试期 setter 登记（生产冻结 immutable，完整行为见 `docs/spec/router/router-and-user-flows.md`「杠杆创世门」节）。
 - `OutrunRouter` 不进入 upgradeable product surface；仍保持非 upgradeable、可重部署 helper，并通过参数或配置调用 proxy-backed uAsset / SY / position / PSM。
-- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair，`OutrunRouter.sol::setPsmForUAsset` 登记路径 A 的 `(uAsset, reserveToken) -> PSM` 配对绑定（现状即配对三参登记）；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。registry 为 owner 持续 live 能力，不随主网上线冻结移除（见 `docs/spec/protocol.md`「router」）。
+- target registry 由 owner 在 pre-mainnet wiring 阶段配置：`OutrunRouter.sol::setTrustedSY` 登记 SY，`OutrunRouter.sol::setTrustedSP` 登记并校验 `SP -> SY` canonical pair，`OutrunRouter.sol::setPsmForUAsset` 登记路径 A 与杠杆创世门共用的 `(uAsset, reserveToken) -> PSM` 配对绑定（现状即配对三参登记）；router 在任何 pull 或精确 approve 前拒绝未登记或不匹配的 target。registry 为 owner 持续 live 能力，不随主网上线冻结移除（见 `docs/spec/protocol.md`「router」）。
 
 ### 1.7 集成与 Oracle 层
 
@@ -103,7 +103,7 @@
 - `src/libraries/AutoIncrementIdUpgradeable.sol`
 - `src/libraries/GenesisGateLib.sol`
 - `src/libraries/WadRayMath.sol`
-- 跨业务域共享的 token 传输、汇率换算、重入保护、数组操作、ID 生成、genesis 物理门守恒断言、错误定义等基础工具。`GenesisGateLib.sol` 为两条 genesis 路径共用的安全承载闸门（`assertFullConsumption`，见 §2.8/§3）。
+- 跨业务域共享的 token 传输、汇率换算、重入保护、数组操作、ID 生成、genesis 物理门守恒断言、错误定义等基础工具。`GenesisGateLib.sol` 为三条 genesis 入口（路径 A / 路径 B / 杠杆创世门）共用的安全承载闸门（`assertFullConsumption`，见 §2.8/§3）。
 - 当前 helper 中 `TokenHelper.sol` 继承 vendored OpenZeppelin `ReentrancyGuardTransient.sol`（`@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol`），该 guard 使用 EIP-1153 transient storage；部署目标链必须支持 EIP-1153。
 
 ### 1.9 Upgradeable deployment model
@@ -146,10 +146,11 @@ v1 链上不设清算、LTV 或再融资机制；仓位出清唯一通道为 own
 
 uAsset 持有人 -> `OutrunUSRVaultUpgradeable` ERC4626 `deposit` / `mint`（资产转入步）-> 按当前指数铸 suToken 份额；`withdraw` / `redeem` 按份额与当前指数结算付出 uAsset。owner 经 `OutrunUSRVaultUpgradeable.sol::fund` 注资计息预算、`::setUsrRate` 设族利率（计息指数口径、付出边界与参数边界以行为规格真源 `docs/spec/usr/usr-vaults.md` 为准）。
 
-### 2.8 Genesis 双路径（新供给 uAsset 全额交 launcher）
+### 2.8 Genesis 入口（PSM 门 / CDP 门 / 杠杆创世门）
 
 - 路径 A（PSM 门）：用户带 reserve token -> `OutrunRouter.sol::genesisByPSM` -> router 校验 `psmForUAsset` registry -> PSM 铸出 uAsset 给 router -> router 精确 approve 并调用 `launcher.genesis`，launcher 拉走全额铸出量，router 侧后置断言余额回基线且 allowance 归零；无仓位、无债务。
 - 路径 B（CDP 门，双计价入口，薄转发便利层）：用户带 token（`OutrunRouter.sol::genesisByToken`，token 计价正门，router 先经 `SY.deposit` 换 SY）或 SY（`OutrunRouter.sol::genesisBySY`）-> router 校验 `trustedSYForSP`、拉入资产并精确 approve 给 SP -> 转发 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`——SP 侧原生物理门完成开 CDP 仓位（`genesisUser` 为 position owner、面值/价值平价铸出）、uAsset 铸给 SP 自身、对 SP 侧 `genesisLauncher` 精确 approve、`launcher.genesis` 原子交款与后置断言（余额回铸出前基线且 allowance 归零，否则 `GenesisUAssetNotConsumed` 整笔回滚）；router 在路径 B 不触碰 uAsset，任意 EOA/合约也可绕过 router 直接调用 `stakeForGenesis`（组合性）。
+- 杠杆创世门（双门之外的第三入口）：用户带 reserve token -> `OutrunRouter.sol::leveragedGenesisByPSM` -> router 校验 `psmForUAsset` registry 与 `polend` 登记、复读 verse ↔ uAsset 配对 -> PSM 铸出 uAsset 给 router -> router 精确 approve 并调用 `IPOLendGenesis.leveragedGenesis`，POLend 拉走全额铸出量作为杠杆创世利息、借出额度记 `genesisUser`，router 侧后置断言余额回基线且 allowance 归零；无仓位、无 launcher 交付（完整行为见 `docs/spec/router/router-and-user-flows.md`「杠杆创世门」节）。
 
 ## 3. 系统架构图
 
@@ -188,7 +189,7 @@ OutrunStakingPositionUpgradeable (concrete)
     → IStandardizedYield (SY)            exchangeRate / redeem
     → IMemeverseLauncher                 genesis（stakeForGenesis 物理门交款）
     → SYUtils
-    → GenesisGateLib                     assertFullConsumption（genesis 物理门全额消费断言，SP/Router 双路径共用）
+    → GenesisGateLib                     assertFullConsumption（genesis 物理门全额消费断言，SP/Router 双侧三入口共用）
 ```
 
 #### PSM 继承链
@@ -230,7 +231,7 @@ OutrunRouter (concrete)
     → IMemeverseLauncher               genesis（仅路径 A genesisByPSM）
     → IPOLendGenesis                   leveragedGenesis / marketUAsset（杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`）
     → TokenHelper
-    → GenesisGateLib                   assertFullConsumption（genesis 物理门全额消费断言，SP/Router 双路径共用）
+    → GenesisGateLib                   assertFullConsumption（genesis 物理门全额消费断言，SP/Router 双侧三入口共用）
 ```
 
 #### SY Adapter 统一结构
@@ -290,14 +291,14 @@ OutrunExchangeOracleAdapter
             +---------------------------+
 ```
 
-本图为调用主干摘要，非穷举：Router→Position（`genesisBySY`/`genesisByToken` → `stakeForGenesis`）、Router→PSM（`genesisByPSM` → `IPSM.mint`）与 Position→Launcher（`stakeForGenesis` → `launcher.genesis`；Router 仅路径 A `genesisByPSM` 直调 launcher）等编排调用未画出，完整调用清单见 §3.2.2 表与 §3.1 依赖扇出。
+本图为调用主干摘要，非穷举：Router→Position（`genesisBySY`/`genesisByToken` → `stakeForGenesis`）、Router→PSM（`genesisByPSM` / `leveragedGenesisByPSM` → `IPSM.mint`）与 Position→Launcher（`stakeForGenesis` → `launcher.genesis`；Router 仅路径 A `genesisByPSM` 直调 launcher）等编排调用未画出，完整调用清单见 §3.2.2 表与 §3.1 依赖扇出。
 
 #### 3.2.2 调用关系说明
 
 | Caller | Callee | 入口 |
 | --- | --- | --- |
 | Router | SY | `mintSYFromToken` → `SY.deposit`；`redeemSyToToken` → `SY.redeem` |
-| Router | PSM | `genesisByPSM` → `IPSM.mint`（路径 A，经 `psmForUAsset` registry 寻址） |
+| Router | PSM | `genesisByPSM` / `leveragedGenesisByPSM` → `IPSM.mint`（路径 A 与杠杆创世门，经 `psmForUAsset` registry 寻址、共用 `OutrunRouter.sol::_psmMintForRouter`） |
 | Router | POLend | `leveragedGenesisByPSM` → `marketUAsset` 复读校验 + `leveragedGenesis`（杠杆创世门，经 `polend` 登记寻址，全额拉款） |
 | Router | Position | `genesisBySY`/`genesisByToken` → `stakeForGenesis`（路径 B 双入口薄转发，面值 CDP 开仓） |
 | Router | Launcher | `genesisByPSM` → `launcher.genesis`（仅路径 A；router 侧精确 approve 后全额消费） |
@@ -306,7 +307,7 @@ OutrunExchangeOracleAdapter
 | Position | SY | `redeem` → `SY.redeem`（非 SY tokenOut 时经 adapter 兑换） |
 | PSM | uAsset | `mint` → `reserveMint`；`redeem` → `reserveBurn`（豁免 minter 债务台账） |
 | 用户 / Owner | USR vault | ERC4626 `deposit`/`mint`/`withdraw`/`redeem`（公开）；`fund`/`setUsrRate`（owner-only） |
-| Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`；redeem → `withdraw`/`unwrap`/`redeem`/`swapExactIn`/`wrap`；或 1:1 直付 |
+| Adapter | External Protocol | deposit → `supply`/`wrap`/`deposit`/`depositETHForWeETH`/`swapExactIn`/`mintAsBnb`；redeem → `withdraw`/`unwrap`/`redeem`/`swapExactIn`；或 1:1 直付 |
 | OutrunOFT | LayerZero | `_toSD` 编码消息；`_debit` burn 本链；`_credit` mint 远端 |
 
 Router 复合路径会透传或校验用户传入的 slippage floors：`minSyOut` 约束 token -> SY，`minUAssetMinted` 约束 genesis 路径 B 输出，`minTokenOut` 约束 redeem 输出；PSM 路径输出确定性（面值 1:1 减费率），无 minOut 参数。
@@ -360,19 +361,21 @@ USR 存取:
   suToken ──redeem──► USR vault ──按 accrualIndex 结算──► uAsset（余额为硬边界）
   Owner uAsset ──approve + fund──► USR vault（计息注资，只进不出）
 
-Genesis 双路径（新供给 uAsset 全额交 launcher）:
+Genesis 入口（双门与双门之外的杠杆创世门）:
 
   路径 A: reserve ──genesisByPSM──► PSM.mint ──reserveMint──► uAsset(router) ──► launcher.genesis
           （无仓位、无债务；router 侧后置断言全额消费；PSM 行供给）
   路径 B: token ──genesisByToken──► SY.deposit ──SY──► SP.stakeForGenesis ──mint──► uAsset(SP) ──► launcher.genesis
           SY ────genesisBySY───► SP.stakeForGenesis ──mint──► uAsset(SP) ──► launcher.genesis
           （router 薄转发、不触碰 uAsset；genesisUser 承担 CDP 债务，面值铸出；SP 侧后置断言全额消费；CDP 行供给）
+  杠杆门: reserve ──leveragedGenesisByPSM──► PSM.mint ──reserveMint──► uAsset(router) ──► POLend.leveragedGenesis（杠杆创世利息）
+          （无仓位、无 launcher 交付；借出额度记 genesisUser；router 侧后置断言全额消费；PSM 行供给）
 ```
 
 ### 3.4 设计约束
 
 - Router **不承担**独立资金池角色，所有资金来自调用者（caller-funded pull 模式）。
-- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`；路径 A 的寻址 registry 为 `OutrunRouter.sol::setPsmForUAsset`（按 `(uAsset, reserveToken)` 配对，现状即配对三参登记），撤销置零地址只阻断 `genesisByPSM` 的该配对。
+- Router 的 target registry 是部署期安全边界：`OutrunRouter.sol::setTrustedSY(SY, false)` 会立即阻断直接 SY 路径及引用该 SY 的 SP 路径，但不自动清除 pair mapping；撤销时应显式 `OutrunRouter.sol::setTrustedSP(SP, address(0))`；路径 A 的寻址 registry 为 `OutrunRouter.sol::setPsmForUAsset`（按 `(uAsset, reserveToken)` 配对，现状即配对三参登记），撤销置零地址阻断该配对的 `OutrunRouter.sol::genesisByPSM` 与 `OutrunRouter.sol::leveragedGenesisByPSM`（两入口共享同一 registry 查表）。
 - 用户也**可直接调用** `SYBaseUpgradeable.sol::deposit`/`redeem`、`OutrunStakingPositionUpgradeable.sol::stakeForGenesis`/`redeem`、`OutrunPSMUpgradeable.sol::mint`/`redeem` 与 USR vault 的 ERC4626 公开面，无需经过 Router；直兑 `redeem(..., false)` 从调用者余额烧份额，`redeem(..., true)` 只对每个 SY 实例 owner 配置的 trusted router caller 开放。
 - uAsset 供给共三条路径：CDP（position 层，经 `mint`/`repay` 记 minter 台账）、PSM（储备铸烧路径，豁免台账）、POLend（Memeverse 侧杠杆创世，不在本仓库实现）；三行对账式见 `docs/spec/position/accounting.md` §10.2，跨仓库接线约束见 `docs/spec/protocol.md`「跨仓库接线约束（Memeverse/POLend）」。
 - uAsset.mint 是公开函数，但受 owner 配置的 mintingCap 约束，不是任何人都能铸造；储备铸烧路径不受 mintingCap 约束，受储备 minter 登记表（`setReserveMinter`）约束，PSM 侧 kill switch 为撤销该登记。
@@ -437,11 +440,11 @@ Genesis 双路径（新供给 uAsset 全额交 launcher）:
 
 - uAsset 按 minter 独立记账，不是全局总债务池；PSM 储备铸烧与 OFT 跨链均不触碰 minter 债务台账。
 - Router 当前是 pull 模式，不会消费 pre-funded 余额代替调用者出资。
-- Genesis 为双路径：路径 A（`OutrunRouter.sol::genesisByPSM`）无仓位无债务，路径 B（`OutrunRouter.sol::genesisByToken`/`::genesisBySY` 双计价入口，薄转发至 SP 原生 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`）为 CDP 开仓、`genesisUser` 承担债务；两路径铸出量与 launcher 消费量严格相等——路径 A 全额消费断言在 router 侧，路径 B 断言在 SP 侧。
+- Genesis 为双路径：路径 A（`OutrunRouter.sol::genesisByPSM`）无仓位无债务，路径 B（`OutrunRouter.sol::genesisByToken`/`::genesisBySY` 双计价入口，薄转发至 SP 原生 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`）为 CDP 开仓、`genesisUser` 承担债务；两路径铸出量与 launcher 消费量严格相等——路径 A 全额消费断言在 router 侧，路径 B 断言在 SP 侧；双门之外另有杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`（PSM 面值铸出后全额付 Memeverse 侧 POLend 杠杆创世利息，无仓位，router 侧全额消费断言同路径 A 构造、spender 为 `polend`）。
 - Position 层无 keeper / harvest / wrap / 自由借贷 / 清算面（已随 v1 删除）；v1 无清算即无清算活性依赖面，仓位出清唯一通道为 owner `redeem`（SY 直出 oracle 无关）。
 - CDP 债务按 virtual accrual 按秒复利计息（timestamp 锚定）；v1 全族默认 `duty = 1e27` 零费下 `rate` 恒 `1e27`、债务冻结；加息（`duty > 1e27`）后 SP 暂停期间 `rate` 仍按秒复利增长（暂停是入口熔断，不是计息冻结）。
 - 全部 SY adapter 的 deposit/redeem 核心路径在 `test/upgradeable/SYAdaptersUpgradeable.t.sol` 均有 roundtrip 覆盖，但部分由 `SYAdaptersUpgradeable.t.sol::testVaultBackedAdaptersUseDepositRedeemAndExchangeRate`、`SYAdaptersUpgradeable.t.sol::testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate` 家族共享测试覆盖，非每 adapter 专属；残余边界：oracle-backed L2 族（`OutrunL2WstETHSYUpgradeable`、`OutrunL2StakedTokenSYUpgradeable`）无 fork/primary 证据，个别 roundtrip 分支仍用恒等 mock 汇率，详见 `docs/spec/yield/yield-adapters.md` 证据矩阵。
-- Oracle adapter 是精度归一化器（语义以 `docs/spec/yield/oracles-and-integrations.md` 为准）；不实现 deviation bounds；不实现 fallback。v1 无 LTV/清算后，oracle fail-closed 栈是 SP 铸造侧唯一链上防线（背书完整性守卫，见 §1.2 与 §7）。
+- Oracle adapter 是精度归一化器（语义以 `docs/spec/yield/oracles-and-integrations.md` 为准）；不实现 deviation bounds；不实现 fallback。v1 无 LTV/清算后，铸造侧率值链上守卫按族分形——oracle fail-closed 栈守 oracle-fed 族，Sky L2 族由 PSM3-SSR 双源偏差守卫守率值，另有族无关零点守卫（背书完整性守卫全集见 §1.2 与 §7，语义真源 `docs/spec/yield/oracles-and-integrations.md`）。
 - 跨链 OFT 消息传递的正确性依赖 LayerZero 端点与 peer 配置，不属于本地仓库可直接证明的事实。
 
 ## 7. 风险模型（v1 正式声明）
@@ -456,7 +459,7 @@ Genesis 双路径（新供给 uAsset 全额交 launcher）:
 | 4. 收入年金 | 长期坏账 | v1 为政策承诺（协议后续收入优先处理坏账）；v1 已建收入源 = PSM 点差（tin/tout），Memeverse 生态收入属跨仓范围；v2 可编码为收入路由硬优先级 |
 | 5. 脱钩社会化 | 终局 | 全部层级耗尽后接受 uAsset 脱钩，持有人承担全部损失，协议后续收入继续用于处理坏账 |
 
-集成准入标准与裁决表（准入标准三要素：(i) 发行方梯队——背景、管理规模、事故应对历史；(ii) 汇率行为尽调——历史最大回撤 + 回补机制；(iii) oracle 栈兼容（现有 fail-closed 全集）。尽调清单与复审触发条件见 `docs/deployment.md` 运行手册）：
+集成准入标准与裁决表（准入标准三要素：(i) 发行方梯队——背景、管理规模、事故应对历史；(ii) 汇率行为尽调——历史最大回撤 + 回补机制；(iii) oracle 栈兼容（oracle-fed 族现有 fail-closed 全集；Sky L2 族为 PSM3-SSR 双源偏差守卫，见 `docs/spec/yield/oracles-and-integrations.md`「边界」）。尽调清单与复审触发条件见 `docs/deployment.md` 运行手册）：
 
 | 家族 | v1 处置 |
 | --- | --- |

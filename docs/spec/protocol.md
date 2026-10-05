@@ -31,7 +31,7 @@ v1 产品定义：SP（`OutrunStakingPositionUpgradeable`）= **Memeverse 专用
 - 唯一铸造入口：`OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（SP 原生物理门：`genesisLauncher` kill switch、精确 approve、`GenesisGateLib` 后置断言全额消费）。自由借贷入口（`stake`）不存在。
 - 面值铸造（价值平价）：`mintedUAsset = floor₂(syStaked × SY.exchangeRate())`（两段 down，无 LTV 缩放），背书不变式 `positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)` 由取整方向构造成立。
 - 零利息：v1 全族默认 `duty = 1e27`（零费哨兵合法）；`rate` 永不前移、债务冻结、背书率单调上升；`setDuty` 保留（接受域 `[1e27, DUTY_CAP]`，sub-RAY 全拒），未来加息需配套背书率监控口径调整（见 `docs/deployment.md`）。
-- 无清算：链上不设清算、LTV 或再融资机制；oracle fail-closed 栈（适配器新鲜度栈：正性/round 完整性/新鲜度/sequencer/归一化非零 + SY 基类锚点偏差熔断 + `ZeroExchangeRate` 单点守卫）是背书完整性的唯一链上防线；`mintingCap` 是唯一供给刹车。风险按五层瀑布承接（集成准入 → 发行方自救 → 协议桥接 → 收入年金 → 终局脱钩社会化，声明见 `docs/ARCHITECTURE.md` 风险模型节）。
+- 无清算：链上不设清算、LTV 或再融资机制；铸造侧率值链上守卫按族分形：oracle-fed 族为 oracle fail-closed 栈（适配器新鲜度栈：正性/round 完整性/新鲜度/sequencer/归一化非零 + SY 基类锚点偏差熔断），Sky L2 族（`OutrunL2StakedUsdsSYUpgradeable`）由 PSM3-SSR 双源偏差守卫守率值（偏离超 `maxDeviationBps` 即 revert `RateDeviationExceeded`，fail-closed），另有族无关的 `ZeroExchangeRate` 单点守卫——语义真源 `docs/spec/yield/oracles-and-integrations.md`「边界」；`mintingCap` 是唯一供给刹车。风险按五层瀑布承接（集成准入 → 发行方自救 → 协议桥接 → 收入年金 → 终局脱钩社会化，声明见 `docs/ARCHITECTURE.md` 风险模型节）。
 - `redeem` 任意时刻按比例双腿销债（利息腿转协议金库——v1 零费下恒 0、本金腿 burn 并冲销 minter 台账）；完整行为规格见 `docs/spec/position/accounting.md`（账务、计息、背书不变式与错误/事件真源）、`docs/spec/position/state-machines.md`（状态机与暂停矩阵）。
 
 uAsset 供给侧三行对账式（CDP 行 `amountInMinted(SPx) == Σ 活动仓位 principalDebt`、PSM 行豁免、POLend 行接口预留）、position minter 部署 wiring 与升级 / 迁移验收步骤以 `docs/spec/position/accounting.md`「Position minter 对账式（三行对账式，升级 / 迁移 / 运营对账验收标准）」为准。

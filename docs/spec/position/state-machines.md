@@ -33,7 +33,7 @@ staking position 仍以 `OutrunStakingPositionUpgradeable` + `ERC1967Proxy` 部�
 
 `OutrunStakingPositionUpgradeable.sol::redeem(positionId, syRedeemed, receiver, tokenOut, minTokenOut)` 为 position owner 专属（`onlyPositionOwner`），无时间门。
 
-1. 前置守卫：仓位不存在或 caller 非记录 owner → `PositionAccessDenied()`；`receiver == address(0)` 或 `syRedeemed == 0` → `ZeroInput()`；`syRedeemed > syStaked` → `ExceedsPositionBalance`；合约未 paused。
+1. 前置守卫：合约未 paused；仓位不存在或 caller 非记录 owner → `PositionAccessDenied()`；`receiver == address(0)` 或 `syRedeemed == 0` → `ZeroInput()`；`syRedeemed > syStaked` → `ExceedsPositionBalance(syRedeemed, syStaked)`。
 2. 利息结算（写状态触点）：SP `rate` 结算到当前时刻，本仓 `accruedInterest += Δint`、`lastRate = rate()`（公式与取整见 [accounting.md §4](./accounting.md)；v1 零费下 `Δint == 0`）。
 3. 两腿份额计算（不读汇率）：full（`syRedeemed == syStaked`）→ `principalPortion = principalDebt`、`interestPortion = accruedInterest`；partial → 两腿按 `syRedeemed / syStaked` 比例 ceil；partial 耗尽本金（`principalPortion >= principalDebt`）→ `PartialRedeemMustLeaveDebt()`。
 4. 直接 SY 输出 slippage：`tokenOut == SY` 且 `syRedeemed < minTokenOut` → `InsufficientTokenOut`（position 减记前）。
@@ -111,7 +111,7 @@ SY pause 不阻断 uAsset 面；两腿偿还的 uAsset 操作不受该级影响�
 | SY `pause()` | `sy.pause()` | `stakeForGenesis`（SY 转入）、`redeem`（SY 直出与 `SY.redeem`）间接 `EnforcedPause` | 无直接影响 | `deposit`/`redeem` `EnforcedPause` | `unpause()` | 单独暂停等价冻结全部赎回出口；不设操作禁令，单边态与时长告警见 `docs/deployment.md` |
 | uAsset `pause()` | `uAsset.pause()` | `stakeForGenesis`(`mint` + launcher 拉取)、`redeem`（本金腿 `repay` + 利息腿 transfer）全部 `EnforcedPause` → 全协议熔断 | `mint`/`repay`/`transfer`/`_debit`/`reserveMint`/`reserveBurn` `EnforcedPause`；`approve` 不受影响 (OZ 标准)；`_credit` 显式绕过 `whenNotPaused` 仍铸币；`reserveMint`/`reserveBurn` 阻断即 PSM 双向兑换 fail-closed | 无直接影响 | `unpause()`；恢复后 `repay` 立即恢复 | 暂停期供给单边增长需告警，见 `docs/deployment.md`；USR vault `deposit`/`mint`/`withdraw`/`redeem`/`fund` 经 uAsset transfer 传导 fail-closed，见 `docs/spec/usr/usr-vaults.md`「暂停联动」 |
 
-- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol::_credit` 直调 `OutrunERC20Upgradeable._update`，符合「桥接入账不可丢资产」实践；暂停期 `totalSupply` 仍增，见 `test/upgradeable/OutrunStakingPositionUpgradeable.t.sol::OutrunStakingPositionPauseMatrixTest` 回归。`repay` 不豁免：uAsset 暂停时 `redeem` 的本金腿随之 `EnforcedPause`。
+- `uAsset` `_credit` 豁免：`OutrunOFTUpgradeable.sol::_credit` 直调 `OutrunERC20Upgradeable._update`，符合「桥接入账不可丢资产」实践；暂停期 `totalSupply` 仍增，见 `test/upgradeable/OutrunOFTUpgradeable.t.sol::testPausedTokenAllowsInboundCredit` 回归。`repay` 不豁免：uAsset 暂停时 `redeem` 的本金腿随之 `EnforcedPause`。
 - 限流器与暂停为两级出站熔断：`setOutboundRateLimit` 的 `limit==0` 已被 `InvalidRateLimit` 拒绝，不再用作单链冻结。
 - 运维：三 `owner` 主网前收敛为 timelock/multisig，暂停时长设告警（`<24h`，`_credit` 单边增长需监控）；存在待赎回仓位时计划内操作禁止单独 `uAsset.pause()`（紧急场景可单独执行但须事后公告与补齐协同暂停），见 `docs/deployment.md` 暂停矩阵运维节。SY pause 权限分层：`pause` 允许快速路径（multisig/keeper 秒级执行），`unpause` 与权限变更收敛 timelock/治理延时（错误恢复比错误暂停危害大）；「SP 未暂停而 SY 已暂停」列为单边态告警条件，SY 暂停时长告警与 uAsset 的 `<24h` 阈值对齐，见 `docs/deployment.md` 暂停矩阵运维节。
 
