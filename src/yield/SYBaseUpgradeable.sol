@@ -30,6 +30,14 @@ abstract contract SYBaseUpgradeable is
     bytes32 private constant SY_BASE_STORAGE_LOCATION =
         0x47ee1d05b1829703ec3dd61a22c784c3e0b2d5dbffb0a55782381dabc9c3eb00;
 
+    // Conservative preview headroom shared by adapters whose preview quote can round above or drift past
+    // the executed amount: the quote is scaled by PREVIEW_HEADROOM_NUMERATOR / PREVIEW_HEADROOM_DENOMINATOR
+    // (50 bps) so a verbatim preview still works as a minSharesOut/minTokenOut lower bound. The bound is
+    // generic across adapters; branches exact at the same block do not apply it. Scaling zero yields zero,
+    // so call sites need no zero-guard.
+    uint256 internal constant PREVIEW_HEADROOM_NUMERATOR = 9950;
+    uint256 internal constant PREVIEW_HEADROOM_DENOMINATOR = 10000;
+
     event SetTrustedRouter(address indexed oldRouter, address indexed newRouter);
     event Sweep(address indexed token, address indexed to, uint256 amount);
 

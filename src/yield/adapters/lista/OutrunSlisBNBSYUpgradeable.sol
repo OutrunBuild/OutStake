@@ -84,13 +84,13 @@ contract OutrunSlisBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunSlis
     ///      `ListaStakeManager.sol:195,890` has no deposit fee — `synFee` is charged only on `compoundRewards`
     ///      profit. Inter-block `totalPooledBnb` growth can make next-block execution < prior preview
     ///      (quote-only cost per EIP-4626).
-    ///      Same 50 bps conservative-headroom rationale as OutrunAsBNBSYUpgradeable._previewDeposit.
+    ///      Applies the shared 50 bps conservative headroom (PREVIEW_HEADROOM_* on SYBaseUpgradeable).
     ///      The fixed `-1 wei` trick is intentionally not used: it neither covers inter-block drift
     ///      nor satisfies EIP-4626 `preview <= execution` as-close-as-possible — bps does.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         if (tokenIn == NATIVE) {
             uint256 raw = IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
-            if (raw != 0) raw = raw * 9950 / 10000;
+            raw = raw * PREVIEW_HEADROOM_NUMERATOR / PREVIEW_HEADROOM_DENOMINATOR;
             return raw;
         }
         return amountTokenToDeposit;

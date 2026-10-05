@@ -120,11 +120,11 @@ contract OutrunWeETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWeETHS
             // First compute how much eETH the ETH buys, then how much weETH that eETH represents.
             // This quote chain approximates the live _deposit route (DepositAdapter.depositETHForWeETH) and may
             // deviate slightly by rounding (observed within 1 wei on the pinned fork).
-            // Same 50 bps conservative-headroom rationale as OutrunAsBNBSYUpgradeable._previewDeposit.
+            // NATIVE applies the shared 50 bps conservative headroom (PREVIEW_HEADROOM_* on SYBaseUpgradeable).
             uint256 eETHAmount =
                 ILiquidityPool(_pool).amountForShare(ILiquidityPool(_pool).sharesForAmount(amountTokenToDeposit));
             uint256 raw = ILiquidityPool(_pool).sharesForAmount(eETHAmount);
-            if (raw != 0) raw = raw * 9950 / 10000;
+            raw = raw * PREVIEW_HEADROOM_NUMERATOR / PREVIEW_HEADROOM_DENOMINATOR;
             amountSharesOut = raw;
         } else if (tokenIn == eETH()) {
             // Matches the executed path (_deposit wraps via IWeETH.wrap) because 1 weETH == 1 eETH share,

@@ -56,8 +56,9 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
         0x57aa7d79a56b64c6a75a8df5f30e533361d1c41ef1173e8a4529d9a05db56b00;
 
     // Deviation-breaker defaults. Staking-class conversion rates drift slowly (on the order of
-    // 1 bps per day — e.g. ~0.85 bps/day for wstETH), so the drop bound and the per-hour rise
-    // allowance each carry >= 100x headroom over observed daily drift. The rise cap bounds the
+    // 1 bps per day — e.g. ~0.85 bps/day for wstETH). The per-hour rise allowance (5 bps/hour
+    // = 120 bps/day) carries ~140x headroom over that drift, while the drop bound is a noise
+    // tolerance for round-to-round oracle jitter, not a drift allowance. The rise cap bounds the
     // band width since the LAST anchor write: an in-band commit re-bases the band, so repeated
     // commits can ratchet the anchor (rise at rateRiseBpsPerHour per hour, drop at maxRateDropBps
     // per commit). The anchor never exceeds an actual oracle reading, and cumulative drift stays
@@ -208,9 +209,17 @@ abstract contract OutrunL2OracleBackedSYUpgradeable is SYBaseUpgradeable {
     }
 
     /// @notice Updates the deviation-band parameters. Owner-only.
-    /// @dev Every parameter must satisfy `1 <= p <= 10000` bps; zero would disable one band side
-    ///      entirely and >10000 would invert it.
-    /// @param maxDropBps Maximum allowed drop from the anchor, in bps.
+    /// @dev Every parameter must satisfy `1 <= p <= 10000` bps. `0` is rejected because it pins
+    ///      that band edge to the anchor itself — the tightest possible setting, rejecting every
+    ///      deviation on that side (zero bandwidth). For `maxDropBps`, values above `10000` are
+    ///      rejected because the drop-band term `10000 - maxDropBps` evaluated in
+    ///      `_checkRateWithinBand` would underflow in checked arithmetic (Panic(0x11)) and revert
+    ///      every rate reading; rise parameters above `10000` are rejected only as nonsensical
+    ///      magnitudes (they merely widen the allowance). At the allowed upper edge, setting
+    ///      `maxDropBps == 10000` collapses the minimum rate to zero, silently disabling drop
+    ///      protection for every non-zero reading (only a zero reading still reverts).
+    /// @param maxDropBps Maximum allowed drop from the anchor, in bps. At `10000` the drop side
+    ///      stops rejecting non-zero readings (see dev note).
     /// @param riseBpsPerHour Rise allowance accrued per hour of elapsed time since the anchor, in bps.
     /// @param maxRiseCapBps Ceiling on the accrued rise allowance, in bps.
     function setRateBreakerParams(uint16 maxDropBps, uint16 riseBpsPerHour, uint16 maxRiseCapBps) external onlyOwner {

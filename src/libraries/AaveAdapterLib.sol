@@ -7,7 +7,8 @@ import {WadRayMath} from "./WadRayMath.sol";
 /// @notice Conversion helpers for Aave V3's ray-scaled (1e27) liquidity index. Aave tracks balances as "scaled
 ///      shares" and converts to actual asset amounts using the liquidity index. The index is always ray-scaled
 ///      (1e27 = WadRayMath.RAY).
-/// @dev Quote/preview-only helpers (half-up/floor family) for Aave ray (1e27) previews.
+/// @dev Pure conversion helpers (half-up/floor family) for the Aave ray (1e27) domain, consumed by both
+///      preview and execution (deposit/redeem) paths of the Aave SY adapter.
 library AaveAdapterLib {
     /// @notice Thrown when the Aave liquidity index is zero; provides a decoded selector for the otherwise
     /// empty `WadRayMath.rayDiv` revert, which intentionally mirrors Aave's gas-optimized `revert(0,0)`.

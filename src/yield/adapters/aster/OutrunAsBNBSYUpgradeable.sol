@@ -148,9 +148,9 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
     ///      Preview does NOT account for Aster queue state: if `IYieldProxy.activitiesOnGoing()==true`
     ///      execution returns 0 and reverts `AsBnbMintQueued` (retry liveness) while preview still quotes the
     ///      view rate (100% delta, fail-closed).
-    ///      Apply 50 bps conservative headroom so a verbatim `previewDeposit` as `minSharesOut`
-    ///      cannot revert on ≤2 wei floor rounding or inter-block drift. The 9950/10000 bound is
-    ///      generic across adapters and dominates the bounded error. Callers should still handle
+    ///      Apply the shared 50 bps conservative headroom (PREVIEW_HEADROOM_* on SYBaseUpgradeable) so a
+    ///      verbatim `previewDeposit` as `minSharesOut` cannot revert on ≤2 wei floor rounding or
+    ///      inter-block drift; the bound dominates the bounded error. Callers should still handle
     ///      `AsBnbMintQueued` retry.
     function _previewDeposit(address tokenIn, uint256 amountTokenToDeposit) internal view override returns (uint256) {
         address _minter = asBnbMinter();
@@ -158,13 +158,13 @@ contract OutrunAsBNBSYUpgradeable layout at erc7201("outrun.storage.OutrunAsBNBS
             // Preview mirrors the live path: BNB -> slisBNB -> asBNB.
             uint256 slisBnbAmount = IListaStakeManager(stakeManager()).convertBnbToSnBnb(amountTokenToDeposit);
             uint256 raw = IAsBnbMinter(_minter).convertToAsBnb(slisBnbAmount);
-            if (raw != 0) raw = raw * 9950 / 10000;
+            raw = raw * PREVIEW_HEADROOM_NUMERATOR / PREVIEW_HEADROOM_DENOMINATOR;
             return raw;
         }
         // slisBNB deposits convert through the Aster minter; asBNB deposits stay 1:1.
         if (tokenIn == slisBnb()) {
             uint256 raw = IAsBnbMinter(_minter).convertToAsBnb(amountTokenToDeposit);
-            if (raw != 0) raw = raw * 9950 / 10000;
+            raw = raw * PREVIEW_HEADROOM_NUMERATOR / PREVIEW_HEADROOM_DENOMINATOR;
             return raw;
         }
         return amountTokenToDeposit;

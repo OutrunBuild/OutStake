@@ -106,10 +106,10 @@ contract OutrunWstETHSYUpgradeable layout at erc7201("outrun.storage.OutrunWstET
             // Native deposits now stake via WstETH.receive() which is also a single
             // getSharesByPooledEth (WstETH.receive -> stETH.submit -> _mint), so the raw quote
             // matches the executed _deposit exactly at the same block (both single floor).
-            // Same 50 bps conservative-headroom rationale as OutrunAsBNBSYUpgradeable._previewDeposit,
-            // applied to NATIVE only. stETH preview stays exact at the same block because wrap == getSharesByPooledEth.
+            // NATIVE applies the shared 50 bps conservative headroom (PREVIEW_HEADROOM_* on SYBaseUpgradeable);
+            // stETH preview stays exact at the same block because wrap == getSharesByPooledEth.
             uint256 raw = IStETH(_stETH).getSharesByPooledEth(amountTokenToDeposit);
-            if (tokenIn == NATIVE && raw != 0) raw = raw * 9950 / 10000;
+            if (tokenIn == NATIVE) raw = raw * PREVIEW_HEADROOM_NUMERATOR / PREVIEW_HEADROOM_DENOMINATOR;
             amountSharesOut = raw;
         } else {
             // Existing wstETH is already the yield-bearing share token.
