@@ -83,6 +83,8 @@
       "^lib/forge-std$",
       "^lib/layerzerolabs/devtools$",
       "^lib/layerzerolabs/lz-evm-protocol-v2$",
+      "^lib/layerzerolabs/oapp-evm(/.*)?$",
+      "^lib/layerzerolabs/oft-evm(/.*)?$",
       "^lib/openzeppelin-contracts-upgradeable$",
       "^lib/solidity-bytes-utils$",
       "^lib/solmate$",
@@ -108,7 +110,8 @@
       "tests": [
         "test/upgradeable/OutrunOFTUpgradeable.t.sol",
         "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
-        "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol"
+        "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol",
+        "test/upgradeable/OutrunUniversalAssetsStorageLayout.t.sol"
       ],
       "rules": [
         {
@@ -120,12 +123,14 @@
             "test/upgradeable/OutrunOFTUpgradeable.t.sol",
             "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
             "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol",
+            "test/upgradeable/OutrunUniversalAssetsStorageLayout.t.sol",
             "test/psm/OutrunPSM.t.sol"
           ],
           "evidence_tests": [
             "test/upgradeable/OutrunOFTUpgradeable.t.sol",
             "test/upgradeable/OutrunRateLimiterStorageLayout.t.sol",
-            "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol"
+            "test/upgradeable/OutrunUniversalAssetsUpgradeable.t.sol",
+            "test/upgradeable/OutrunUniversalAssetsStorageLayout.t.sol"
           ]
         }
       ]
@@ -158,7 +163,8 @@
     },
     "psm": {
       "tests": [
-        "test/psm/OutrunPSM.t.sol"
+        "test/psm/OutrunPSM.t.sol",
+        "test/upgradeable/OutrunPSMStorageLayout.t.sol"
       ],
       "rules": [
         {
@@ -167,10 +173,12 @@
             "^src/psm/.*\\.sol$"
           ],
           "change_tests": [
-            "test/psm/OutrunPSM.t.sol"
+            "test/psm/OutrunPSM.t.sol",
+            "test/upgradeable/OutrunPSMStorageLayout.t.sol"
           ],
           "evidence_tests": [
-            "test/psm/OutrunPSM.t.sol"
+            "test/psm/OutrunPSM.t.sol",
+            "test/upgradeable/OutrunPSMStorageLayout.t.sol"
           ]
         }
       ]
@@ -329,7 +337,8 @@
     },
     "usr": {
       "tests": [
-        "test/usr/OutrunUSRVault.t.sol"
+        "test/usr/OutrunUSRVault.t.sol",
+        "test/upgradeable/OutrunUSRVaultStorageLayout.t.sol"
       ],
       "rules": [
         {
@@ -338,10 +347,12 @@
             "^src/usr/.*\\.sol$"
           ],
           "change_tests": [
-            "test/usr/OutrunUSRVault.t.sol"
+            "test/usr/OutrunUSRVault.t.sol",
+            "test/upgradeable/OutrunUSRVaultStorageLayout.t.sol"
           ],
           "evidence_tests": [
-            "test/usr/OutrunUSRVault.t.sol"
+            "test/usr/OutrunUSRVault.t.sol",
+            "test/upgradeable/OutrunUSRVaultStorageLayout.t.sol"
           ]
         }
       ]

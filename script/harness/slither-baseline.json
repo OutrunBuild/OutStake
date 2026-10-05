@@ -1,7 +1,7 @@
 {
   "version": 1,
   "tool": "slither",
-  "generated_at": "2026-09-13",
+  "generated_at": "2026-10-05",
   "target": "src",
   "findings": [
     {
@@ -9,7 +9,7 @@
       "check": "arbitrary-send-eth",
       "impact": "High",
       "confidence": "Medium",
-      "location": "src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol#L86-L121",
+      "location": "src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol#L86-L122",
       "summary": "OutrunAsBNBSYUpgradeable._deposit(address,uint256) sends eth to arbitrary user",
       "key": "arbitrary-send-eth|src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol|OutrunAsBNBSYUpgradeable._deposit(address,uint256) sends eth to arbitrary user"
     },
@@ -50,29 +50,29 @@
       "key": "assembly|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|OutrunRateLimiterUpgradeable._getOutrunRateLimiterStorage() uses assembly"
     },
     {
-      "id": "eeb19de7f1820c31ae55820435be3525b0ec3f2078c397b21b0891662e40ddcb",
+      "id": "05fd734a8d250979d84fd6daf70f960ba3bb1e304749c03a040a35187aed5e7f",
       "check": "assembly",
       "impact": "Informational",
       "confidence": "High",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L727-L758",
       "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses assembly",
       "key": "assembly|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses assembly"
     },
     {
-      "id": "ba62f8d6808b6d3be9683e1b2086c89bfda966eb8abcdbc9c06d65b59bfa629a",
+      "id": "a491283ae34b9d518b78d70fabb18e4936c20bd23b560375bfaa11aa83972afe",
       "check": "assembly",
       "impact": "Informational",
       "confidence": "High",
-      "location": "src/yield/OutrunL2OracleBackedSYUpgradeable.sol#L69-L73",
+      "location": "src/yield/OutrunL2OracleBackedSYUpgradeable.sol#L70-L74",
       "summary": "OutrunL2OracleBackedSYUpgradeable._getOutrunL2OracleBackedSYStorage() uses assembly",
       "key": "assembly|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|OutrunL2OracleBackedSYUpgradeable._getOutrunL2OracleBackedSYStorage() uses assembly"
     },
     {
-      "id": "e0804a3d53379afda9d6b9465783b30c11ad37391d2b63df8bbfc864ff399811",
+      "id": "2d9874228e74877122b36e73458baec0272b513382dd8a6b5322274bf9e32318",
       "check": "assembly",
       "impact": "Informational",
       "confidence": "High",
-      "location": "src/yield/SYBaseUpgradeable.sol#L101-L105",
+      "location": "src/yield/SYBaseUpgradeable.sol#L109-L113",
       "summary": "SYBaseUpgradeable._getSYBaseStorage() uses assembly",
       "key": "assembly|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable._getSYBaseStorage() uses assembly"
     },
@@ -81,7 +81,7 @@
       "check": "dead-code",
       "impact": "Informational",
       "confidence": "Medium",
-      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L199-L201",
+      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L207-L209",
       "summary": "OutrunUSRVaultUpgradeable._deposit(address,address,uint256,uint256) is never used and should be removed",
       "key": "dead-code|src/usr/OutrunUSRVaultUpgradeable.sol|OutrunUSRVaultUpgradeable._deposit(address,address,uint256,uint256) is never used and should be removed"
     },
@@ -90,52 +90,52 @@
       "check": "dead-code",
       "impact": "Informational",
       "confidence": "Medium",
-      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L205-L211",
+      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L213-L219",
       "summary": "OutrunUSRVaultUpgradeable._withdraw(address,address,address,uint256,uint256) is never used and should be removed",
       "key": "dead-code|src/usr/OutrunUSRVaultUpgradeable.sol|OutrunUSRVaultUpgradeable._withdraw(address,address,address,uint256,uint256) is never used and should be removed"
     },
     {
-      "id": "9ae748861a1c31b79bda03dea9ff44f9145fbf258db023e7d0f8fe48a667bc62",
+      "id": "6c0b6358562f35ebaec37c52fa5f3591434530c324c76fe8ad9f29116f453e32",
       "check": "divide-before-multiply",
       "impact": "Medium",
       "confidence": "Medium",
-      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L198-L202",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L197-L201",
       "summary": "OutrunOFTUpgradeable._removeDust(uint256) performs a multiplication on the result of a division:",
       "key": "divide-before-multiply|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._removeDust(uint256) performs a multiplication on the result of a division:"
     },
     {
-      "id": "759191b6803ca57d57f41a00d03a68267553d3d6e9c0b74bc444964505ceabfd",
+      "id": "1c0788e5ba7ac640b182217bc75d35f688f380e70d819d227f98ecf32d6834fe",
       "check": "divide-before-multiply",
       "impact": "Medium",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L727-L758",
       "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) performs a multiplication on the result of a division:",
       "key": "divide-before-multiply|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) performs a multiplication on the result of a division:"
     },
     {
-      "id": "1117a376c50756c930ec7b3f6f8d74d8b390013ef89b54c98da10bf290c1dcac",
+      "id": "2e2a60e4e9c57158e3967ad60ef566a7d185348113b05ce930a06349fc13d5cc",
       "check": "incorrect-equality",
       "impact": "Medium",
       "confidence": "High",
-      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L157-L172",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L156-L171",
       "summary": "OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses a dangerous strict equality:",
       "key": "incorrect-equality|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses a dangerous strict equality:"
     },
     {
-      "id": "961fd1afc7fbc0e07ae2e3c2437bb2a3f590e03ccc3219a5b725cc610f0c387b",
+      "id": "490ab68c933df5014d030529b8852be0a73c6ef7e10559afe80a63f11e7345be",
       "check": "incorrect-equality",
       "impact": "Medium",
       "confidence": "High",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L604-L612",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L610-L618",
       "summary": "OutrunStakingPositionUpgradeable._currentExchangeRate(address) uses a dangerous strict equality:",
       "key": "incorrect-equality|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._currentExchangeRate(address) uses a dangerous strict equality:"
     },
     {
-      "id": "42458bde7e86cdcb1338627762ef8e4e1312156f86fa341c2fb2145843910999",
+      "id": "3de9d309a5d239afd56b7e08ed28634bf2a0285b62b71f78b251f6f6348650b2",
       "check": "incorrect-equality",
       "impact": "Medium",
       "confidence": "High",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L727-L758",
       "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a dangerous strict equality:",
       "key": "incorrect-equality|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a dangerous strict equality:"
     },
@@ -149,29 +149,29 @@
       "key": "incorrect-equality|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.stakeForGenesis(uint256,address,uint256,uint256) uses a dangerous strict equality:"
     },
     {
-      "id": "d451a977d40dfc761cc0b3535ce78037f0d0d19def4d42c219b034bfc4027833",
+      "id": "aead0e27f8e7ea38e7b3d3e619c3737d5bf3f252946806f2a0b327a17ef6555f",
       "check": "incorrect-equality",
       "impact": "Medium",
       "confidence": "High",
-      "location": "src/psm/OutrunPSMUpgradeable.sol#L240-L254",
+      "location": "src/psm/OutrunPSMUpgradeable.sol#L248-L262",
       "summary": "OutrunPSMUpgradeable.sweepFees() uses a dangerous strict equality:",
       "key": "incorrect-equality|src/psm/OutrunPSMUpgradeable.sol|OutrunPSMUpgradeable.sweepFees() uses a dangerous strict equality:"
     },
     {
-      "id": "9e55b9f8655743bf3d51d137b6d64fe571b9d63475a5b278039cae077389c416",
+      "id": "971bb1c41fb43db538c5351273ae0f7b994a47f1c835f07c7ec417cf9677edc6",
       "check": "incorrect-equality",
       "impact": "Medium",
       "confidence": "High",
-      "location": "src/router/OutrunRouter.sol#L359-L364",
+      "location": "src/router/OutrunRouter.sol#L360-L365",
       "summary": "OutrunRouter._approveExact(address,address,uint256) uses a dangerous strict equality:",
       "key": "incorrect-equality|src/router/OutrunRouter.sol|OutrunRouter._approveExact(address,address,uint256) uses a dangerous strict equality:"
     },
     {
-      "id": "0bfae930ed9cd829b24d0535e1f7f24602d20d808cf5ce0aa4d0fe217a65fe9d",
+      "id": "3d90d7a4c6b4804d61586e8e0489691fde270449347f78bfadb4fe6887153a52",
       "check": "incorrect-equality",
       "impact": "Medium",
       "confidence": "High",
-      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L290-L309",
+      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L298-L317",
       "summary": "OutrunUSRVaultUpgradeable._factorPow(uint256,uint256) uses a dangerous strict equality:",
       "key": "incorrect-equality|src/usr/OutrunUSRVaultUpgradeable.sol|OutrunUSRVaultUpgradeable._factorPow(uint256,uint256) uses a dangerous strict equality:"
     },
@@ -185,67 +185,67 @@
       "key": "low-level-calls|src/yield/adapters/lido/OutrunWstETHSYUpgradeable.sol|Low level call in OutrunWstETHSYUpgradeable._deposit(address,uint256):"
     },
     {
-      "id": "0bfd58595035e9232371744a58f0ccef6f1edc17cd7e7684d484e86227033c2f",
+      "id": "6075e1566317ea9369d24ce840fe686806734e4e14a84e894e25411119ddad3a",
       "check": "reentrancy-balance",
       "impact": "High",
       "confidence": "Medium",
-      "location": "src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol#L86-L121",
+      "location": "src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol#L86-L122",
       "summary": "Reentrancy in OutrunAsBNBSYUpgradeable._deposit(address,uint256):",
       "key": "reentrancy-balance|src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol|Reentrancy in OutrunAsBNBSYUpgradeable._deposit(address,uint256):"
     },
     {
-      "id": "4b9f1b1991495e5745352d10b968d519ddbb41a95ee0c4c13ec23cb96cd36f4e",
+      "id": "3fc9da4e3f6193cc01caea20ef702493032966f759fe07583b68b32ef6b8945d",
       "check": "reentrancy-balance",
       "impact": "High",
       "confidence": "Medium",
-      "location": "src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol#L101-L121",
+      "location": "src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol#L110-L130",
       "summary": "Reentrancy in OutrunL2StakedUsdsSYUpgradeable._deposit(address,uint256):",
       "key": "reentrancy-balance|src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol|Reentrancy in OutrunL2StakedUsdsSYUpgradeable._deposit(address,uint256):"
     },
     {
-      "id": "7571d49356808ae9ad536b2b768aefc8f8ebdcf566ed0240974cd4529a86d85b",
+      "id": "57472747e1f2787cd362c065b7ed9d57b233a77115f3bc38fd848e6468524aef",
       "check": "reentrancy-no-eth",
       "impact": "Medium",
       "confidence": "Medium",
-      "location": "src/psm/OutrunPSMUpgradeable.sol#L194-L225",
+      "location": "src/psm/OutrunPSMUpgradeable.sol#L202-L233",
       "summary": "Reentrancy in OutrunPSMUpgradeable.redeem(address,uint256):",
       "key": "reentrancy-no-eth|src/psm/OutrunPSMUpgradeable.sol|Reentrancy in OutrunPSMUpgradeable.redeem(address,uint256):"
+    },
+    {
+      "id": "04ba127ec8c572a5d2fe21f4f0d277cad883538b734ccf51cee5ad74fa3a3d64",
+      "check": "shadowing-local",
+      "impact": "Low",
+      "confidence": "High",
+      "location": "src/router/interfaces/IOutrunRouter.sol#L289",
+      "summary": "IOutrunRouter.setMemeverseLauncher(address).memeverseLauncher shadows:",
+      "key": "shadowing-local|src/router/interfaces/IOutrunRouter.sol|IOutrunRouter.setMemeverseLauncher(address).memeverseLauncher shadows:"
     },
     {
       "id": "820a5cad3d58a781a9e5d3b20b23e397fad4fd24ce1e94b197080fcbc340e32a",
       "check": "shadowing-local",
       "impact": "Low",
       "confidence": "High",
-      "location": "src/router/interfaces/IOutrunRouter.sol#L288",
+      "location": "src/router/interfaces/IOutrunRouter.sol#L294",
       "summary": "IOutrunRouter.setPolend(address).polend shadows:",
       "key": "shadowing-local|src/router/interfaces/IOutrunRouter.sol|IOutrunRouter.setPolend(address).polend shadows:"
     },
     {
-      "id": "ba9c0bb87bb24a335a28c806a8312c1cb7bbdd3f93b67a458c8d7e253492084e",
+      "id": "a084a443e32fd6a444ea200689e5084f5bf933b9c2f7ac8834aae485456d8aa6",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L157-L172",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L212-L222",
+      "summary": "OutrunOFTUpgradeable._cappedSendableLD(OutrunRateLimiterUpgradeable.RateLimit) uses timestamp for comparisons",
+      "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._cappedSendableLD(OutrunRateLimiterUpgradeable.RateLimit) uses timestamp for comparisons"
+    },
+    {
+      "id": "1b0fc25327203341805641042cf3e23b86477a85dec5e624595e0d8d6324feb0",
+      "check": "timestamp",
+      "impact": "Low",
+      "confidence": "Medium",
+      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L156-L171",
       "summary": "OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses timestamp for comparisons",
       "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._debit(address,uint256,uint256,uint32) uses timestamp for comparisons"
-    },
-    {
-      "id": "772e0f306cb36b76d8af0825cbf9f07c6c7e329f4ed3da644d616c89fa4d0718",
-      "check": "timestamp",
-      "impact": "Low",
-      "confidence": "Medium",
-      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L207-L213",
-      "summary": "OutrunOFTUpgradeable._maxQuoteAmountLD(uint32) uses timestamp for comparisons",
-      "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable._maxQuoteAmountLD(uint32) uses timestamp for comparisons"
-    },
-    {
-      "id": "c160bea298c72c9def9ce30610792c8e2ef44a53fe4a7ba592cdcda5570db35f",
-      "check": "timestamp",
-      "impact": "Low",
-      "confidence": "Medium",
-      "location": "src/assets/omnichain/OutrunOFTUpgradeable.sol#L81-L96",
-      "summary": "OutrunOFTUpgradeable.getAmountCanBeSent(uint32) uses timestamp for comparisons",
-      "key": "timestamp|src/assets/omnichain/OutrunOFTUpgradeable.sol|OutrunOFTUpgradeable.getAmountCanBeSent(uint32) uses timestamp for comparisons"
     },
     {
       "id": "d24ef1db0170a0081ccfc5400c89e909d5bb18850b94b0a640e5c0beefa93ad8",
@@ -266,38 +266,38 @@
       "key": "timestamp|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|OutrunRateLimiterUpgradeable._checkAndUpdateRateLimit(OutrunRateLimiterUpgradeable.RateLimit,uint256) uses timestamp for comparisons"
     },
     {
-      "id": "77e21636884ce9964713be1e0ec6882efb1befe4a64aed22d5e8de0b0d79dcb8",
+      "id": "14a408d15d16715eb8e7b2c5dcfbcdc3ea1c8e8c96e8dc098a1c6addc1c17e43",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L604-L612",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L610-L618",
       "summary": "OutrunStakingPositionUpgradeable._currentExchangeRate(address) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._currentExchangeRate(address) uses timestamp for comparisons"
     },
     {
-      "id": "a1686a9ab452660632dfd0c0567ba44f5020f6b5c0382afdb64e93d1acbd1cb5",
+      "id": "25c3d1b980a7ed69fa48be941dcdac55b9c171ac5ff1b7c2198b485884214555",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L727-L758",
       "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses timestamp for comparisons"
     },
     {
-      "id": "7aeb344cbb66e30475770494dd47785b1b74cdba6e7b3d89ce3e62ce98d3c8c8",
+      "id": "73578c828d70e2ef0ad4a4689ba20623fb454d2c022745a5c9acada91c3e99a0",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L498-L506",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L499-L512",
       "summary": "OutrunStakingPositionUpgradeable._settleRateToNow() uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._settleRateToNow() uses timestamp for comparisons"
     },
     {
-      "id": "ef7bf6a3b42a80d9c155b5d8fc43e68d49344bd43fab7c57002a7e955ae93c94",
+      "id": "8db5f2f192a5fcf5ad582efb45cd00b30f2ffd501ec0b2373bf0acbd0e0d84d1",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L643-L646",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L649-L652",
       "summary": "OutrunStakingPositionUpgradeable._validateMinStake(uint256) uses timestamp for comparisons",
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._validateMinStake(uint256) uses timestamp for comparisons"
     },
@@ -311,29 +311,29 @@
       "key": "timestamp|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.stakeForGenesis(uint256,address,uint256,uint256) uses timestamp for comparisons"
     },
     {
-      "id": "a004d867c7681bb3502be0e5a7ec9cbb95bddbe5785a6247471be71eb62a6892",
+      "id": "0c77499c52e87293f7577c749a73e1d08a1241527c917123f321b9df048139b8",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L290-L309",
+      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L298-L317",
       "summary": "OutrunUSRVaultUpgradeable._factorPow(uint256,uint256) uses timestamp for comparisons",
       "key": "timestamp|src/usr/OutrunUSRVaultUpgradeable.sol|OutrunUSRVaultUpgradeable._factorPow(uint256,uint256) uses timestamp for comparisons"
     },
     {
-      "id": "f0d04d25d8710cca84a2cf29e5badb5a9f8e04ab68dfaf102e4d2e5494417a97",
+      "id": "5679c426eee53780f6535cb35ac4f2f95f44b2bde6fa6212621ed33fae27b029",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L237-L252",
+      "location": "src/usr/OutrunUSRVaultUpgradeable.sol#L245-L260",
       "summary": "OutrunUSRVaultUpgradeable._settleIndex() uses timestamp for comparisons",
       "key": "timestamp|src/usr/OutrunUSRVaultUpgradeable.sol|OutrunUSRVaultUpgradeable._settleIndex() uses timestamp for comparisons"
     },
     {
-      "id": "f137830ff2959209c580b12693ccd9840223550b5aaf4ade65806ad083563337",
+      "id": "6fd27735d42d7b819e83b2277fd117236e831eb3089f941cf4bcae9cb74711dc",
       "check": "timestamp",
       "impact": "Low",
       "confidence": "Medium",
-      "location": "src/yield/OutrunL2OracleBackedSYUpgradeable.sol#L257-L277",
+      "location": "src/yield/OutrunL2OracleBackedSYUpgradeable.sol#L266-L286",
       "summary": "OutrunL2OracleBackedSYUpgradeable._checkRateWithinBand(uint256) uses timestamp for comparisons",
       "key": "timestamp|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|OutrunL2OracleBackedSYUpgradeable._checkRateWithinBand(uint256) uses timestamp for comparisons"
     },
@@ -342,16 +342,16 @@
       "check": "uninitialized-local",
       "impact": "Medium",
       "confidence": "Medium",
-      "location": "src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol#L158",
+      "location": "src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol#L167",
       "summary": "OutrunL2StakedUsdsSYUpgradeable.exchangeRate().rate is a local variable never initialized",
       "key": "uninitialized-local|src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol|OutrunL2StakedUsdsSYUpgradeable.exchangeRate().rate is a local variable never initialized"
     },
     {
-      "id": "6ad681e103fefeba7fd953c64654651236ada664cb016a396fc7f619472a9875",
+      "id": "7f54bae6f278f596edf4e57a0fd7dc5d24898447f42faa4f1063f07df6e738f7",
       "check": "unused-return",
       "impact": "Medium",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L570-L579",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L576-L585",
       "summary": "OutrunStakingPositionUpgradeable._authorizeUpgrade(address) ignores return value by (None,None,liveCanonical) = IStandardizedYield($.SY).assetInfo()",
       "key": "unused-return|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._authorizeUpgrade(address) ignores return value by (None,None,liveCanonical) = IStandardizedYield($.SY).assetInfo()"
     },
@@ -365,34 +365,133 @@
       "key": "unused-return|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable.initialize(address,address,address,address,uint256,uint256) ignores return value by (None,None,canonicalAssetDecimals) = IStandardizedYield(sy_).assetInfo()"
     },
     {
-      "id": "c61f2374e2f8dab9d008fb61471ac4f2184479882c59de9c02cff400401bd6ce",
+      "id": "84100761b667a7d241aff796a3f361918e42bce51b7bad282e35bf053bb1b990",
       "check": "unused-return",
       "impact": "Medium",
       "confidence": "Medium",
-      "location": "src/router/OutrunRouter.sol#L338-L349",
+      "location": "src/router/OutrunRouter.sol#L339-L350",
       "summary": "OutrunRouter._forwardGenesisToSP(address,address,uint256,address,uint256,uint256) ignores return value by IOutrunStakeManager(SP).stakeForGenesis(amountInSY,genesisUser,verseId,minUAssetMinted)",
       "key": "unused-return|src/router/OutrunRouter.sol|OutrunRouter._forwardGenesisToSP(address,address,uint256,address,uint256,uint256) ignores return value by IOutrunStakeManager(SP).stakeForGenesis(amountInSY,genesisUser,verseId,minUAssetMinted)"
     },
     {
-      "id": "146cbc0a302edc0d4c2eb8be077a61a5609c183105917470a913a231bb16c3ed",
+      "id": "ebabe07e0a840c70faffdf981c2f727067f17200a0f61c638cd0eb595f883a64",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L39",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunAaveV3SYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunAaveV3SYUpgradeable"
+    },
+    {
+      "id": "04861c308f1b86c6fcd11dcceb333cb1567db27c54b1648dc556500193fae17e",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L39",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunL2StakedTokenSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunL2StakedTokenSYUpgradeable"
+    },
+    {
+      "id": "3a356df313192f2ea3e291cf8a1f1068f73c30f154ce3823ebdd64b3f17c2e34",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L39",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunL2StakedUsdsSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunL2StakedUsdsSYUpgradeable"
+    },
+    {
+      "id": "018ec02a04abbf40a0e52db14c46e08f937f6c7bfbe643ba4ffdecfe75eda198",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L39",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunL2WstETHSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunL2WstETHSYUpgradeable"
+    },
+    {
+      "id": "e46b3330f24d6b056597d71941385ba8de6706ee1d3c2105cdac539654b93f5e",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L39",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunStakedUSDeSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunStakedUSDeSYUpgradeable"
+    },
+    {
+      "id": "e22b43cbf0323660311de46608079a82bf60e68147a05188c1b5e97bf9d5938c",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L39",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunStakedUsdsSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_DENOMINATOR is never used in OutrunStakedUsdsSYUpgradeable"
+    },
+    {
+      "id": "013e5f80d1ccb0f8633c41adf53a2f2feea5900934cb966c918487bdb5f25730",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L38",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunAaveV3SYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunAaveV3SYUpgradeable"
+    },
+    {
+      "id": "45729f4eec0bd578c56c0a0b88f5f8425b1c86e82e09e52e2699d7f7b25cd598",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L38",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunL2StakedTokenSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunL2StakedTokenSYUpgradeable"
+    },
+    {
+      "id": "4190b1965a96d4dfb55bca9fa62218d5dda761dc782f6b3bbfbd0df0c6166ece",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L38",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunL2StakedUsdsSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunL2StakedUsdsSYUpgradeable"
+    },
+    {
+      "id": "65bd9e53c86aee3c6b5e7a50c3864e88a3a31be2f67d11c4bb3ad8c5f6ade78c",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L38",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunL2WstETHSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunL2WstETHSYUpgradeable"
+    },
+    {
+      "id": "3511c10f5609e8620106253b232e5e6b76535ab6345d14284e7a3cbfb199b67b",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L38",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunStakedUSDeSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunStakedUSDeSYUpgradeable"
+    },
+    {
+      "id": "ac4747bce78cd89f7f930384217e2b638f281c819733ab22a44265eb86c72730",
+      "check": "unused-state",
+      "impact": "Informational",
+      "confidence": "High",
+      "location": "src/yield/SYBaseUpgradeable.sol#L38",
+      "summary": "SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunStakedUsdsSYUpgradeable",
+      "key": "unused-state|src/yield/SYBaseUpgradeable.sol|SYBaseUpgradeable.PREVIEW_HEADROOM_NUMERATOR is never used in OutrunStakedUsdsSYUpgradeable"
+    },
+    {
+      "id": "4f0c4bac34945e4c787c020c80886e2d69de7c8e8cf9d8230d70ce4e30b506f3",
       "check": "weak-prng",
       "impact": "High",
       "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
+      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L727-L758",
       "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"n % 2\" ",
       "key": "weak-prng|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"n % 2\" "
     },
     {
-      "id": "e0dac62e9829be1f99d821917130ddc86c5d008a360f5cb8c550d40c5cba9dc4",
-      "check": "weak-prng",
-      "impact": "High",
-      "confidence": "Medium",
-      "location": "src/position/OutrunStakingPositionUpgradeable.sol#L721-L752",
-      "summary": "OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"switch_expr_41716_112_91__rpow_asm_0 = n % 2\" ",
-      "key": "weak-prng|src/position/OutrunStakingPositionUpgradeable.sol|OutrunStakingPositionUpgradeable._rpow(uint256,uint256) uses a weak PRNG: \"switch_expr_41716_112_91__rpow_asm_0 = n % 2\" "
-    },
-    {
-      "id": "200eea4965a73d5b183431dbac409b5fe2f570912178097efb7ec844fecfe819",
+      "id": "5b0da89d8d757d604df1d73d175a4b4093531ab69d9eb726b6a866588357b090",
       "check": "weak-prng",
       "impact": "High",
       "confidence": "Medium",

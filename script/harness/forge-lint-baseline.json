@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_at": "2026-09-12T13:48:26Z",
-  "finding_count": 78,
+  "finding_count": 80,
   "notes": "Snapshot of forge-lint findings accepted under this repo's verified conventions (formerly the foundry.toml exclude_lints list): naming-style rules (mixed-case variable/function, screaming-snake immutable, pascal-case struct, interface naming/file-naming), block-timestamp, reentrancy-events (CEI trailing emits), unused-return (multi-return oracle destructures), non-reentrant-not-first, literal-instead-of-constant, inline-assembly, low-level-calls, internal-function-used-once, unwrapped-modifier-logic — patterns that misfire on verified codebase conventions. Detectors run at severity high/med/low. Any NEW finding beyond this set fails the gate and the wrapped build. Former inline `// forge-lint: disable-next-line(...)` directives were removed and their sites absorbed here after per-site review (arbitrary-send-eth ×6: exact-value native deposits to trusted configured adapters or the caller's own recipient; unsafe-typecast ×5: bounds argued in adjacent comments; missing-events ×5: accounting aggregates announced by function-level events; plus divide-before-multiply = LayerZero dust-removal formula, sequencer-feed zero sentinel, zero-default loop/rate locals); the baseline is now the single suppression inventory. Regen intentionally re-snapshots: it is an explicit, git-reviewed acceptance decision. Regenerate: bash script/harness/forge-lint-baseline.sh regen",
   "findings": [
     {
@@ -177,6 +177,12 @@
     },
     {
       "key": "reentrancy-events|src/yield/SYBaseUpgradeable.sol|de913cd5d725d067"
+    },
+    {
+      "key": "reentrancy-events|src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol|7515e5d4fd405770"
+    },
+    {
+      "key": "reentrancy-events|src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol|bb60d0e2e576fc10"
     },
     {
       "key": "require-revert-in-loop|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|96d2a3f9143c4f84"
