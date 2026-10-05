@@ -76,8 +76,8 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         vm.prank(owner);
         position.setGenesisLauncher(address(genesisLauncher));
         // The SP mints through its own record; the test contract's record funds interest coverage.
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         // Genesis segment: the cumulative rate starts at RAY (1e27) at the init timestamp.
         _seedGenesisSegment(warpAt, DUTY);
     }
@@ -833,7 +833,7 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         );
         vm.prank(owner);
         zeroFeePosition.setGenesisLauncher(address(genesisLauncher));
-        uAsset.setMintingCap(address(zeroFeePosition), type(uint256).max);
+        uAsset.setMintingCap(address(zeroFeePosition), type(uint128).max);
 
         sy.mintShares(user, 10e18);
         vm.startPrank(user);
@@ -1185,9 +1185,9 @@ contract OutrunStakingPositionPauseMatrixTest is CommonTestHelpers {
             )
         );
         vm.startPrank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
         // The test's own record funds interest coverage on the real uAsset.
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         vm.stopPrank();
         pauseLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);

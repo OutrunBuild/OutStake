@@ -1441,7 +1441,7 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         uint256 positionId
     ) internal {
         vm.prank(owner);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         uAsset.mint(user, AMOUNT);
         vm.startPrank(user);
         uAsset.approve(address(position), type(uint256).max);
@@ -1473,7 +1473,7 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
             )
         );
         vm.prank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
         MockGenesisLauncher launcher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
         position.setGenesisLauncher(address(launcher));

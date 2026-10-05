@@ -55,7 +55,7 @@ contract RouterEndToEndConservationUpgradeableTest is Test {
         // The test contract deployed the mock uAsset, so it holds its owner-only admin seat.
         uAsset.setMintingCap(address(position), MINT_CAP);
         // The test's own record funds repay-leg cover below (mock mint draws on the caller's record).
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
 
         token.mint(user, 1e24);
         sy.mintShares(user, 1e24);

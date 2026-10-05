@@ -153,7 +153,7 @@ contract L2OracleBackedInitTest is UAssetHelper {
             )
         );
         vm.prank(owner);
-        uAsset.setMintingCap(address(pos), type(uint256).max);
+        uAsset.setMintingCap(address(pos), type(uint128).max);
         return pos;
     }
 

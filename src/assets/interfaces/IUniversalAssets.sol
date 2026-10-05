@@ -11,11 +11,16 @@ interface IUniversalAssets {
     /**
      * @notice Minting state for one minter address.
      * @dev `mintingCap` is the minter's configured ceiling; `amountInMinted` is that minter's outstanding
-     * debt after mints minus repayments. The table is not a global debt pool.
+     * debt after mints minus repayments. The table is not a global debt pool. This struct is the persisted
+     * value type of `OutrunUniversalAssetsStorage.mintingStatusTable` (ERC-7201 namespace
+     * `outrun.storage.OutrunUniversalAssets`), so its field order and widths ARE the persisted layout:
+     * both fields share one packed value slot — `mintingCap` in the lower 128 bits and `amountInMinted`
+     * in the upper 128 bits. Order and widths are frozen — no reorder, no resize; new fields are only
+     * allowed as tail appends. The layout is pinned by test/upgradeable/OutrunUniversalAssetsStorageLayout.t.sol.
      */
     struct MintingStatus {
-        uint256 mintingCap;
-        uint256 amountInMinted;
+        uint128 mintingCap;
+        uint128 amountInMinted;
     }
 
     /**
@@ -29,7 +34,8 @@ interface IUniversalAssets {
     /**
      * @notice Sets the minting cap for a minter.
      * @dev Owner-controlled configuration. Updating the cap changes only future mint headroom; it does not
-     * rewrite `amountInMinted`.
+     * rewrite `amountInMinted`. The cap persists in a packed 128-bit field; values above `type(uint128).max`
+     * revert `MintingCapTooLarge`.
      * @param minter Address whose cap is updated.
      * @param mintingCap New minting cap assigned to the minter.
      */
@@ -167,6 +173,13 @@ interface IUniversalAssets {
      * @notice Thrown by {setMintingCap}, {revokeMinter}, {mint}, {repay}, {setReserveMinter}, {reserveMint}, or {reserveBurn} when a required address or amount is zero.
      */
     error ZeroInput();
+
+    /**
+     * @notice Thrown by {setMintingCap} when the requested cap exceeds the persisted packed field width.
+     * @dev `MintingStatus.mintingCap` is a `uint128` storage field; a larger configured value would not
+     *      persist losslessly, so the call reverts instead of truncating.
+     */
+    error MintingCapTooLarge();
 
     /**
      * @notice Thrown by {mint} or {transferMinterDebt} when the operation would exceed a minter's minting cap.

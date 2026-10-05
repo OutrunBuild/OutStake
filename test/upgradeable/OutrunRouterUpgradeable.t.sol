@@ -106,7 +106,7 @@ contract OutrunRouterTest is Test {
         router.setPsmForUAsset(address(uAsset), NATIVE, address(psmNative));
         vm.stopPrank();
 
-        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
         // Path B (face/value-parity CDP gate) is a thin forward into `SP.stakeForGenesis`, whose
         // post-condition and hand-off are SP-side: wire the same full-consumption mock launcher
         // as the SP's genesis target. The router's own launcher registry serves path A only.
@@ -831,7 +831,7 @@ contract OutrunRouterTest is Test {
     ///         genesis succeeds while the router still holds the dust, recoverable via sweep.
     function test_GenesisByPSMDustExcludedFromPostAssertion() external {
         uint256 dust = 123;
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         uAsset.mint(address(router), dust);
         uint256 amountIn = 5e18;
 

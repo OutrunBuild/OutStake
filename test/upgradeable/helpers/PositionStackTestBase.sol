@@ -60,7 +60,7 @@ contract PositionStackTestBase is CommonTestHelpers {
         );
 
         vm.prank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
 
         token.mint(user, 100e18);
     }

@@ -9,9 +9,11 @@ import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.
 /// @dev Single source for the reserve registry and its three entry points, mirroring
 ///      `OutrunUniversalAssetsUpgradeable` reserve semantics (owner-gated registry,
 ///      `NotReserveMinter` auth, `ZeroInput` validation, allowance branch on
-///      `reserveBurn` and `repay`, the reserve-minter destination guard on
-///      `transferMinterDebt`, and `ReserveMintUAsset`/`ReserveBurnUAsset` events), plus the
-///      mint-cap ledger (`mintingStatusTable`) and its six entry points.
+///      `reserveBurn` and `repay`, the `InvalidTransferParams` param and reserve-minter
+///      destination guards on `transferMinterDebt`, and `ReserveMintUAsset`/`ReserveBurnUAsset`/
+///      `SetReserveMinter` events), plus the mint-cap ledger (`mintingStatusTable`) and its six
+///      entry points, with `setMintingCap` mirroring the production packed-field `MintingCapTooLarge`
+///      domain guard.
 ///      `reserveMint`, `reserveBurn`, `mint` and `repay` call `_requireNotPaused()` so
 ///      pause-aware mocks can enforce the production `whenNotPaused` invariant
 ///      via a virtual hook; pause-unaware mocks inherit the no-op default.
@@ -74,7 +76,9 @@ abstract contract MockUAssetReserveBase is ERC20, IUniversalAssets {
 
     function setMintingCap(address minter, uint256 mintingCap) public virtual onlyOwner {
         require(minter != address(0), ZeroInput());
-        mintingStatusTable[minter].mintingCap = mintingCap;
+        // Mirrors the production domain guard: the cap persists in a packed uint128 field.
+        require(mintingCap <= type(uint128).max, MintingCapTooLarge());
+        mintingStatusTable[minter].mintingCap = uint128(mintingCap);
     }
 
     function revokeMinter(address minter) external virtual onlyOwner {
@@ -83,7 +87,8 @@ abstract contract MockUAssetReserveBase is ERC20, IUniversalAssets {
     }
 
     function transferMinterDebt(address from, address to, uint256 amount) external virtual onlyOwner {
-        require(from != address(0) && to != address(0) && from != to && amount != 0, ZeroInput());
+        // Param rejections mirror the production merged single require and its error.
+        require(from != address(0) && to != address(0) && from != to && amount != 0, InvalidTransferParams());
         // A reserve-minter destination would strand the debt: the reserve path never reads this ledger.
         require(!reserveMinters[to], InvalidTransferParams());
 
@@ -94,18 +99,19 @@ abstract contract MockUAssetReserveBase is ERC20, IUniversalAssets {
         require(toStatus.mintingCap >= toStatus.amountInMinted, ReachMintCap());
         require(amount <= toStatus.mintingCap - toStatus.amountInMinted, ReachMintCap());
 
-        fromStatus.amountInMinted -= amount;
-        toStatus.amountInMinted += amount;
+        fromStatus.amountInMinted -= uint128(amount);
+        toStatus.amountInMinted += uint128(amount);
     }
 
     function mint(address receiver, uint256 amount) external virtual {
         _requireNotPaused();
+        require(amount != 0 && receiver != address(0), ZeroInput());
         MintingStatus storage status = mintingStatusTable[msg.sender];
         require(
             status.mintingCap >= status.amountInMinted && amount <= status.mintingCap - status.amountInMinted,
             ReachMintCap()
         );
-        status.amountInMinted += amount;
+        status.amountInMinted += uint128(amount);
         _mint(receiver, amount);
     }
 
@@ -115,7 +121,7 @@ abstract contract MockUAssetReserveBase is ERC20, IUniversalAssets {
         require(status.amountInMinted >= amount, ReachBurnCap());
         // Self-repay (account == msg.sender) spends no allowance, mirroring the production branch.
         if (account != msg.sender) _spendAllowance(account, msg.sender, amount);
-        status.amountInMinted -= amount;
+        status.amountInMinted -= uint128(amount);
         _afterRepay(account, amount);
         _burn(account, amount);
     }

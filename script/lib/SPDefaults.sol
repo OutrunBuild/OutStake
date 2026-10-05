@@ -21,6 +21,7 @@ library SPDefaults {
     error InvalidFamilyUAsset();
     error MismatchedFamilySY(address sy);
     error ExplicitZeroMintingCap();
+    error MintingCapTooLarge();
     error InvalidOwner();
     // Minting cap placeholder — env-overridable via SP_MINTING_CAP, governance must re-set before launch.
     // An explicitly set zero env value reverts instead of deploying an unusable cap.
@@ -120,13 +121,16 @@ library SPDefaults {
         return validatedMintingCap(vm.envUint("SP_MINTING_CAP"));
     }
 
-    /// @notice Rejects an explicitly configured zero minting cap, passes nonzero through.
-    /// @dev Pure guard split out of `spMintingCap` so the zero rejection is testable
+    /// @notice Rejects an explicitly configured zero or over-width minting cap, passes the rest through.
+    /// @dev Pure guard split out of `spMintingCap` so both rejections are testable
     /// without process env: a vm.setEnv write for SP_MINTING_CAP races concurrent
     /// suites reading the key on their default paths, so tests assert this guard
-    /// through an external harness call with an explicit value.
+    /// through an external harness call with an explicit value. The upper bound mirrors
+    /// the on-chain packed `uint128` cap field: an over-width config would revert at the
+    /// `setMintingCap` wiring call after the SP is already deployed, so fail closed before it.
     function validatedMintingCap(uint256 cap) internal pure returns (uint256) {
         if (cap == 0) revert ExplicitZeroMintingCap();
+        if (cap > type(uint128).max) revert MintingCapTooLarge();
         return cap;
     }
 

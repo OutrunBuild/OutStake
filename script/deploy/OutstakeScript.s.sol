@@ -837,13 +837,16 @@ contract OutstakeScript is BaseScript {
     /// @dev Env-read seam for the per-family initial POLend cap (<SYMBOL>_POLEND_MINTING_CAP,
     ///      else the family default); harness overrides inject it without env. An explicitly
     ///      set zero env value reverts fail-fast: a zero cap would register a minter that
-    ///      cannot mint (on-chain zero stays legal for post-deploy wind-down).
+    ///      cannot mint (on-chain zero stays legal for post-deploy wind-down). A cap above
+    ///      type(uint128).max reverts fail-fast too, mirroring the on-chain packed uint128
+    ///      cap field the wiring call would reject after deployment.
     ///      Cap-family form is an explicit boolean (isUBNB) rather than a string keccak branch.
     function _polendMintingCap(string memory symbol, bool isUBNB) internal view virtual returns (uint256) {
         string memory key = string.concat(symbol, "_POLEND_MINTING_CAP");
         if (!vm.envExists(key)) return _polendMintingCapDefault(isUBNB);
         uint256 cap = vm.envUint(key);
         if (cap == 0) revert SPDefaults.ExplicitZeroMintingCap();
+        if (cap > type(uint128).max) revert SPDefaults.MintingCapTooLarge();
         return cap;
     }
 

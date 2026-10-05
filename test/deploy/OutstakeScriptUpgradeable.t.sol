@@ -669,6 +669,25 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.exposedPolendMintingCap("ZZZ", false);
     }
 
+    /// @dev A cap above type(uint128).max would revert at the on-chain setMintingCap wiring
+    ///      call after the SP is already deployed; the pure guard (`SPDefaults.validatedMintingCap`)
+    ///      rejects it fail-fast pre-deploy instead, asserted through the same explicit-value
+    ///      harness seam as the zero rejection (no process-env write).
+    function test_RevertWhen_MintingCapAboveUint128Width() external {
+        vm.expectRevert(SPDefaults.MintingCapTooLarge.selector);
+        script.exposedValidatedMintingCap(uint256(type(uint128).max) + 1);
+    }
+
+    /// @dev Same over-width rejection on the per-family POLend env path, following the zero
+    ///      precedent's ZZZ symbol so the key collides with no family key (UETH/UBNB fall
+    ///      through to env, UUSD is injected and never reads env).
+    function test_RevertWhen_POLendMintingCapAboveUint128WidthEnv() external {
+        vm.setEnv("ZZZ_POLEND_MINTING_CAP", vm.toString(uint256(type(uint128).max) + 1));
+
+        vm.expectRevert(SPDefaults.MintingCapTooLarge.selector);
+        script.exposedPolendMintingCap("ZZZ", false);
+    }
+
     function testDeployOutrunDeployerMatchesAssertOutrunDeployer() external {
         uint256 nonce = 1;
 

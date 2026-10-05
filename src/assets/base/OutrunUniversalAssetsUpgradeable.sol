@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {IUniversalAssets} from "../interfaces/IUniversalAssets.sol";
 import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
@@ -37,6 +38,18 @@ contract OutrunUniversalAssetsUpgradeable
     UUPSUpgradeable
 {
     struct OutrunUniversalAssetsStorage {
+        // IMMUTABLE STORAGE LAYOUT: the contract-level layout at erc7201("outrun.storage.OutrunUniversalAssets")
+        // allocates this contract's own variables from the namespace base slot in declaration order, and this
+        // struct is the only own variable, so it sits at the base slot. Once deployed the layout below is
+        // contract:
+        //   ns+0 = mintingStatusTable mapping base (each minter's value slot keccak256(abi.encode(minter, ns+0));
+        //          the MintingStatus value is one packed slot — mintingCap in the lower 128 bits,
+        //          amountInMinted in the upper 128 bits; the value types are declared in IUniversalAssets.sol)
+        //   ns+1 = reserveMinters mapping base (each minter's bool value slot keccak256(abi.encode(minter, ns+1)))
+        // Field ORDER and count must never change (no reorder, no insertion before or between fields); new
+        // storage is only allowed as a tail append. Any drift silently misreads the minter debt ledger or
+        // forges reserve-minting authorization. The layout is pinned by raw-slot assertions in
+        // test/upgradeable/OutrunUniversalAssetsStorageLayout.t.sol.
         mapping(address minter => MintingStatus) mintingStatusTable;
         // Registered reserve minters (e.g., PSM instances) may mint/burn through the reserve path,
         // which never touches the debt ledger in the mapping above.
@@ -94,15 +107,18 @@ contract OutrunUniversalAssetsUpgradeable
     /// @dev The cap may be lowered below the minter's current amountInMinted: mint then reverts
     ///      ReachMintCap until repay reduces amountInMinted below the new cap. For a nonzero cap
     ///      this transient over-cap state is expected and self-heals through repay; a zero cap
-    ///      blocks mint until the cap is raised again (see revokeMinter).
+    ///      blocks mint until the cap is raised again (see revokeMinter). Caps above
+    ///      `type(uint128).max` revert `MintingCapTooLarge` — the cap persists in a packed 128-bit field.
     /// @param minter Address of the minter
     /// @param mintingCap New maximum number of uAsset this minter can mint
     function setMintingCap(address minter, uint256 mintingCap) public override onlyOwner {
         require(minter != address(0), ZeroInput());
+        // The cap is a packed uint128 storage field; a larger value could not persist losslessly.
+        require(mintingCap <= type(uint128).max, MintingCapTooLarge());
 
         MintingStatus storage status = _mintingStatus(minter);
         uint256 oldMintingCap = status.mintingCap;
-        status.mintingCap = mintingCap;
+        status.mintingCap = SafeCast.toUint128(mintingCap);
 
         emit SetMintingCap(minter, oldMintingCap, mintingCap);
     }
@@ -154,10 +170,10 @@ contract OutrunUniversalAssetsUpgradeable
         // Keep the cap/debt invariant explicit so this reverts with ReachMintCap instead of a raw underflow panic.
         require(amount <= _remainingMintable(toMintingCap, toAmountInMinted), ReachMintCap());
 
-        unchecked {
-            fromStatus.amountInMinted = fromAmountInMinted - amount;
-            toStatus.amountInMinted = toAmountInMinted + amount;
-        }
+        // Both requires bound the packed uint128 writes: from-side debt cannot underflow,
+        // to-side debt stays within its uint128 minting cap.
+        fromStatus.amountInMinted -= SafeCast.toUint128(amount);
+        toStatus.amountInMinted += SafeCast.toUint128(amount);
 
         emit TransferMinterDebt(from, to, amount);
     }
@@ -175,10 +191,9 @@ contract OutrunUniversalAssetsUpgradeable
         require(amount <= _remainingMintable(mintingCap, amountInMinted), ReachMintCap());
 
         // Update debt before _mint — keeps C-E-I ordering in case future
-        // hook overrides introduce external calls.
-        unchecked {
-            status.amountInMinted = amountInMinted + amount;
-        }
+        // hook overrides introduce external calls. The ReachMintCap check bounds
+        // amountInMinted + amount by the uint128 cap, so the packed write cannot overflow.
+        status.amountInMinted += SafeCast.toUint128(amount);
         _mint(receiver, amount);
 
         emit MintUAsset(msg.sender, receiver, amount);
@@ -195,10 +210,9 @@ contract OutrunUniversalAssetsUpgradeable
         require(amountInMinted >= amount, ReachBurnCap());
 
         // Update debt before _burn — keeps C-E-I ordering in case future
-        // hook overrides introduce external calls.
-        unchecked {
-            status.amountInMinted = amountInMinted - amount;
-        }
+        // hook overrides introduce external calls. The ReachBurnCap check bounds
+        // amount by the outstanding uint128 debt, so the packed write cannot underflow.
+        status.amountInMinted -= SafeCast.toUint128(amount);
 
         // If repaying another account's balance, check allowance.
         if (account != msg.sender) _spendAllowance(account, msg.sender, amount);

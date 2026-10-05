@@ -70,7 +70,7 @@ contract OutrunRouterFuzzTest is Test {
         vm.prank(owner);
         router.setPsmForUAsset(address(uAsset), address(underlying), address(psm));
 
-        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
         // Path B (CDP gate) is a thin forward into `SP.stakeForGenesis`: wire the same
         // full-consumption mock launcher as the SP's genesis target so parity holds.
         vm.prank(owner);

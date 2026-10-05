@@ -347,8 +347,8 @@ contract OutrunStakingPositionInvariantTest is StdInvariant, PositionRefModel {
             )
         );
 
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         // Interest coverage, mirroring open-market acquisition.
         uAsset.mint(actor, 1e30);
         vm.prank(actor);
@@ -529,8 +529,8 @@ contract OutrunPositionPsmJointInvariantTest is StdInvariant, PositionRefModel {
         );
 
         vm.startPrank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max); // funds interest coverage only
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max); // funds interest coverage only
         uAsset.setReserveMinter(address(psm), true);
         vm.stopPrank();
 

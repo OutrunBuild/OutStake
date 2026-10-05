@@ -167,16 +167,34 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         assertEq(uAsset.checkMintableAmount(minter), 75e18);
     }
 
-    function testMintNearUint256BoundaryRevertsWithReachMintCap() external {
+    function testMintNearUint128BoundaryRevertsWithReachMintCap() external {
         vm.prank(owner);
-        uAsset.setMintingCap(minter, type(uint256).max);
+        uAsset.setMintingCap(minter, type(uint128).max);
 
         vm.prank(minter);
-        uAsset.mint(receiver, type(uint256).max - 1);
+        uAsset.mint(receiver, type(uint128).max - 1);
+
+        // The single-unit top-up proves the packed debt write saturates exactly at the uint128 cap.
+        vm.prank(minter);
+        uAsset.mint(receiver, 1);
+        assertEq(uAsset.mintingStatusTable(minter).amountInMinted, type(uint128).max);
 
         vm.prank(minter);
         vm.expectRevert(IUniversalAssets.ReachMintCap.selector);
-        uAsset.mint(receiver, 2);
+        uAsset.mint(receiver, 1);
+    }
+
+    function testSetMintingCapRevertsAboveUint128Boundary() external {
+        vm.prank(owner);
+        vm.expectRevert(IUniversalAssets.MintingCapTooLarge.selector);
+        uAsset.setMintingCap(minter, uint256(type(uint128).max) + 1);
+    }
+
+    function testSetMintingCapAcceptsUint128MaxCap() external {
+        vm.prank(owner);
+        uAsset.setMintingCap(minter, type(uint128).max);
+
+        assertEq(uAsset.mintingStatusTable(minter).mintingCap, type(uint128).max);
     }
 
     function testRevokeKeepsDebtClearsCapBlocksMintAndAllowsRepay() external {

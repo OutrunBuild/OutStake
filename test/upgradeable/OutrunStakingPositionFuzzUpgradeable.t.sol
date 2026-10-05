@@ -60,8 +60,8 @@ contract OutrunStakingPositionFuzzTest is PositionGhostModel, CommonTestHelpers 
                 SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         // Genesis-gate fixture: a full-consumption launcher wired as the SP's target.
         genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
@@ -451,8 +451,8 @@ contract OutrunStakingPositionPropertyTest is CommonTestHelpers, PositionRefMode
                 SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), address(0xFEE))
             )
         );
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
         position.setGenesisLauncher(address(genesisLauncher));

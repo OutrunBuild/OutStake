@@ -67,8 +67,8 @@ contract AdversarialTests is CommonTestHelpers {
                 SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
         position.setGenesisLauncher(address(genesisLauncher));
@@ -259,8 +259,8 @@ contract PositionReentrancyTest is CommonTestHelpers, PositionRefModel {
                 SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
             )
         );
-        uAsset.setMintingCap(address(position), type(uint256).max);
-        uAsset.setMintingCap(address(this), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
+        uAsset.setMintingCap(address(this), type(uint128).max);
         genesisLauncher = new MockGenesisLauncher(address(uAsset));
         vm.prank(owner);
         position.setGenesisLauncher(address(genesisLauncher));
@@ -436,7 +436,7 @@ contract OracleFailClosedTest is CommonTestHelpers {
             )
         );
         vm.startPrank(owner);
-        uAsset.setMintingCap(address(position), type(uint256).max);
+        uAsset.setMintingCap(address(position), type(uint128).max);
         vm.stopPrank();
         // Wire the launcher so the stale-rate revert (not the kill switch) is what fails the
         // pricing surface: the launcher gate intentionally runs before pricing.

@@ -3,6 +3,8 @@ pragma solidity ^0.8.35;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+import {IUniversalAssets} from "../../../src/assets/interfaces/IUniversalAssets.sol";
+
 /**
  * @title YieldDeployMockToken
  * @notice Mock ERC20 used in deploy-script tests.
@@ -53,6 +55,8 @@ contract YieldDeployMockUniversalAsset {
 
     function setMintingCap(address minter, uint256 mintingCap) external {
         if (msg.sender != owner) revert Unauthorized();
+        // Mirrors the production uint128 domain guard on the packed cap field.
+        require(mintingCap <= type(uint128).max, IUniversalAssets.MintingCapTooLarge());
 
         mintingCaps[minter] = mintingCap;
         lastMinter = minter;
