@@ -34,7 +34,7 @@ staking position 仍以 `OutrunStakingPositionUpgradeable` + `ERC1967Proxy` 部�
 `OutrunStakingPositionUpgradeable.sol::redeem(positionId, syRedeemed, receiver, tokenOut, minTokenOut)` 为 position owner 专属（`onlyPositionOwner`），无时间门。
 
 1. 前置守卫：合约未 paused；仓位不存在或 caller 非记录 owner → `PositionAccessDenied()`；`receiver == address(0)` 或 `syRedeemed == 0` → `ZeroInput()`；`syRedeemed > syStaked` → `ExceedsPositionBalance(syRedeemed, syStaked)`。
-2. 利息结算（写状态触点）：SP `rate` 结算到当前时刻，本仓 `accruedInterest += Δint`、`lastRate = rate()`（公式与取整见 [accounting.md §4](./accounting.md)；v1 零费下 `Δint == 0`）。
+2. 利息结算（写状态触点）：SP `rate` 结算到当前时刻，本仓 `accruedInterest += Δint`、`lastRate = rate()`（公式与取整见 [accounting.md §4](./accounting.md)；v1 零费默认下 `Δint == 0`）。
 3. 两腿份额计算（不读汇率）：full（`syRedeemed == syStaked`）→ `principalPortion = principalDebt`、`interestPortion = accruedInterest`；partial → 两腿按 `syRedeemed / syStaked` 比例 ceil；partial 耗尽本金（`principalPortion >= principalDebt`）→ `PartialRedeemMustLeaveDebt()`。
 4. 直接 SY 输出 slippage：`tokenOut == SY` 且 `syRedeemed < minTokenOut` → `InsufficientTokenOut`（position 减记前）。
 5. 仓位更新（CEI：状态先于外部调用）：`syStaked -= syRedeemed`、`principalDebt -= principalPortion`、`accruedInterest -= interestPortion`；剩余 `syStaked == 0` 删除仓位（id 空洞）；守恒引用见 [accounting.md §10.1](./accounting.md)。
@@ -60,7 +60,7 @@ staking position 仍以 `OutrunStakingPositionUpgradeable` + `ERC1967Proxy` 部�
 | `setDuty(new)` | `1e27 ≤ new ≤ DUTY_CAP`（`DUTY_CAP = 1000000004431822129783699001`，年化 15% 等效每秒率；`1e27` 零费哨兵合法且为 v1 默认） | `new < 1e27`（sub-RAY 即负利率，含 0）→ `ZeroInput`（保 `rate` 单调不减；pause 才是熔断器）；超上限 → `DutyCap`（`BorrowRateBelowResolution` 已废除） | 写入前先按旧 `duty` 把 `rate` 结算到当前时刻（复利整段闭式增量、分段生效），新 `duty` 前瞻作用于全部存量债务 |
 | `setGenesisLauncher(new)` | 任意地址（含零） | 无本地拒绝分支——零是合法态（＝禁用 `stakeForGenesis` 入口，kill switch） | 后续 `stakeForGenesis` 的 launcher 目标；emit `SetGenesisLauncher(oldLauncher, newLauncher)` |
 | `setMinStake(new)` | `new > 0` | 零 → `ZeroInput` | 后续 `stakeForGenesis` / `previewStake` 的下限（双向可调，不设上限） |
-| `setProtocolTreasury(new)` | `new != address(0)` | 零地址 → `ZeroInput` | 后续利息腿收款目的地（v1 零费下恒 0 腿，参数保留供未来加息） |
+| `setProtocolTreasury(new)` | `new != address(0)` | 零地址 → `ZeroInput` | 后续利息腿收款目的地（v1 零费默认下恒 0 腿，参数保留供未来加息） |
 
 setter 语义说明：`duty` 无棘轮但有接受域 `[1e27, DUTY_CAP]`（域内一笔可达，两端可设；sub-RAY 恒以 `ZeroInput` 拒绝，超上限以 `DutyCap` 拒绝）；`minStake` 双向可调；`genesisLauncher` 接受任意地址含零（零＝禁用 genesis 入口的合法 kill switch 态）。v1 删除的 `setMintLtv`/`setLiquidationLtv`/`setLiquidationPremium`/`setGenesisRateMultiplier` 无状态转移。`pause` / `unpause` 为 owner 熔断开关（§8），不属参数面。
 
@@ -99,7 +99,7 @@ SY pause 不阻断 uAsset 面；两腿偿还的 uAsset 操作不受该级影响�
 `OutrunUniversalAssetsUpgradeable` 经 `OutrunOFTUpgradeable` → `OutrunERC20PausableUpgradeable` 继承 pause 家族，可被其自身 owner 独立 pause。阻断分两层：`mint` / `repay` 自带函数级 `whenNotPaused`；常规 transfer（含利息腿的 transferFrom 拉取）与 OFT outbound send 由 `_update` 的 `whenNotPaused` 兜底（跨链 inbound `_credit` 豁免，见 `docs/spec/common-foundations.md`「Pause 与跨链 OFT 执行边界」）。当前影响：
 
 - `stakeForGenesis`（经 `uAsset.mint` 铸出与 launcher `transferFrom` 拉取，两处都被阻）
-- `redeem`（本金腿经 `repay`、利息腿经 transfer，两腿都被阻；v1 零费下利息腿恒 0，本金腿仍被阻）
+- `redeem`（本金腿经 `repay`、利息腿经 transfer，两腿都被阻；v1 零费默认下利息腿恒 0，本金腿仍被阻）
 
 协同约束：存在待赎回仓位时，uAsset 单独暂停会阻断全部销债出口；需与 `position.pause()` 同步执行或改用 `setMintingCap`/`revokeMinter` 限制 mint 面，见 `docs/deployment.md` 暂停矩阵运维节。
 

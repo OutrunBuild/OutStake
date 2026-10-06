@@ -265,8 +265,10 @@ interface IOutrunStakeManager {
     /**
      * @notice Returns the position's unsettled interest extrapolated to the current timestamp.
      * @dev Read-only extrapolation (`principalDebt * (currentRate - lastRate) / 1e27`, single
-     *      floor); never writes state. Zero for a missing id. Under the zero-fee duty (1e27)
-     *      this is identically zero.
+     *      floor); never writes state. Zero for a missing id. Zero whenever
+     *      `currentRate == lastRate`. Identically zero while duty has never exceeded 1e27;
+     *      after `setDuty(1e27)` no new interest accrues while duty stays at 1e27, but pending
+     *      accrued under a higher duty stays frozen until the position's next redeem settles it.
      * @param positionId Identifier of the position to inspect.
      * @return Unsettled interest in uAsset units.
      */

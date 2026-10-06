@@ -446,8 +446,11 @@ contract OutrunStakingPositionUpgradeable layout at erc7201("outrun.storage.Outr
     }
 
     /// @notice Returns the position's unsettled interest extrapolated to the current timestamp.
-    /// @dev Read-only accrual; zero for a missing/deleted position id. Under the zero-fee duty
-    ///      (1e27) the rate never advances, so this is identically zero.
+    /// @dev Read-only accrual; zero for a missing/deleted position id. Zero whenever
+    ///      `currentRate() == lastRate`. While duty has never exceeded 1e27 the rate never
+    ///      advances, so this is identically zero; after `setDuty(1e27)` no new interest accrues
+    ///      while duty stays 1e27, but pending accrued under a higher duty stays frozen until
+    ///      the position's next redeem settles it.
     function pendingInterest(uint256 positionId) public view returns (uint256) {
         // Pure accrual since the last settlement snapshot; the settled accruedInterest balance
         // is excluded so this stays the unsettled increment only.

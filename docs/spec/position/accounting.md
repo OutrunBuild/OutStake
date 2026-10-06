@@ -87,6 +87,7 @@ v1 implementation 仍为 proxy-backed uAsset、SY adapter 与 staking position�
 - **接受域 `[1e27, DUTY_CAP]`（v1 零费放行）**：`OutrunStakingPositionUpgradeable.sol::initialize` 与 `OutrunStakingPositionUpgradeable.sol::setDuty` 的守卫为 `duty < 1e27 → ZeroInput`（sub-RAY 即负利率、含 0，全拒——保 `rate` 单调不减），仅此拒绝对；`duty == 1e27`（零费哨兵）合法且为 v1 默认；上限 `DUTY_CAP`（年化 15% 等效每秒率），越上限 → `DutyCap`。零费从「不开放的语义」改为「v1 默认」；`BorrowRateBelowResolution` 已废除（dust 悬崖不存在）；pause 才是熔断器。
 - 惰性结算：`rate` 存储值只在结算触点前移——`OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（开仓即结算，见 4.4）、`::setDuty`（分段生效，见 4.3）、`::redeem` 先把 `rate` 结算到当前时刻（`rate = rmul(rpow(duty, block.timestamp − rateLastSettledAt), rate)`）再执行本体；同秒多次结算幂等（`dt == 0` 时 `rpow(duty, 0) == 1e27`，`rate` 不变）。
 - 存储配套 `rateLastSettledAt`（最近结算 timestamp）；视图族按同公式纯外推（`currentRate()`，外推至当前时刻），不写状态、与执行结算同输入同输出。
+- 本地数值边界（不在 §11.1 具名自定义错误之列的裸终止，两条）：`OutrunStakingPositionUpgradeable.sol::_rmul` checked 乘法溢出 revert `Panic(0x11)`（标准 panic，selector `0x4e487b71`，非合约自声明错误）；`OutrunStakingPositionUpgradeable.sol::_rpow`（Maker 汇编版）内部 4 处裸 `revert(0, 0)`（乘法溢出往返校验 ×2、加法进位检查 ×2，空 revert data、无 selector）。两条同为 fail-closed，天花板同为累计 `rate` ~1.16e50（2^256/1e27，对应 ~1.16e23 复利因子）、cap-duty 下 ~380 年量级，但两分支口径不同：`_rpow` 段内 4 处为**单段**口径——单段复利因子到达即触发，任何 `stakeForGenesis`/`setDuty`/`redeem` 结算重锚 `rateLastSettledAt`、拆段重计，故需单段 ~380 年无结算；`_rmul` 为**累计**口径——`rate` 单调不减（`duty ≥ 1e27` 域保证），结算只落账增量、不折减累计值，天花板按累计 cap-duty 暴露到达、与结算频率无关，越过天花板的结算步自身 revert（降息 `setDuty` 亦先按旧 `duty` 结算，无法绕过）——属本仓 custom-error 可观测性约定对裸 panic/revert 的已记录例外，体例同 `docs/spec/common-foundations.md` 的 `WadRayMath.sol::rayDiv` 例外与 `docs/spec/yield/oracles-and-integrations.md` 的裸 Panic 分隔。
 
 ### 4.2 per-position 利息结算
 
@@ -96,8 +97,9 @@ position 记 `principalDebt`（= 铸账本金）+ `accruedInterest` + `lastRate`
 
 - `rate(t) − lastRate` 为 RAY 1e27 域复利增量，除一次 `1e27`；`rmul` 语义单次截断。
 - 结算后 `accruedInterest += Δint`、`lastRate = rate(t)`。
+- 本地数值边界：`OutrunStakingPositionUpgradeable.sol::_interestDelta` 的 `principalDebt * deltaRate` checked 乘法溢出 revert `Panic(0x11)`，不在 §11.1 具名错误之列；principal 受 genesis 铸造 uint128 域（~3.4e38）约束下，溢出需最坏 principal 于 cap-duty 连续 ~190 年无结算（无结算指**该仓自身**无结算：增量按该仓 `lastRate` 快照起算，其自身 `redeem` 即重锚，家族级结算与 `setDuty` 只前移累计 `rate`、不重锚单仓增量；累计 `rate` 自身被上游 ~1.16e50 天花板 fail-closed 拦截——该天花板为累计口径，见 §4.1），principal ≤ 1e27 时乘积 outright 不溢出；包络与 `DUTY_CAP`、uint128 principal 域耦合，放宽任一 bound 须同 re-check（治理侧核对项见 §6「加息前置校准」）。
 - 复利（compound on principal via 累计 `rate`）：利息按 `principalDebt` 对累计 `rate` 复利增量计，已落账 `accruedInterest` 本身不另行复利；增借不存在故铸账本金恒定，唯一变动是 partial `redeem` 减本金后按新本金续计（§7）。
-- **零费语义（v1 默认）**：`duty = 1e27` 时 `rpow(1e27, dt) = 1e27`、`rate` 永不前移、利息永不 accrue——无需任何特殊分支；债务冻结、背书率单调上升（§10.3）。`_repayTwoLegs` 保留：0 费下利息腿恒 0，既有 `interestPortion == 0 时跳过` 逻辑覆盖；`protocolTreasury` 参数保留（未来加息的利息去向不变）。mint-as-you-accrue 禁令在零费下自动满足（计息增量恒 0）。
+- **零费语义（v1 默认）**：本节「零费默认」= 自部署起零费（`duty` 从未高于 `1e27`），全文各「v1 零费默认下」标签均取此读法。`duty = 1e27` 时 `rpow(1e27, dt) = 1e27`、`rate` 永不前移、利息永不 accrue——无需任何特殊分支；债务冻结、背书率单调上升（§10.3）。`_repayTwoLegs` 保留：自部署起零费下利息腿恒 0（曾加息后回落至 `1e27` 时，存量冻结利息在该仓 redeem 结算时仍构成正利息腿），既有 `interestPortion == 0 时跳过` 逻辑覆盖；`protocolTreasury` 参数保留（未来加息的利息去向不变）。mint-as-you-accrue 禁令在零费下自动满足（自部署起零费下计息增量恒 0；曾加息后回落至 `1e27` 时，存量冻结利息所在仓的 redeem 结算增量为冻结正量，仍为纯账面写、不触 uAsset）。
 
 ### 4.3 利率变更分段生效
 
@@ -131,6 +133,8 @@ rounding matrix（v1 全表）：
   - 利息腿 partial 用 ceil：`interestPortion = ceil(settledInterest × syRedeemed / syStaked)`；full 精确等于 `settledInterest`
   - partial 结果 `principalPortion >= principalDebt` → `PartialRedeemMustLeaveDebt()`（须改走 full redeem）
 
+- **本地数值边界**（不在 §11.1 具名错误之列的裸终止）：`SYUtils.sol::syToAsset` 的 `syAmount * exchangeRate` checked 乘法溢出 revert `Panic(0x11)`（标准 panic，非合约自声明错误），阈值 `amountInSY ≥ 2^256/exchangeRate`（wad 1e18 域，`exchangeRate ≈ 1e18` 时 ≈1.1579e59）；`previewStake` 视图（router 预览转发同面）任意输入即时 fail-closed 可达、零资金要求，`stakeForGenesis` 执行路径同线可达——换算报价点先于 SY 转入与一切持仓/授权检查（前置守卫仅为 launcher 布线、输入非零与 `minStake` 下限），任意 caller 零持仓传该量级输入即触发，与 preview 同为参数可达面；两面同为 fail-closed revert、零资金影响（真实持有该量级 SY 的合法 stake 不存在）——体例同 `docs/spec/yield/oracles-and-integrations.md` 的裸 Panic 分隔（该侧归一化乘法记录与本条互为镜像、阈值同量级）。第二段 `OutrunStakingPositionUpgradeable.sol::_scaleCanonicalAssetToUAsset` 的升 decimal 乘法在 `uAssetDecimals − canonicalAssetDecimals ≤ 18` 时被前段输出上界（(2^256−1)/1e18 ≈1.1579e59）结构性遮蔽，运行期不可触发；部署不变量为全部 uAsset 以 18 decimals 构造、canonical decimals 由 SY adapter 的 `assetInfo` 构造承载（现行七族为 18 或 live USDC 6，`OutrunStakingPositionUpgradeable.sol::initialize` 仅缓存不校验）；PSM 储备腿另有 decimals > 18 的部署校验拒绝（`OutstakeScript.s.sol::_deployPSM`，不锚 SP canonical 面）——现实差值 ∈ [0,12]（aUSDC 族 (6,18) 为唯一升 decimal 家族，×1e12 在界内），自身触发面仅存在于未来差值 ≥ 19 的假想家族——属完备性记录，运行期不触发。降 decimal 分支在部署不变量下不进入（`uAssetDecimals ≡ 18 ≥ canonicalAssetDecimals`）；假想家族下指数 `canonicalAssetDecimals − uAssetDecimals ≥ 78` 时该常量幂自身溢出 `Panic(0x11)`——同属完备性记录，运行期不触发。
+
 ### 5.1 风险声明（oracle fail-closed、dust 接受语义与 LST 例外）
 
 - **oracle fail-closed（oracle-fed 族率值完整性（喂价异常导致超铸）的唯一链上防线；Sky L2 族由 PSM3-SSR 双源偏差守卫守率值，见本条目末尾）**：铸造全路径（定价、铸出量）消费 `SY.exchangeRate()`；经 oracle-backed SY 变体时，adapter 的 raw answer 正性、round 完整性、新鲜度窗口（`maxStaleness`）、（配置时）L2 sequencer 校验、归一化后非零校验任一失败即 revert（错误面真源 `docs/spec/yield/oracles-and-integrations.md`），`stakeForGenesis` / `previewStake` 原子拒绝——fail-closed：价格源异常时铸造不可用，不降级、不 fallback。本地分支：`exchangeRate() == 0` → `ZeroExchangeRate()`（`OutrunStakingPositionUpgradeable.sol::_currentExchangeRate` 单点守卫）。v1 无 LTV/清算，铸造侧率值维度的链上守卫按族分形——oracle 栈从「清算保护」升格为 oracle-fed 族**率值完整性（喂价异常导致超铸）的唯一链上防线**——汇率虚高时面值铸造即超铸；Sky L2 族（`OutrunL2StakedUsdsSYUpgradeable`，无 `exchangeRateOracle`、不经 adapter）率值由 `OutrunL2StakedUsdsSYUpgradeable.sol::exchangeRate` 内 PSM3-SSR 双源偏差守卫承担（SSR 镜像读数相对 PSM3 报价偏离超 `maxDeviationBps` 即 revert `RateDeviationExceeded`，fail-closed，语义真源 `docs/spec/yield/yield-adapters.md`）；`ZeroExchangeRate` 为族无关 position 层单点守卫（余额维度由名义 1:1 族 resident 背书对账守卫承担，见 `docs/spec/yield/yield-adapters.md`）；该栈现为两层链上防御：新鲜度栈（正性 / round 完整性 / `maxStaleness` / sequencer / 归一化非零）仍是 adapter 侧防线，oracle-backed SY 基类（`OutrunL2OracleBackedSYUpgradeable`）的锚点偏差熔断是第二层链上防御，专门拦截铸造路径的喂价数值跳变（带外读数 revert `RateDeviationExceeded`，语义真源 `docs/spec/yield/oracles-and-integrations.md`「边界」锚点偏差熔断条目）；带内缓变漂移仍属链下监控与 pause 联动职责（监控与应急操作面见 `docs/deployment.md`）。
@@ -147,13 +151,14 @@ rounding matrix（v1 全表）：
 | `duty`（per-SP，每秒率，RAY 1e27 域） | 全族 `1e27`（零费，v1 默认；0 率 + 抵押生息 → 债务冻结、背书率单调上升） | 接受域 `[1e27, DUTY_CAP]`（`DUTY_CAP = 1000000004431822129783699001`，年化 15% 等效每秒率）：`duty < 1e27`（含 0，sub-RAY 即负利率）→ `ZeroInput`（保 `rate` 单调不减）；`duty == 1e27` 合法（零费哨兵）；越上限 → `DutyCap`。未来加息换算式 `duty = 1e27*(1+年化)^(1/31536000)` 向下取整（python3 decimal 高精度）；变更分段生效（§4.3）；加息前置校准清单见本节「加息前置校准」 |
 | `genesisLauncher`（per-SP 地址参数，依赖级别同 `protocolTreasury`） | 零地址（部署默认＝`stakeForGenesis` 入口禁用；非 initialize 参数，部署后 owner setter 布线） | owner-settable；接受任意地址含零；零地址＝入口禁用（kill switch）；emit `SetGenesisLauncher`（§11.2） |
 | `minStake`（per-SP） | 部署期定（genesis 门票最小规模 + 反垃圾） | 双向可调，恒 > 0 |
-| `protocolTreasury`（per-SP 地址参数） | V1 = 部署期金库地址 | owner-settable；零地址拒绝；利息腿唯一去向（v1 零费下恒 0 腿，参数保留供未来加息）；禁止为改去向升级合约（§9） |
+| `protocolTreasury`（per-SP 地址参数） | V1 = 部署期金库地址 | owner-settable；零地址拒绝；利息腿唯一去向（v1 零费默认下恒 0 腿，参数保留供未来加息）；禁止为改去向升级合约（§9） |
 
-**加息前置校准**：任何把 `duty` 提过 `1e27` 的 `OutrunStakingPositionUpgradeable.sol::setDuty` 治理决策，执行前须完成并留痕三项前置：
+**加息前置校准**：任何把 `duty` 提过 `1e27` 的 `OutrunStakingPositionUpgradeable.sol::setDuty` 治理决策，执行前须完成并留痕四项前置：
 
 1. 利息腿流通供应依赖确认——利息为 virtual accrual、永不铸出（§4），付息 uAsset 须来自流通供应或 PSM 面值铸出（本金经 genesis 全额交付 launcher，owner 偿还本金同样依赖流通供应）；
 2. 各 (uAsset, reserve) PSM 实例的 stockCap headroom 与绑定储备规模相对该 SP 家族债务存量及预期付息流的容量评估（`docs/spec/psm/peg-stability-module.md`「储备消耗监控与校准」）；
 3. 跨链持币分布下 OFT 出站限额对回桥付息可达性的影响评估——等待期间债务按新 duty 继续计息，限流延迟具直接利息成本（`docs/spec/protocol.md`「跨链可用性与限流」）。
+4. 算术包络再校验——§4 计息路径的本地数值边界（`OutrunStakingPositionUpgradeable.sol::_interestDelta`、`::_rmul`、`::_rpow`）依赖 `DUTY_CAP` 与 genesis uint128 principal 域的联合包络（累计 `rate` 天花板 ~1.16e50 = 2^256/1e27 无条件给定，两域只决定其可达性——口径见 §4.1/§4.2）：放宽任一 bound（升级放宽 `DUTY_CAP`、放宽 principal 域、或引入任何非 genesis 铸造路径）即失效，须对三分支重推包络；域内加息（`duty ≤ DUTY_CAP`）不触发本项再校验，余量按 cap-duty 最坏情形理解——单仓 `_interestDelta` ~190 年为该仓 `lastRate` 快照口径，累计 `rate` 天花板 ~380 年为累计口径（见 §4.1）。
 
 v1 `duty = 1e27` 下本清单不触发；本清单为治理前置程序而非链上强制——`OutrunStakingPositionUpgradeable.sol::setDuty` 不做链上前置校验为有意设计，此处记录治理程序，不引入运行时门。
 
@@ -167,7 +172,7 @@ v1 参数族收缩说明：`mintLtv` / `liquidationLtv` / `liquidationPremium`�
 `OutrunStakingPositionUpgradeable.sol::redeem(positionId, syRedeemed, receiver, tokenOut, minTokenOut)` 为 position owner 专属入口（`onlyPositionOwner`），任意时刻可用（无到期门），沿用 full/partial 语义：
 
 - `syRedeemed == 0` → `ZeroInput()`；`syRedeemed > syStaked` → `ExceedsPositionBalance(syRedeemed, syStaked)`。
-- 进门后先做利息结算（§4.4 写状态触点）：SP `rate` 结算到当前时刻，本仓 `accruedInterest += Δint`、`lastRate` 更新（v1 零费下 `Δint == 0`，利息腿跳过）。
+- 进门后先做利息结算（§4.4 写状态触点）：SP `rate` 结算到当前时刻，本仓 `accruedInterest += Δint`、`lastRate` 更新（v1 零费默认下 `Δint == 0`，利息腿跳过）。
 - 两腿份额（§5 rounding matrix）：
   - full（`syRedeemed == syStaked`）：`principalPortion = principalDebt`、`interestPortion = accruedInterest`。
   - partial：两腿均按 `syRedeemed / syStaked` 比例 ceil；partial 耗尽本金（`principalPortion >= principalDebt`）→ `PartialRedeemMustLeaveDebt()`，须改走 full redeem。
@@ -273,7 +278,7 @@ uAsset 供给侧三行对账（`uAsset` 三条供给路径：CDP（position 层�
 | --- | --- | --- | --- |
 | `Stake` | `positionId`；`owner`（地址）；`amountInSY`（SY units）；`mintedUAsset`（uAsset units，= 该仓初始 `principalDebt`）。 | `positionId`, `owner` | `::stakeForGenesis` 成功创建仓位、铸 uAsset 后发出（随后另发 `StakeForGenesis`）；owner 可与 caller 不同。 |
 | `StakeForGenesis` | `positionId`；`positionOwner`（地址）；`verseId`（uint256，launcher opaque ID 原样转发）；`mintedUAsset`（uAsset units，= 该仓初始 `principalDebt`）。 | `positionId`, `positionOwner` | `::stakeForGenesis` 后置断言通过后紧随同 positionId 的 `Stake` 发出；两事件互为印证（§3.1 (h)）。 |
-| `Redeem` | `positionId`；`owner`（通过 owner guard 的 `msg.sender`）；`syRedeemed`（SY units）；`principalBurned`（uAsset units，本金腿 burn 量）；`interestPaid`（uAsset units，利息腿转金库量）；`receiver`；`tokenOut`；`amountTokenOut`。 | `positionId`, `owner`, `receiver` | `::redeem` 完成仓位减记/删除、两腿偿还与输出后发出；两腿合计 = 本次总偿付（v1 零费下 `interestPaid == 0`）。full redeem 后 `positions(id)` owner 归零。 |
+| `Redeem` | `positionId`；`owner`（通过 owner guard 的 `msg.sender`）；`syRedeemed`（SY units）；`principalBurned`（uAsset units，本金腿 burn 量）；`interestPaid`（uAsset units，利息腿转金库量）；`receiver`；`tokenOut`；`amountTokenOut`。 | `positionId`, `owner`, `receiver` | `::redeem` 完成仓位减记/删除、两腿偿还与输出后发出；两腿合计 = 本次总偿付（v1 零费默认下 `interestPaid == 0`）。full redeem 后 `positions(id)` owner 归零。 |
 | `SetDuty` | `oldDuty`、`newDuty`（RAY 1e27 域每秒率）。 | 无 | `::setDuty` 成功；emit 前已完成旧 `duty` 分段结算（§4.3）。 |
 | `SetGenesisLauncher` | `oldLauncher`、`newLauncher`（地址）。 | `oldLauncher`, `newLauncher` | `::setGenesisLauncher` 更新 genesis launcher 目标；接受任意地址含零（零＝`stakeForGenesis` 入口禁用 kill switch）。 |
 | `SetMinStake` | `minStake`（SY units）。 | 无 | `::setMinStake` 更新阈值；沿用单值形态（旧值由前一事件推导）。 |
@@ -301,12 +306,12 @@ v1 合约变更落地时，测试/不变量以下列条目为验收基准：
 2. **对账式（本金 + 应计 + PSM 豁免）**：`amountInMinted(SPx) == Σ active positions.principalDebt` 恒成立；应计利息结算/支付前后 minter 台账不动（利息腿只 transfer）；PSM 储备铸烧不改 minter 台账（豁免行回归，真源 `docs/spec/psm/peg-stability-module.md`）。
 3. **背书不变式 fuzz（v1 核心锚点）**：任意状态下逐活动仓位断言 `positions.principalDebt ≤ syStaked × exchangeRate(铸造时点)`、聚合断言 `amountInMinted(SPx) ≤ Σ collateralValue`（各仓按其铸造时点汇率计）；fuzz 含汇率上行（背书率单调改善）与 dust 边界（两段 down 归零面）；uAsset 侧仅 SP minter 经 `mint` 铸出（PSM 走储备路径、OFT 走 `_credit`）。
 4. **oracle fail-closed**：oracle adapter stale/零率 revert 时 `stakeForGenesis`/`previewStake` 原子拒绝（`ZeroExchangeRate` 本地分支 + adapter 依赖错误透传分支各自覆盖）；`redeem` SY 直出不读率、可用（owner 退出通道回归）。
-5. **accrual 精度**：interest 结算对独立参考实现（`Δint = principalDebt × (rateNow − lastRate) / 1e27`，`rateNow = rmul(rpow(duty, dt), rate)` 逐步模拟，时间经 warp 推进）逐步一致；复利性质（累计 `rate` 按 `duty` 复利增长）；partial redeem 后按新本金续计；同秒（同一 timestamp）preview/执行一致；`rate` 单调不减；距上次结算触点 N 秒后开仓的仓位，首次结算利息按开仓时刻起算（开仓前 N 秒不产生本仓利息，`lastRate` 为开仓时刻结算后快照、`initialize` 后首触点自 init 时刻起算）；零费（`duty = 1e27`）下 `rate` 恒 `1e27`、`pendingInterest` 恒 0、`accruedInterest` 恒 0。
+5. **accrual 精度**：interest 结算对独立参考实现（`Δint = principalDebt × (rateNow − lastRate) / 1e27`，`rateNow = rmul(rpow(duty, dt), rate)` 逐步模拟，时间经 warp 推进）逐步一致；复利性质（累计 `rate` 按 `duty` 复利增长）；partial redeem 后按新本金续计；同秒（同一 timestamp）preview/执行一致；`rate` 单调不减；距上次结算触点 N 秒后开仓的仓位，首次结算利息按开仓时刻起算（开仓前 N 秒不产生本仓利息，`lastRate` 为开仓时刻结算后快照、`initialize` 后首触点自 init 时刻起算）；自部署起零费（`duty` 从未高于 `1e27`）下 `rate` 恒 `1e27`、`pendingInterest` 恒 0、`accruedInterest` 恒 0；曾加息后回落至 `1e27` 时，存量 `pendingInterest` 冻结不再增长、`rate` 冻结于回落时值（可高于 `1e27`），存量在该仓 redeem 结算时仍构成正利息腿。
 6. **调息边界**：`new < 1e27`（含 0，sub-RAY）revert `ZeroInput`，`new > DUTY_CAP` revert `DutyCap`；`new == 1e27` 合法（零费哨兵放行）；域内 `[1e27, DUTY_CAP = 1000000004431822129783699001]` 任意值一笔可设，两端可设；分段生效——变更时刻前后利息按旧/新 `duty` 各计各的。
 7. **repay 双腿（本金 burn / 利息 transfer）**：redeem 的本金腿减少 SP minter `amountInMinted` 并 burn 调用者余额、利息腿等额转 `protocolTreasury` 且不改 `amountInMinted`/`totalSupply`（除 transfer 的持有人变化）；allowance 不足时依赖边界整笔回退。
 8. **参数面全表回归**：§6/§11.1 每个 setter（`setDuty`/`setGenesisLauncher`/`setMinStake`/`setProtocolTreasury`）的接受/拒绝矩阵与 `Set*` 事件字段；`initialize` 同套校验与零值拒绝。
 9. **暂停矩阵回归**：[state-machines.md](./state-machines.md) §8 矩阵逐行（SP/SY/uAsset 三级对 stakeForGenesis/redeem 的阻断面）；SP 暂停期计息外推继续（运维含义）。
-10. **mint-as-you-accrue 禁令**：计息结算增量本身不铸造（不调用 `uAsset.mint`，`uAsset` totalSupply 不因计息变化，§4）；计息触点（redeem partial、视图外推、setDuty）中视图外推与 setDuty 完全不触 `uAsset.totalSupply()`（零费下计息增量恒 0），redeem（partial/full）期间 supply 唯一变动为本金腿经 `OutrunUniversalAssetsUpgradeable.sol::repay` burn、恰减 `principalPortion`（零费域同样成立——本金 burn 与 duty 无关）；禁令对 `duty > 1e27` 域的回归由 full redeem 的 supply-only-shrinks-by-burn 断言承载（`test/upgradeable/OutrunStakingPositionUpgradeable.t.sol::test_RedeemFullPaysTwoLegsExactly`）。
+10. **mint-as-you-accrue 禁令**：计息结算增量本身不铸造（不调用 `uAsset.mint`，`uAsset` totalSupply 不因计息变化，§4）；计息触点（redeem partial、视图外推、setDuty）中视图外推与 setDuty 完全不触 `uAsset.totalSupply()`（自部署起零费下计息增量恒 0），redeem（partial/full）期间 supply 唯一变动为本金腿经 `OutrunUniversalAssetsUpgradeable.sol::repay` burn、恰减 `principalPortion`（零费域同样成立——本金 burn 与 duty 无关）；禁令对 `duty > 1e27` 域的回归由 full redeem 的 supply-only-shrinks-by-burn 断言承载（`test/upgradeable/OutrunStakingPositionUpgradeable.t.sol::test_RedeemFullPaysTwoLegsExactly`）。
 11. **genesis 物理门（`stakeForGenesis`，测试面见 `test/upgradeable/OutrunStakingPositionUpgradeable.t.sol`）**：成功路径后 SP 的 uAsset 余额恒等于调用前（mint→consume 交易内闭环守恒断言）；mock launcher 部分消费 / 转回 → `GenesisUAssetNotConsumed` 整笔回退（无仓位、无铸出）；launcher revert → 无仓位、无 mint；`genesisLauncher == address(0)` → `GenesisLauncherNotSet` 先于资金移动。
 12. **uint128 边界与 minUAssetMinted 下限**：`mintedUAsset > type(uint128).max` → `InvalidParam()`（恰等上限可过）；`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted(mintedUAsset, minMinted)`（零值下限为无保护透传）。
 13. **router 薄转发等价**：router `genesisBySY`/`genesisByToken` 与直接调用 `SP.stakeForGenesis`（同输入同参数）铸出额、仓位字段、launcher 收额一致（等价性测试见 `test/upgradeable/RouterProxyIntegration.t.sol`）；router 路径 B 全程不持有 uAsset；部署布线验收（`GENESIS_LAUNCHER` env 布线 + 同址性质 fail-closed 承载）见 `test/upgradeable/OutstakeScriptMockSYDeploy.t.sol`（config 级分叉拒绝 + SP 侧 getter 断言；router 侧 getter 断言见 `test/deploy/OutstakeScriptUpgradeable.t.sol`），等式 `SP.genesisLauncher() == router.memeverseLauncher()` 为部署期链上人工核对项。
