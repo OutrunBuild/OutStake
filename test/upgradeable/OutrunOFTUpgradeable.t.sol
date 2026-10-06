@@ -4,7 +4,14 @@ pragma solidity ^0.8.35;
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {MessagingFee, OFTLimit, SendParam} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
+import {
+    IOFT,
+    MessagingFee,
+    OFTLimit,
+    OFTReceipt,
+    SendParam
+} from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
+import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
@@ -100,6 +107,28 @@ contract OutrunOFTUpgradeableTest is Test {
         oft.send(_sendParam(25e18), MessagingFee({nativeFee: 0, lzTokenFee: 0}), user);
     }
 
+    /// @dev First test to drive send() through the endpoint mock's return path: with a peer
+    ///      configured and the token unpaused, the send must debit and burn the dust-free
+    ///      amount, decode the endpoint's MessagingReceipt return, and emit OFTSent with it.
+    function testUnpausedSendCompletesAndEmitsOftSent() external {
+        vm.prank(owner);
+        oft.setPeer(DST_EID, bytes32(uint256(uint160(address(oft)))));
+
+        vm.prank(user);
+        vm.expectEmit(true, true, false, true);
+        emit IOFT.OFTSent(bytes32(0), DST_EID, user, 25e18, 25e18);
+        (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) =
+            oft.send(_sendParam(25e18), MessagingFee({nativeFee: 0, lzTokenFee: 0}), user);
+
+        assertEq(receipt.guid, bytes32(0));
+        assertEq(receipt.nonce, 0);
+        assertEq(oftReceipt.amountSentLD, 25e18);
+        assertEq(oftReceipt.amountReceivedLD, 25e18);
+        assertEq(oft.balanceOf(user), 75e18);
+        assertEq(oft.totalSupply(), 75e18);
+        assertEq(oft.outflowCalls(), 1);
+    }
+
     function testPausedTokenAllowsInboundCredit() external {
         vm.prank(owner);
         oft.pause();
@@ -129,8 +158,9 @@ contract OutrunOFTUpgradeableTest is Test {
     ///      decay = (limit * elapsed) / window. With limit = 40e18, window = 1 day,
     ///      a 25e18 debit, then a 12-hour warp: decay = 40e18 * 12h / 24h = 20e18,
     ///      so inFlight = 25e18 - 20e18 = 5e18 and canBeSent = 40e18 - 5e18 = 35e18.
-    ///      This warps to half the window (not the full window) so the decay formula
-    ///      actually runs instead of hitting the full-window early return.
+    ///      The warp stays inside the window so 0 < decay < in-flight; only the
+    ///      proportional formula can produce (5e18, 35e18). A full-window warp
+    ///      would report (0, 40e18), which any full-refill shortcut also gives.
     function testPartialWindowDecayReducesInFlightExactly() external {
         vm.prank(owner);
         oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
@@ -159,8 +189,8 @@ contract OutrunOFTUpgradeableTest is Test {
         vm.prank(user);
         oft.exposedDebit(user, 5e18, 0, DST_EID);
 
-        // 18h of a 24h window: decay (30e18) exceeds in-flight (5e18) but the
-        // window has not fully elapsed, so the decay formula still runs.
+        // 18h of a 24h window: decay (30e18) exceeds the 5e18 in-flight, taking
+        // the unchecked-subtraction guard's false branch (in-flight clamps to 0).
         vm.warp(block.timestamp + 18 hours);
 
         (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);

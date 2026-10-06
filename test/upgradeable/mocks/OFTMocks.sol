@@ -3,15 +3,17 @@ pragma solidity ^0.8.35;
 
 import {
     MessagingFee,
-    MessagingParams
+    MessagingParams,
+    MessagingReceipt
 } from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 
 import {OutrunOFTUpgradeable} from "../../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
 
-/// @dev Mock LayerZero V2 endpoint for testing OFT cross-chain transfers.
-///      Reports a configurable EID and records the delegate: deploy-time validation reads
-///      `eid()` and OApp initialization calls `setDelegate()` through ILayerZeroEndpointV2
-///      on whatever endpoint instance the contract under test is given.
+/// @dev Partial mock: models only a slice of ILayerZeroEndpointV2. Modeled seams: the
+///      configurable EID read by deploy-time validation, `setDelegate()` called by OApp
+///      initialization, `quote()` returning a zero MessagingFee, and `send()` returning a
+///      zero-value MessagingReceipt. Unmodeled seams: fee charging and refunds, guid/nonce
+///      generation, packet delivery, and every other endpoint state transition.
 contract MockLzEndpoint {
     address internal delegate;
     uint32 public eid;
@@ -32,8 +34,10 @@ contract MockLzEndpoint {
         fee = MessagingFee({nativeFee: 0, lzTokenFee: 0});
     }
 
-    function send(MessagingParams calldata, address) external payable returns (MessagingFee memory) {
-        return MessagingFee({nativeFee: 0, lzTokenFee: 0});
+    // The receipt width must match ILayerZeroEndpointV2.send's MessagingReceipt return:
+    // callers ABI-decode the static 4-word return, and a shorter return reverts their decode.
+    function send(MessagingParams calldata, address) external payable returns (MessagingReceipt memory) {
+        return MessagingReceipt({guid: bytes32(0), nonce: 0, fee: MessagingFee({nativeFee: 0, lzTokenFee: 0})});
     }
 }
 
