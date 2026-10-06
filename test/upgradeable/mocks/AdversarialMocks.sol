@@ -136,10 +136,10 @@ contract MockUAssetForAdversarial is MockUAssetReserveBase {}
  * @notice Mock SY whose ERC20 transfer/transferFrom fire a one-shot reentrancy attempt against a
  *        caller-configured position entrypoint, recording the attempt's outcome for assertions.
  * @dev Partial mock: extends the rate-controllable SY by modeling only the transfer-callback
- *      seam (the position's SY touchpoints: the stake pull via transferFrom, and the redeem /
- *      liquidate / surplus-claim payouts via transfer). Accounting is honest ERC20 — the only
- *      attack surface is the callback. One shot per `arm`: the flag clears before firing so the
- *      reentrant call itself cannot chain another callback.
+ *      seam (the position's SY touchpoints: the stake pull via transferFrom, and the redeem
+ *      payout via transfer). Accounting is honest ERC20 — the only attack surface is the
+ *      callback. One shot per `arm`: the flag clears before firing so the reentrant call
+ *      itself cannot chain another callback.
  */
 contract ReentrantPositionSY is MockSYWithRateControl {
     address public attackTarget;

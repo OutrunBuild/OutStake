@@ -88,31 +88,7 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
 
     // RAY compounding reference (`Segment`/`_refUnit`/`_refInterest`) is inherited from
     // `PositionRefModel`; `_setDuty` below keeps the segment table in sync with the
-    // contract's segmented settlement, and `_secondsToAccrue` binary-searches the crossing.
-
-    /// @notice First span in seconds at which the compounding reference interest on `principal`
-    ///         (measured from the current reference unit) reaches `target`.
-    /// @dev Binary search over the segment-table extrapolation, so long crossings (tens of
-    ///      millions of seconds at the interest-test duty) resolve in ~60 reference evaluations
-    ///      instead of a per-second walk. Callers invoke it at the opening timestamp so the
-    ///      current reference unit equals the position snapshot.
-    function _secondsToAccrue(uint256 principal, uint256 target) internal view returns (uint256 seconds_) {
-        uint256 snap = _refUnit(warpAt);
-        uint256 lo = 0;
-        uint256 hi = 1;
-        while (_refInterest(principal, _refUnit(warpAt + hi) - snap) < target) {
-            hi *= 2;
-        }
-        while (lo < hi) {
-            uint256 mid = (lo + hi) / 2;
-            if (_refInterest(principal, _refUnit(warpAt + mid) - snap) >= target) {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        }
-        return lo;
-    }
+    // contract's segmented settlement.
 
     /// @notice Owner duty change that keeps the reference segment table in sync: settles pending
     ///         seconds at the old duty before the new duty applies, exactly like production.
@@ -148,10 +124,10 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
     /// @notice pendingInterest and positionDebt match the per-second reference at every warped
     ///         second, including a principal whose two-stage division actually truncates.
     function test_InterestMatchesReferenceEverySecond() external {
-        // Rate 1e18+1 with 10e18 SY: collateral = 10e18+10, minted at value parity (odd, so the
-        // staged floors leave non-zero remainders instead of dividing cleanly).
-        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18, 1e18 + 1);
-        assertEq(principal, 10e18 + 10, "odd principal fixture");
+        // Rate 1e18+1 with 10e18+7 SY: collateral = 10e18+17.000...0007 exactly, floored to
+        // 10e18+17 (odd, so the staged floors leave non-zero remainders instead of dividing cleanly).
+        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18 + 7, 1e18 + 1);
+        assertEq(principal, 10e18 + 17, "odd principal fixture");
 
         uint256 settledUnitAtOpen = position.rate();
         uint256 openAt = warpAt;
@@ -165,13 +141,14 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         // Settlement through a full redeem books exactly the extrapolated amount.
         _warp(70); // 100 seconds total
         uint256 expectedInterest = _refInterest(principal, _refUnit(warpAt) - settledUnitAtOpen);
-        (uint256 principalPortion, uint256 interestPortion,) = position.previewRedeem(positionId, 10e18, address(sy));
+        (uint256 principalPortion, uint256 interestPortion,) =
+            position.previewRedeem(positionId, 10e18 + 7, address(sy));
         assertEq(principalPortion, principal, "full redeem principal leg");
         assertEq(interestPortion, expectedInterest, "full redeem interest leg equals the reference");
 
         _fundUAsset(user, principal + expectedInterest);
         vm.startPrank(user);
-        position.redeem(positionId, 10e18, user, address(sy), 0);
+        position.redeem(positionId, 10e18 + 7, user, address(sy), 0);
         vm.stopPrank();
         // lastRate snapshotted the settled unit at open, so the settled span is exactly the
         // 100 post-open seconds.
@@ -352,11 +329,11 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
     /// @notice Backing invariant at mint: principalDebt <= syStaked x rate, enforced by the two
     ///         floors even when the collateral value does not divide cleanly.
     function test_MintDebtNeverExceedsCollateralValue() external {
-        (uint256 positionId, uint256 minted) = _stakeAtRate(user, 10e18, 1e18 + 1);
-        assertEq(minted, 10e18 + 10, "two-stage floor mint");
+        (uint256 positionId, uint256 minted) = _stakeAtRate(user, 10e18 + 7, 1e18 + 1);
+        assertEq(minted, 10e18 + 17, "two-stage floor mint");
         (address positionOwner, uint256 syStaked, uint256 principalDebt,,) = position.positions(positionId);
         assertEq(positionOwner, user, "position owner");
-        assertEq(syStaked, 10e18, "collateral recorded");
+        assertEq(syStaked, 10e18 + 7, "collateral recorded");
         assertLe(principalDebt, syStaked * (1e18 + 1) / 1e18, "mint-time backing invariant");
     }
 

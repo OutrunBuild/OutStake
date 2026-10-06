@@ -25,7 +25,8 @@ contract PositionMockOracle is IExchangeRateOracle {
 
 /// @title PositionSettableOracle
 /// @notice Exchange rate oracle whose answer the test controls, for scenarios that need the
-///         collateral rate to move after deployment (liquidation triggers, pause matrices).
+///         collateral rate to move after deployment (pause matrices, oracle rate-breaker
+///         scenarios).
 contract PositionSettableOracle is IExchangeRateOracle {
     uint256 public rate = 1e18;
 
