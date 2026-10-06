@@ -70,7 +70,10 @@ interface IOutrunRouter {
      *      quotes when `memeverseLauncher != IOutrunStakeManager(SP).genesisLauncher()`.
      *      Mirrors the existing binding re-read pattern (`PsmBindingMismatch`/`RouterTargetMismatch`): the mismatch is checked
      *      before any user funds move or allowances are granted, so a drifted launcher fails closed.
-     *      The previews enforce the same check so a quote never describes an open the execution path would reject.
+     *      The previews enforce the same check, so within the launcher-drift domain a quote never describes an open the
+     *      execution path would reject. The parity comparison is equality-only with no zero-address exclusion: with
+     *      both launchers unset it passes, the previews still quote, and execution reverts at the SP-side zero-address
+     *      gate with `GenesisLauncherNotSet` — a successful quote is not evidence that a genesis launcher is wired.
      */
     error GenesisLauncherMismatch(address routerLauncher, address spLauncher);
 
@@ -158,9 +161,10 @@ interface IOutrunRouter {
      * any funds move. The reserve leg follows the
      * native/ERC20 value rules: `reserveToken == NATIVE` requires `msg.value == amountIn`, an ERC20 leg
      * requires `msg.value == 0` and a prior caller approval to the router. The PSM output is deterministic
-     * face-value math (`quoteMint` equals the `mint` output on inputs that quote non-zero; a dust input
-     * that floors to a zero output quotes 0 while `mint` reverts ZeroInput), so there is no slippage
-     * floor parameter.
+     * face-value math (`quoteMint` equals the `mint` output on inputs that quote non-zero and fit the
+     * remaining stock-cap headroom; a dust input that floors to a zero output quotes 0 while `mint`
+     * reverts ZeroInput; beyond the headroom the quote stays positive while `mint` reverts
+     * StockCapExceeded), so there is no slippage floor parameter.
      * `amountIn` is uint256 (no input-side cap); when the minted amount exceeds type(uint128).max the call
      * reverts InvalidParam(). After `genesis` returns, the router's uAsset balance must be back at its
      * pre-mint snapshot and the launcher allowance zero, else GenesisUAssetNotConsumed reverts the whole call.
@@ -186,9 +190,10 @@ interface IOutrunRouter {
      * reverts PolendNotSet and a zero `genesisUser` reverts ZeroInput, both before any funds move. The reserve leg
      * follows the native/ERC20 value rules: `reserveToken == NATIVE` requires `msg.value == amountIn`, an ERC20 leg
      * requires `msg.value == 0` and a prior caller approval to the router. Pricing is deterministic on both legs —
-     * the PSM output is deterministic face-value math (`quoteMint` parity, so there is no slippage floor parameter)
-     * and POLend derives `borrowedAmount` from the interest rate snapshotted at its market registration — and the
-     * minted amount is forwarded as uint256 interest (no uint128 bound, no InvalidParam guard). After
+     * the PSM output is deterministic face-value math (`quoteMint` parity within the remaining stock-cap
+     * headroom, so there is no slippage floor parameter) and POLend derives `borrowedAmount` from the interest
+     * rate snapshotted at its market registration — and the minted amount is forwarded as uint256 interest (no
+     * uint128 bound, no InvalidParam guard). After
      * `leveragedGenesis` returns, the router's uAsset balance must be back at its pre-mint snapshot and the
      * allowance to `polend` zero, else GenesisUAssetNotConsumed reverts the whole call. PSM-side (`ZeroInput`,
      * `StockCapExceeded`, `NotReserveMinter`, `EnforcedPause`) and POLend-side errors propagate unchanged; the
@@ -326,9 +331,13 @@ interface IOutrunRouter {
      * @notice Quotes the uAsset amount a genesis open from an input token would mint.
      * @dev Requires an owner-registered SP -> SY pair, then derives canonical SY from `SP.SY()` and combines `SY.previewDeposit` and `SP.previewStake`.
      * Requires launcher parity (`memeverseLauncher == SP.genesisLauncher()`); a drifted launcher reverts
-     * `GenesisLauncherMismatch`, mirroring the execution gate, so the quote never describes an unexecutable open.
+     * `GenesisLauncherMismatch`, mirroring the execution gate, so within the launcher-drift domain the quote never
+     * describes an unexecutable open. Parity is equality-only: with both launchers unset (`address(0)` each side)
+     * it passes, this preview still quotes, and execution reverts at the SP-side zero-address gate with
+     * `GenesisLauncherNotSet` — a successful quote is not evidence that a genesis launcher is wired.
      * Preview is quote-only and does not reserve liquidity, uAsset mint cap, or slippage floors; execution can revert
-     * with `ReachMintCap`/`SYZeroSharesOut`/`InsufficientUAssetMinted`/`DustRoundedToZero` where preview succeeded.
+     * with `ReachMintCap`/`SYZeroSharesOut`/`InsufficientUAssetMinted`/`DustRoundedToZero`/`GenesisLauncherNotSet`
+     * where preview succeeded.
      * Integrators must treat the quote as an estimate, pass `minSyOut`/`minUAssetMinted` as `quote±slippage`,
      * and handle `ReachMintCap` reverts. These previews take no slippage floors; apply `minSyOut`/`minUAssetMinted` at execution.
      * @param SP Stake manager receiving the genesis stake.
@@ -345,9 +354,12 @@ interface IOutrunRouter {
      * @notice Quotes the uAsset amount a genesis open from existing SY would mint.
      * @dev Requires an owner-registered SP -> SY pair, then reads `SP.previewStake` for a quote-only SY-funded genesis open.
      * Requires launcher parity (`memeverseLauncher == SP.genesisLauncher()`); a drifted launcher reverts
-     * `GenesisLauncherMismatch`, mirroring the execution gate, so the quote never describes an unexecutable open.
+     * `GenesisLauncherMismatch`, mirroring the execution gate, so within the launcher-drift domain the quote never
+     * describes an unexecutable open. Parity is equality-only: with both launchers unset (`address(0)` each side)
+     * it passes, this preview still quotes, and execution reverts at the SP-side zero-address gate with
+     * `GenesisLauncherNotSet` — a successful quote is not evidence that a genesis launcher is wired.
      * Preview is quote-only and does not reserve uAsset mint cap or slippage floors; execution can revert
-     * with `ReachMintCap`/`DustRoundedToZero`/`InsufficientUAssetMinted` where preview succeeded.
+     * with `ReachMintCap`/`DustRoundedToZero`/`InsufficientUAssetMinted`/`GenesisLauncherNotSet` where preview succeeded.
      * Integrators must treat the quote as an estimate and handle `ReachMintCap` reverts. These previews take no slippage floors; apply `minUAssetMinted` at execution.
      * @param SP Stake manager receiving the genesis stake.
      * @param amountInSY Amount of SY to stake.

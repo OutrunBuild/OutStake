@@ -323,6 +323,10 @@ contract OutrunPSMUpgradeable layout at erc7201("outrun.storage.OutrunPSM")
     /// @notice Deterministic preview of the `sweepFees` payout: the fee surplus currently sweepable.
     /// @dev Identity with execution: `sweepFees` pays out exactly this amount. Returns 0 where
     ///      `sweepFees` would revert ZeroInput — callers must treat a 0 quote as non-executable.
+    ///      A positive quote does not by itself guarantee execution — the payout additionally
+    ///      requires `feeRecipient` to accept the bound reserve; a native-leg feeRecipient that
+    ///      rejects native receipt reverts `NativeTransferFailed` on every sweep (permanent — the
+    ///      recipient is immutable).
     /// @return amountOut Sweepable reserve amount, floored to whole reserve units
     function sweepableFees() external view override returns (uint256 amountOut) {
         amountOut = _sweepableFees(outrunPSMStorage.reserveToken);

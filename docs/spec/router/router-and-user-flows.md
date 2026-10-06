@@ -133,7 +133,7 @@ genesis 是把新供给的 `uAsset` 原子地交给 `IMemeverseLauncher.genesis`
 
 滑点与原子性：
 
-- 无 `minUAssetOut` 参数：PSM 为 1:1 面值 + `tin` 费率的确定性数学，`IPSM.quoteMint(amountIn)` 与 `mint` 输出恒等（零 oracle 性质，`docs/spec/psm/peg-stability-module.md`；dust 零输出域除外——quote 返 0 而 `mint` revert `ZeroInput`，见该文档「零输出守卫」），不存在 sandwich 可利用的池失衡面；对齐 IPSM 自身无 `minOut` 的立场。费率与 cap 属治理参数与 fail-closed 边界，非滑点面。
+- 无 `minUAssetOut` 参数：PSM 为 1:1 面值 + `tin` 费率的确定性数学，`IPSM.quoteMint(amountIn)` 与 `mint` 输出恒等（零 oracle 性质，`docs/spec/psm/peg-stability-module.md`；dust 零输出域——quote 返 0 而 `mint` revert `ZeroInput`，超出 stockCap headroom 域——quote 恒正而 `mint` revert `StockCapExceeded`，分别见该文档「零输出守卫」「cap」节），不存在 sandwich 可利用的池失衡面；对齐 IPSM 自身无 `minOut` 的立场。费率与 cap 属治理参数与 fail-closed 边界，非滑点面。
 - 原子性由 EVM 同交易回滚语义保证：PSM 铸出、approve、launcher 消费任一步失败，整笔回滚（含 PSM 侧 `netUAssetMinted` 台账与储备转移）；`nonReentrant` 隔离拉款回调与 PSM/launcher 外部调用窗口内的重入。
 - 事件面：成功路径链上事件为 `IPSM.sol::SwapMintForUAsset(reserveToken, to = router, amountIn, amountOut, feeIn)`、uAsset 的 ERC20 `Transfer`（零地址 -> router，随 reserveMint）、对 launcher 的 ERC20 `Transfer`（router -> launcher）；router 自身不发 genesis 专属事件（沿用现状，轨迹由 PSM/launcher 事件与链上转移承载）。
 
@@ -220,7 +220,7 @@ SP 侧语义（完整规格见 `docs/spec/position/accounting.md` §3.1 与 `doc
 
 设计要点：
 
-- 无滑点参数：两段定价均为固定数学——PSM 面值 1:1 减 `tin`（零 oracle、零池、零时间依赖，同 §7.1 立场）；`interestRate` 在 Memeverse 侧 `registerLendMarket` 时快照进 market 且无 per-market setter，`borrowed = interestAmount × 1e18 / interestRate` 确定，不存在 sandwich 可利用的价差面。利息额（= PSM 铸出额）的报价由 `IPSM.quoteMint(amountIn)` 恒等给出（同 §7.1/§8 路径 A 口径），`borrowedAmount` 以 POLend 返回值为单一真源、集成方免重算 rate。治理参数（`tin`、`interestRate`）与 cap（`stockCap`、verse `debtCap`）属 fail-closed 边界，非滑点面。
+- 无滑点参数：两段定价均为固定数学——PSM 面值 1:1 减 `tin`（零 oracle、零池、零时间依赖，同 §7.1 立场）；`interestRate` 在 Memeverse 侧 `registerLendMarket` 时快照进 market 且无 per-market setter，`borrowed = interestAmount × 1e18 / interestRate` 确定，不存在 sandwich 可利用的价差面。利息额（= PSM 铸出额）的报价由 `IPSM.quoteMint(amountIn)` 恒等给出（同 §7.1/§8 路径 A 口径，含 dust 零输出与超 stockCap headroom 域的限定，见 §7.1），`borrowedAmount` 以 POLend 返回值为单一真源、集成方免重算 rate。治理参数（`tin`、`interestRate`）与 cap（`stockCap`、verse `debtCap`）属 fail-closed 边界，非滑点面。
 - 无 uint128 边界：POLend 的 `interestAmount` 参数为 uint256（不同于 launcher 域的 uint128），router 侧无 uint128 域 `InvalidParam` 守卫、不截断转发（对 `polend` 的 uAsset 精确 approve 仍拒绝 `type(uint256).max` 无限额语义，见 §7.6）。
 - 事件面：router 不发自有事件（沿用现状），轨迹为 `IPSM.sol::SwapMintForUAsset(reserveToken, to = router, amountIn, amountOut, feeIn)` + Memeverse 侧 `LeveragedGenesis(verseId, payer = router, user = genesisUser, interestAmount)` 四字段事件 + uAsset 的 ERC20 `Transfer`（零地址 -> router 随 reserveMint；router -> polend 随 POLend 拉取）。
 - 错误面补充：`polend` 非零但无代码（EOA 误配）时 `marketUAsset(verseId)` 的 staticcall 以底层调用/解码错误回退、非具名错误（对齐 §1.2.1 复读条款惯例），不做 code-size 检查（allowlisting 为 owner 治理职责）。
@@ -272,7 +272,7 @@ SP 侧语义（完整规格见 `docs/spec/position/accounting.md` §3.1 与 `doc
 
 router 只暴露上述 2 个交易级 preview；SP 级 quote 族为 `previewStake`、`previewRedeem` 两个（完整失败面与 0-vs-revert 语义以 `docs/spec/position/accounting.md` §5/§11 为 canonical）。`previewStakeFromToken` / `previewStakeFromSY` 会透传 `SP.previewStake` 的 `ZeroInput`（零 SY 输出域）/ `MinStakeInsufficient` / `ZeroExchangeRate` / dust-返 0，`previewStakeFromToken` 另透传 `SY.previewDeposit` 的失败面（如 `SYInvalidTokenIn`）。
 
-genesis 无 router 级 preview 入口，也不新增 genesis 专属 preview：`previewStake` 的铸出量公式与 `stakeForGenesis` 执行入口同式（SP 定价不区分入口），且 genesis 消费量 == 铸出量（确定性），故路径 B 双入口的报价由 `previewStakeFromToken`（token 计价入口，组合口径 token -> SY -> uAsset，含 `SY.previewDeposit` 段）与 `previewStakeFromSY`（SY 计价入口）承担即可全覆盖（SP 铸出段定价即 genesis 段消费额）；路径 A 的报价由 `IPSM.quoteMint(amountIn)` 直接承担（与执行恒等，零 oracle 确定性；dust 零输出域除外——quote 返 0 而 `mint` revert `ZeroInput`，见 `docs/spec/psm/peg-stability-module.md`「零输出守卫」）。
+genesis 无 router 级 preview 入口，也不新增 genesis 专属 preview：`previewStake` 的铸出量公式与 `stakeForGenesis` 执行入口同式（SP 定价不区分入口），且 genesis 消费量 == 铸出量（确定性），故路径 B 双入口的报价由 `previewStakeFromToken`（token 计价入口，组合口径 token -> SY -> uAsset，含 `SY.previewDeposit` 段）与 `previewStakeFromSY`（SY 计价入口）承担即可全覆盖（SP 铸出段定价即 genesis 段消费额）；路径 A 的报价由 `IPSM.quoteMint(amountIn)` 直接承担（与执行恒等，零 oracle 确定性；dust 零输出域——quote 返 0 而 `mint` revert `ZeroInput`，超出 stockCap headroom 域——quote 恒正而 `mint` revert `StockCapExceeded`，见 `docs/spec/psm/peg-stability-module.md`「零输出守卫」「cap」节）。
 
 当前 preview 的语义边界：
 
@@ -280,6 +280,7 @@ genesis 无 router 级 preview 入口，也不新增 genesis 专属 preview：`p
   - `SY.previewDeposit(tokenIn, tokenAmount)`
   - `SP.previewStake(amountInSY)`；其语义与执行期一致：先做 `SY -> canonical asset`，再做 `canonical asset -> uAsset`（两段 down 面值换算，无 LTV 缩放段）
 - `previewStakeFromSY(SP, amountInSY)` 先校验已登记的 SP -> SY 配对，再比对 `memeverseLauncher` 与 SP 侧 `genesisLauncher` 一致性（不一致以 `GenesisLauncherMismatch` 回退），再调用 `SP.previewStake(amountInSY)`；其语义同样是先 `SY -> canonical asset`，再做 `canonical asset -> uAsset`（面值换算）。
+- **双零态 preview 成功（parity 等值 ≠ 已接线）**：`OutrunRouter.sol::memeverseLauncher` 与 SP 侧 `OutrunStakingPositionUpgradeable.sol::genesisLauncher` 同为 `address(0)` 时（新部署 launcher 未接线窗口，或双侧零地址 kill switch），两入口的 parity 检查为等值比较、不做零地址排除，`0 == 0` 照常通过，`previewStakeFromToken` / `previewStakeFromSY` 返回正报价；但执行入口（`OutrunRouter.sol::genesisByToken` / `OutrunRouter.sol::genesisBySY`）薄转发至 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis` 后由其零地址门回退 `GenesisLauncherNotSet`（执行侧可达性见 §7.6）。因此 preview 成功仅保证 launcher 配置 parity 等值，不构成执行面 launcher 已接线的保证；双零窗口内据报价组装的 genesis 交易全额回滚（仅耗 gas）。
 - preview 不接收 genesis 执行参数，结果不反映 `minSyOut` / `minUAssetMinted` / `genesisUser` 的执行期差异。
 - preview 只 quote，不锁定执行结果；执行时实际成交保护由入口参数负责：
   - `genesisByToken(...)` 的 token -> SY 阶段使用 `minSyOut`。
@@ -328,14 +329,14 @@ router 自身没有 pause 管理能力，但 router 下游的 position、SY、uA
 
 T5 与 token 入口恢复的测试/不变量以下列条目为验收基准（含任务书三面 + uint128 边界 + registry 校验；第 7-11 条为 token 入口恢复轮归属；第 12-13 条为 B 门薄转发降级新增；第 14 条为杠杆创世门新增）：
 
-1. **路径 A roundtrip**：reserve（ERC20 与 NATIVE 两腿）→ `genesisByPSM` → launcher 收到全额 `amountOut`（== PSM 铸出额 == `uint128` 转发额）；调用者 reserve 扣减 == `amountIn`；`SwapMintForUAsset` 事件与 PSM 储备守恒式回归（`docs/spec/psm/peg-stability-module.md` 测试面）；quoteMint == mint 输出（确定性；dust 零输出域除外，quote 返 0 而执行 revert `ZeroInput`，见 `docs/spec/psm/peg-stability-module.md`「零输出守卫」）。
+1. **路径 A roundtrip**：reserve（ERC20 与 NATIVE 两腿）→ `genesisByPSM` → launcher 收到全额 `amountOut`（== PSM 铸出额 == `uint128` 转发额）；调用者 reserve 扣减 == `amountIn`；`SwapMintForUAsset` 事件与 PSM 储备守恒式回归（`docs/spec/psm/peg-stability-module.md` 测试面）；quoteMint == mint 输出（确定性；dust 零输出域——quote 返 0 而执行 revert `ZeroInput`，超出 stockCap headroom 域——quote 恒正而执行 revert `StockCapExceeded`，见 `docs/spec/psm/peg-stability-module.md`「零输出守卫」「cap」节）。
 2. **路径 B roundtrip**：SY → `genesisBySY` → position 创建（`owner == genesisUser`、`principalDebt == mintedUAsset`、`lastRate` 为开仓时刻结算后快照）；launcher 收到全额 `mintedUAsset`；`Stake` + `StakeForGenesis` 事件字段核对。
 3. **严格相等（路径 B 借出量 == genesis 消费量，SP 原生）**：`mintedUAsset == uint128 genesis 转发额 == SP 对 launcher 的精确 approve 额`；交易后 SP 的 uAsset 余额回到铸出前基线、SP 对 launcher 的 allowance == 0；路径 A 仍为 router 侧同构断言（router 余额回 PSM 铸出前基线、对 launcher 的 allowance == 0）；mock launcher 部分消费 / 转回 → `GenesisUAssetNotConsumed` 整笔回退（含 payload 字段口径：residualBalance 为相对各自基线超出量）。
 4. **registry 校验回归**：
    - trustedSY/trustedSP 面不变：未登记 SP/SY → `UntrustedRouterTarget`，`SP.SY()` 漂移 → `RouterTargetMismatch`，校验时点在资金 pull 与 approve 之前（既有回归保持）。
    - PSM registry（配对与三参即现状）：未登记配对 → `UnregisteredPsm(uAsset, reserveToken)`；`setPsmForUAsset` 登记校验——零 `uAsset` → `UntrustedRouterTarget`（无 psm 代码校验）、uAsset 绑定不一致 → `PsmBindingMismatch(psm, uAsset, actualUAsset)`、储备绑定不一致 → `PsmReserveMismatch(psm, reserveToken, actualReserveToken)`；登记后 `psmForUAsset` getter 与 `PsmForUAssetUpdated` 事件核对；撤销 `setPsmForUAsset(uAsset, reserveToken, address(0))` 后该配对入口 fail-closed 且不影响其它配对；运行期任一绑定漂移（mock）→ 回退。
 5. **uint128 边界**：铸出量 `> type(uint128).max` → `InvalidParam()`——路径 A 在 router 侧、路径 B 在 SP 侧（经 router 入口透传，mock 放大铸出量）；恰等于 `type(uint128).max` 可通过（上限 launcher mock）。
-6. **滑点与原子性**：路径 B `mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted` 整笔回退（SP 侧检查、router 透传）；路径 A 无 minOut 参数且输出确定性（quoteMint == 执行；dust 零输出域除外，quote 返 0 而执行 revert `ZeroInput`，见 `docs/spec/psm/peg-stability-module.md`「零输出守卫」）；中途任一依赖 revert（PSM 入口、SP 入口、launcher）→ 整笔回滚——无 position、无 PSM 净铸出/储备转移、无残余 allowance、router 余额不变。
+6. **滑点与原子性**：路径 B `mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted` 整笔回退（SP 侧检查、router 透传）；路径 A 无 minOut 参数且输出确定性（quoteMint == 执行；dust 零输出域——quote 返 0 而执行 revert `ZeroInput`，超出 stockCap headroom 域——quote 恒正而执行 revert `StockCapExceeded`，见 `docs/spec/psm/peg-stability-module.md`「零输出守卫」「cap」节）；中途任一依赖 revert（PSM 入口、SP 入口、launcher）→ 整笔回滚——无 position、无 PSM 净铸出/储备转移、无残余 allowance、router 余额不变。
 7. **路径 B token 入口恢复（`genesisByToken`）roundtrip（恢复轮）**：token（ERC20 与 NATIVE 两腿）→ `genesisByToken` → CDP 仓创建（`owner == genesisUser`、`principalDebt == mintedUAsset` 面值铸出）；genesis 消费 == 借出严格相等（SP 侧断言，§7.2/§7.2.1）；`IStandardizedYield.sol::Deposit` 与 `Stake`/`StakeForGenesis` 事件字段核对。
 8. **token 入口与两步组合等价性（恢复轮）**：同输入同参数下 `genesisByToken` 与 `mintSYFromToken`（receiver = 调用者）+ `genesisBySY` 组合的铸出额、仓位字段、launcher 收额一致；组合路径保持可用（批量钱包单 tx），token 入口中间 `SY` 不经调用者账户。
 9. **token 入口两级滑点下限（恢复轮）**：换换输出 `< minSyOut` → `SYInsufficientSharesOut` 整笔回退；`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted` 整笔回退；两级各自独立生效（单独压低任一级即回退）。

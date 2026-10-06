@@ -229,8 +229,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         view
         returns (uint256 UAssetMintable)
     {
-        // Execution rejects opens against a drifted launcher, so the quote must fail the same
-        // way instead of pricing an open that cannot execute.
+        // Against a drifted launcher the quote fails exactly like execution; the parity check compares values
+        // with no zero-address exclusion, so equal unset launchers pass it and leave the quote live while
+        // execution reverts GenesisLauncherNotSet at the SP's zero-address gate.
         address SY = _trustedSYWithLauncherParity(SP);
         uint256 amountInSY = IStandardizedYield(SY).previewDeposit(tokenIn, tokenAmount);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
@@ -238,7 +239,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
     /// @inheritdoc IOutrunRouter
     function previewStakeFromSY(address SP, uint256 amountInSY) external view returns (uint256 UAssetMintable) {
-        // Same launcher-parity gate as the execution path: a quote for an unexecutable open reverts.
+        // Same launcher-parity gate as the execution path: a drifted launcher rejects the quote like
+        // execution, while equal unset launchers pass parity and the quote stays live with execution
+        // reverting GenesisLauncherNotSet at the SP's zero-address gate.
         _trustedSYWithLauncherParity(SP);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
     }

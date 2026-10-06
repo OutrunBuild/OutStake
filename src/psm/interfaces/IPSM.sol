@@ -182,6 +182,10 @@ interface IPSM {
      * @notice Deterministic preview of {sweepFees}: the fee surplus currently sweepable.
      * @dev Returns the same value {sweepFees} would pay out (identity with execution), in the
      *      bound reserve token's own decimals; returns 0 where {sweepFees} would revert ZeroInput.
+     *      A non-zero quote does not by itself guarantee the sweep executes — the payout additionally
+     *      requires feeRecipient to accept the bound reserve; a native-leg feeRecipient that rejects
+     *      native receipt makes every {sweepFees} revert NativeTransferFailed (permanent: feeRecipient
+     *      is immutable).
      * @return amountOut Sweepable reserve amount, floored to whole reserve units.
      */
     function sweepableFees() external view returns (uint256 amountOut);
@@ -193,6 +197,10 @@ interface IPSM {
      *      Zero-output note: a dust input whose face value floors to zero after the fee quotes 0 without
      *      reverting, while {mint} reverts ZeroInput on the same input — a deliberate quote/execution
      *      divergence; callers must treat a 0 quote as non-executable.
+     *      Executability note: a non-zero quote is necessary, not sufficient — {mint} additionally
+     *      requires the swap to fit the remaining stock-cap headroom (beyond it {mint} reverts
+     *      StockCapExceeded while the quote stays positive) and an unpaused uAsset with this PSM
+     *      registered as a reserve minter.
      * @param amountIn Reserve amount to preview, in the bound reserve token's own decimals.
      * @return amountOut uAsset the swap would mint, in 18 decimals.
      */
@@ -203,6 +211,10 @@ interface IPSM {
      * @dev Fee math only, same determinism contract as {quoteMint}. Zero-output note: dust inputs quote
      *      0 without reverting while {redeem} reverts ZeroInput — the same deliberate divergence as
      *      {quoteMint}; callers must treat a 0 quote as non-executable.
+     *      Executability note: a non-zero quote is necessary, not sufficient — {redeem} additionally
+     *      pays out of the reserve balance actually held by the instance, and beyond it the payout
+     *      transfer fails while the quote stays positive; the swap also requires an unpaused uAsset
+     *      with this PSM registered as a reserve minter, as on the mint side.
      * @param amountIn uAsset amount to preview burning, in 18 decimals.
      * @return amountOut Reserve amount the swap would pay out, in the bound reserve token's own decimals.
      */
