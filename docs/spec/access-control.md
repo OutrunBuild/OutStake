@@ -26,7 +26,7 @@
   - `setTrustedSY` 启用为纯 allowlist（owner 治理职责，EOA 可登记，完整语义见 `docs/spec/router/router-and-user-flows.md` §1.2）；`setTrustedSP` 的非零 SY 必须已登记且等于 `SP.SY()`；`setPsmForUAsset` 登记非零 PSM 前要求 `uAsset` 非零且 `IPSM(psm).uAsset() == uAsset`（绑定一致性；PSM 绑定 init 后无 setter，登记期检查稳定，运行期每次调用复读比对，完整语义见 `docs/spec/router/router-and-user-flows.md` §1.2.1）；纯 allowlist 路径接受 EOA 为 owner 治理结果，绑定检查路径对无代码地址仍经绑定读取回退（底层调用/解码错误，非代码门）；`sweep` 为脱困回收（零地址/零额回退，`NATIVE` sentinel 可转出，无 per-token blocklist 为有意设计）。
   - registry 校验在用户资产 `transferFrom`、token pull 与精确 approve 之前执行；未登记 target 回退 `IOutrunRouter.sol::UntrustedRouterTarget`，SP pair 漂移回退 `IOutrunRouter.sol::RouterTargetMismatch`，PSM 未登记回退 `IOutrunRouter.sol::UnregisteredPsm`、绑定漂移回退 `IOutrunRouter.sol::PsmBindingMismatch`。
 - oracle adapter 不拥有 proxy upgrade 权限
-- uAsset（`OutrunUniversalAssetsUpgradeable` 含完整继承链）owner 入口分为四组，均为 owner-only（当前无 `sweep` 为有意设计，未来若新增必须 `onlyOwner nonReentrant` 经 timelock/multisig 且在 `TokenHelper::_transferOut` 前对 `token == address(this)`/`SY`/`NATIVE` 阻断，否则移动 `balanceOf` 不回写 `amountInMinted` 破坏跨账本不变量）：
+- uAsset（`OutrunUniversalAssetsUpgradeable` 含完整继承链）owner 入口分为四组，均为 owner-only（当前无 `sweep` 为有意设计，未来若新增必须 `onlyOwner nonReentrant` 经 timelock/multisig 且在 `TokenHelper::_transferOut` 前对 `token == address(this)` 阻断——transfer 式 sweep 只移动余额、对 minter 债务台账与跨账本不变量零接触，阻断 `address(this)` 的依据是防 owner 绕过 mint/cap 授权面获得流通代币，且不得为 rescue 回写 `amountInMinted`；口径见 `docs/spec/common-foundations.md`「基础规则」sweep 条）：
   - 铸造面：`setMintingCap`、`revokeMinter`、`transferMinterDebt`、`setReserveMinter`（储备 minter 登记/撤销，为储备铸烧路径的 kill switch，语义见 `docs/spec/psm/peg-stability-module.md`）
   - 暂停面：`pause`、`unpause`
   - 跨链限流：`setOutboundRateLimit`、`removeOutboundRateLimit`（逐链出站限额）

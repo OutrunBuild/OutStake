@@ -14,7 +14,7 @@
 
 当前资产层以 `OutrunUniversalAssetsUpgradeable` 为中心，并通过 `OutrunOFTUpgradeable` 提供跨链扩展。
 `OutrunOFTUpgradeable` 的 pause 阻断本地用户主动发起的 ERC20 路径与 pause 之后新发起的 outbound send，但 inbound `_credit` 为不阻塞已在跨链流程中的代币而不受 `whenNotPaused` 阻断；完整执行边界以 `docs/spec/common-foundations.md`「Pause 与跨链 OFT 执行边界」为准。
-`uAsset` 的 minter 债务账本与流通供应分离：`revokeMinter(minter)` 只把该 minter 的 `mintingCap` 置零以禁止未来 mint，不清除既有 `amountInMinted`，未偿债务仍需后续 repay。`OutrunUniversalAssetsUpgradeable` 当前无 `sweep` 为有意设计，未来若新增 `sweep` 必须 `onlyOwner nonReentrant` 经 timelock/multisig 且阻断 `address(this)`/`SY`/`NATIVE`，否则脱钩跨账本不变量。
+`uAsset` 的 minter 债务账本与流通供应分离：`revokeMinter(minter)` 只把该 minter 的 `mintingCap` 置零以禁止未来 mint，不清除既有 `amountInMinted`，未偿债务仍需后续 repay。`OutrunUniversalAssetsUpgradeable` 当前无 `sweep` 为有意设计，未来若新增 `sweep` 必须 `onlyOwner nonReentrant` 经 timelock/multisig 且阻断 `address(this)`——阻断 `address(this)` 的依据是 sweep uAsset 自身将使 owner 绕过 mint/cap 授权面获得流通代币；transfer 式 sweep 只移动余额、对 minter 债务台账与跨账本不变量零接触，不得为 rescue 回写 `amountInMinted`（完整口径见 `docs/spec/common-foundations.md`「基础规则」sweep 条）。
 OFT outbound/inbound 不触碰 minter 债务台账、`_credit` 对零地址收款人重映射为 `0xdead` 的设计语义以 `docs/spec/common-foundations.md`「OFT 与 minter 债务豁免边界」为准。
 储备铸烧路径（`OutrunUniversalAssetsUpgradeable.sol::setReserveMinter` 登记/撤销，`OutrunUniversalAssetsUpgradeable.sol::reserveMint`/`::reserveBurn` 铸/烧，PSM 消费）同样不触碰 minter 债务台账，kill switch 为 `setReserveMinter(psm, false)`；完整豁免语义见 `docs/spec/psm/peg-stability-module.md`。
 `transferMinterDebt(from, to, amount)` 是 owner-only 的 minter 级债务迁移；输入校验、账务约束与用途限定以 `docs/spec/common-foundations.md`「基础规则」为准。

@@ -17,17 +17,23 @@ import {OutrunOFTUpgradeable} from "../omnichain/OutrunOFTUpgradeable.sol";
 ///      instances) mint and burn through the reserve path without reading or writing mintingCap/amountInMinted
 ///      either — the same exemption family, backed by locked reserves instead of minter debt.
 /// @dev No `sweep` rescue exists by design — the contract does not inherit `TokenHelper` and the full
-///      inheritance chain (`OutrunOFTUpgradeable`, `OutrunERC20PausableUpgradeable`, `OFTCoreUpgradeable`,
-///      `OutrunRateLimiterUpgradeable`) exposes no rescue entrypoint. Stranded ERC20/NATIVE balances have
-///      no owner rescue path. Any future rescue `sweep` MUST be `onlyOwner nonReentrant` behind a
-///      timelock/multisig, MUST revert on `token == address(this)` (uAsset itself), `token == SY`,
-///      and `token == NATIVE (address(0))` before `TokenHelper::_transferOut`, and MUST NOT move
-///      `balanceOf` without updating `amountInMinted` — otherwise it desyncs
-///      `OutrunUniversalAssetsUpgradeable.sol::checkMintableAmount`/`OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable`
-///      from `totalSupply` and breaks the cross-ledger invariant
-///      `OutrunUniversalAssetsUpgradeable.sol::mintingStatusTable[SP].amountInMinted == Σ active positions[id].principalDebt`
-///      (every staking position's minted principal; settled interest never enters the minter ledger),
-///      which is not self-healing (unlike `OutrunUniversalAssetsUpgradeable.sol::setMintingCap` over-cap).
+///      inheritance chain (`OutrunOFTUpgradeable`, `OutrunERC20PausableUpgradeable`,
+///      `OutrunERC20Upgradeable`, `OFTCoreUpgradeable`, `OutrunRateLimiterUpgradeable`, and upstream
+///      bases) exposes no rescue entrypoint. Stranded ERC20/NATIVE balances have no owner rescue path.
+///      Any future rescue `sweep` MUST be `onlyOwner nonReentrant` behind a timelock/multisig, and MUST
+///      revert on `token == address(this)` (uAsset itself) before `TokenHelper::_transferOut`.
+///      A transfer-based sweep
+///      moves only ERC20/NATIVE balances — it cannot touch `totalSupply`, the minter debt ledger, or the
+///      staking-position ledger held by other contracts. `token == address(this)` stays blocked because
+///      sweeping uAsset itself would hand the owner circulating tokens outside every mint/cap-authorized
+///      path. The debt ledger must never be adjusted to "compensate" for a rescue: `amountInMinted` moves
+///      only through `mint`/`repay`/`transferMinterDebt`, and any ledger write without position backing is
+///      itself what breaks the cross-ledger invariant
+///      `mintingStatusTable[SP].amountInMinted == Σ active positions[id].principalDebt`
+///      (every staking position's minted principal; settled interest never enters the minter ledger).
+///      uAsset supply may change only through the sanctioned entries — `mint`/`repay`,
+///      `reserveMint`/`reserveBurn`, and the OFT `_debit`/`_credit` `_update` flow; any supply change
+///      outside them desyncs supply from its debt/reserve backing.
 contract OutrunUniversalAssetsUpgradeable 
     // solhint-disable-next-line gas-small-strings
     layout at erc7201("outrun.storage.OutrunUniversalAssets")
