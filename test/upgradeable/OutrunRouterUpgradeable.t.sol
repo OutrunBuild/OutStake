@@ -1160,6 +1160,25 @@ contract OutrunRouterTest is Test {
         );
     }
 
+    /// @notice Launcher parity compares values with no zero-address exclusion: with both launchers
+    ///         unset the equality passes, the previews keep quoting, and the execution entry reverts
+    ///         at the SP's zero-address gate instead of at the router gate. Both genesis entries share
+    ///         the same thin-forward tail, so the SY entry pins the execution side.
+    function test_PreviewsQuoteWhenBothLaunchersUnsetWhileExecutionReverts() external {
+        _setLaunchersInParity(address(0));
+
+        assertGt(router.previewStakeFromSY(address(position), 10e18), 0, "unset-launcher parity must still quote SY");
+        assertGt(
+            router.previewStakeFromToken(address(position), address(underlying), 10e18),
+            0,
+            "unset-launcher parity must still quote the token leg"
+        );
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunStakeManager.GenesisLauncherNotSet.selector);
+        router.genesisBySY(address(position), 10e18, VERSE_ID, user, 0);
+    }
+
     // --------------------------------------------------------------------------
     // Helpers
     // --------------------------------------------------------------------------

@@ -663,6 +663,46 @@ contract OutrunPSMTest is UAssetHelper {
         assertEq(psmNative.netUAssetMinted(), 2_000_000e18);
     }
 
+    /// @notice Reserve-cover inequality in the unsaturated mixed-redemption domain: uAsset
+    ///         minted outside the PSM (debt-ledger path) is redeemed on this instance without
+    ///         saturating netUAssetMinted at zero, and the held reserve face value still
+    ///         covers the ledger — the tin/tout rounding slack is the only surplus, so
+    ///         sweeping it leaves the cover binding at exact equality.
+    function test_ReserveFaceValueCoversNetMintedUnderMixedForeignRedemption() external {
+        // In-flow mint: 1000e18 of native face at 0.1% tin mints 999e18 against 1000e18 held.
+        vm.prank(alice);
+        uint256 mintedOut = psmNative.mint{value: 1_000e18}(alice, 1_000e18);
+        assertEq(mintedOut, 999e18);
+        assertEq(psmNative.netUAssetMinted(), 999e18);
+
+        // Foreign uAsset enters supply through an unrelated debt-ledger minter, not via the PSM.
+        vm.prank(uAssetOwner);
+        uAsset.setMintingCap(bob, 1_000_000e18);
+        vm.prank(bob);
+        uAsset.mint(alice, 400e18);
+
+        // Mixed redemption: 400e18 is below the net minted, so the ledger decrements without
+        // saturating at zero — the unsaturated mixed state where cover must still hold.
+        vm.prank(alice);
+        uint256 paidOut = psmNative.redeem(alice, 400e18);
+        assertEq(paidOut, 399.6e18);
+        assertEq(psmNative.netUAssetMinted(), 599e18);
+
+        // Native leg face scale is 1: held native face is 1000e18 - 399.6e18 = 600.4e18, which
+        // covers the 599e18 ledger with the 1.4e18 of tin+tout rounding slack as the only surplus.
+        assertGt(psmNative.netUAssetMinted(), 0);
+        assertGe(address(psmNative).balance, psmNative.netUAssetMinted());
+
+        // Permissionless sweep drains the fee slack; the inequality then binds at exact
+        // equality — 599e18 held against 599e18 net minted, coverage at 100% with zero slack.
+        vm.prank(bob);
+        uint256 swept = psmNative.sweepFees();
+        assertEq(swept, 1.4e18);
+        assertGe(address(psmNative).balance, psmNative.netUAssetMinted());
+        assertEq(address(psmNative).balance, 599e18);
+        assertEq(psmNative.netUAssetMinted(), 599e18);
+    }
+
     function test_BindingIsImmutableAndIsolatedAcrossInstances() external {
         assertEq(psm.reserveToken(), address(usdc));
         assertEq(psmNative.reserveToken(), NATIVE);
