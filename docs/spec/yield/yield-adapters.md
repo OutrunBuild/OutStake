@@ -48,7 +48,7 @@
   - `AsBnbMintQueued()`：mint 返回零份额且 `activitiesOnGoing()` 为真，表示 Aster 队列处理中；等待活动完成后重试。
   - `AsBnbMintZeroShares()`：mint 返回零份额且没有进行中的活动，表示真实零产出失败，不按队列分支重试。
 - `OutrunAsBNBSYUpgradeable.sol::_deposit` 全量消费守卫：
-  - `AsBnbMintIncompleteConsumption(uint256 expectedConsumed, uint256 actualConsumed)`：slisBNB 分支 `balanceAfter != balanceBefore - amountDeposited` 时触发（`_selfBalance` 前后差校验，确认 `IAsBnbMinter.mintAsBnb` 已全量消费输入，否则部分成交残留可被 `SYBaseUpgradeable.sol::sweep` 提取；`expectedConsumed = amountDeposited`，`actualConsumed = balanceBefore - balanceAfter` 为 minter 实际拉取量，参数名与规格共有错位——第二参语义为已消耗量非剩余量），方向为 fail-closed 保守增强
+  - `AsBnbMintIncompleteConsumption(uint256 expectedConsumed, uint256 actualConsumed)`：slisBNB 分支 `balanceAfter != balanceBefore - amountDeposited` 时触发（`_selfBalance` 前后差校验，确认 `IAsBnbMinter.mintAsBnb` 已全量消费输入，否则部分成交残留可被 `SYBaseUpgradeable.sol::sweep` 提取；`expectedConsumed = amountDeposited`，`actualConsumed = balanceBefore - balanceAfter` 为 minter 实际拉取量），方向为 fail-closed 保守增强
 - `OutrunSlisBNBSYUpgradeable`：
   - `InvalidStakeManager()`：初始化时 `convertSnBnbToBnb(1 ether) < 1 ether`；这是 Lista adapter 的同名独立声明，表示 stake-manager 汇率低于平价。
   - `StakeManagerDepositZero()`：原生 BNB 存款前后收到的 slisBNB 余额差为零。
@@ -73,7 +73,6 @@
 > - `OutrunOFTUpgradeable.sol::_removeDust` 本地 `unchecked` 覆写（`(_amountLD / DCR) * DCR`，数学等价于 `OFTCoreUpgradeable` 检查版，`floor(a/r)*r ≤ a` 恒成立）
 > - 继承 `InvalidLocalDecimals`（`OFTCoreUpgradeable` 要求 `localDecimals ≥ 6`，本仓库 18-dec 部署不可达，仅继承暴露）
 > - `OutrunOFTUpgradeable.sol` `window==0` 早退跳过显式 `_removeDust`（返回值已是 DCR 倍数，重施为 no-op；`OutrunOFTUpgradeable.sol::_credit` 注释自证）
-> - `PSM3IncompleteConsumption` 第二参命名错位（`actualRemaining` 实载已消耗差值 `balanceBefore - balanceAfter`，规格与代码共有，语义以实现为准）
 > - `OutrunExchangeOracleAdapter.sol::rawDecimals` public getter 暴露（构造期捕获 `AggregatorInterface.decimals()`，仅读视图）
 > - `OutrunL2StakedUsdsSYUpgradeable.sol::maxDeviationBps()` 0→100 映射（storage 0 时 getter 返 100 默认，`initialize` 后恒为 100 不可达，仅为未配置态兜底）
 > - `OutrunRouter.sol` 注册表不再以显式代码门对 `SY`/`SP` 缺代码 fail-closed（allowlisting 为 owner 治理职责）；下游调用与绑定复读仍回退（对无代码地址以底层调用/解码错误回退，SY selfdestruct 后仍在下游回退）
