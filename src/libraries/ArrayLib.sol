@@ -3,7 +3,8 @@ pragma solidity ^0.8.35;
 
 /// @title Address array utility library
 /// @notice Allocates fixed-length address arrays from plain arguments. Consumed by the yield adapter family
-///      (10 contracts under src/yield/) to build token lists such as `getTokensIn`/`getTokensOut` responses.
+///      under src/yield/, directly or via inheritance, to build token lists such as `getTokensIn`/`getTokensOut`
+///      responses.
 library ArrayLib {
     /// @notice Creates an address array with one element.
     /// @param a The element.

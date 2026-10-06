@@ -50,7 +50,7 @@ abstract contract TokenHelper is ReentrancyGuardTransient {
     /// @param to Address to receive the tokens.
     /// @param amount Amount of token to transfer.
     /// @dev Skips zero amounts; native transfers revert with `NativeTransferFailed` when the call fails.
-    // Shared by SY adapters and the staking position; a single-inheritor Slither run cannot see those callers.
+    // Shared by several production contracts; a single-inheritor Slither run cannot see those callers.
     function _transferOut(address token, address to, uint256 amount) internal {
         if (amount == 0) return;
         if (token == NATIVE) {

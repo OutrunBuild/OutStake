@@ -15,7 +15,7 @@ import {MockToken, MockAToken, MockAavePool, MockStETH, MockWstETH, MockPSM3} fr
  * @notice Cross-block preview-vs-execution consistency for the three preview architectures.
  * @dev Existing preview tests (SYAdaptersUpgradeable / Router fuzz) compare quotes and executions in
  *      the same block. These tests insert vm.warp + a rate/index move between quote and execution and
- *      pin the documented three-state contract (05-invariants.md §I3): across a rate move, a preview
+ *      pin the three-state contract: across a rate move, a preview
  *      taken at T0 is either still exact, or the execution is lower and the call with
  *      minSharesOut = preview(T0) reverts (SYInsufficientSharesOut) — it can never silently pass at
  *      a lower amount. Discounted (50 bps) NATIVE branches additionally survive small cross-block
