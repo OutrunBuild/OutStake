@@ -145,7 +145,6 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
     uint256 internal injectedTin;
     uint256 internal injectedTout;
     address internal injectedUsdc;
-    address internal injectedUsdt;
     address internal injectedFeeRecipient;
     address internal injectedPolendMinter;
     bool internal polendCapSet;
@@ -169,9 +168,8 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
         injectedFeeRecipient = feeRecipient;
     }
 
-    function setUusdReserves(address usdc, address usdt) external {
+    function setUusdReserve(address usdc) external {
         injectedUsdc = usdc;
-        injectedUsdt = usdt;
     }
 
     function setPolendMinter(address minter) external {
@@ -201,8 +199,8 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
         return injectedFeeRecipient;
     }
 
-    function _uusdReserveTokens() internal view override returns (address, address) {
-        return (injectedUsdc, injectedUsdt);
+    function _uusdReserveToken() internal view override returns (address) {
+        return injectedUsdc;
     }
 
     function _polendMinterAddress() internal view override returns (address) {
@@ -253,9 +251,8 @@ contract OutstakeScriptUpgradeableTest is Test {
     OutstakeDeploymentScriptHarness internal script;
     OutrunDeployer internal outrunDeployer;
     MockLzEndpoint internal endpoint;
-    // UUSD-family ERC20 reserve stand-ins registered by the PSM wiring tests.
+    // UUSD-family ERC20 reserve stand-in registered by the PSM wiring tests.
     MockUSDC internal wiringUSDC;
-    MockUSDC internal wiringUSDT;
     // Fee-sweep recipient injected into every PSM instance the wiring tests deploy.
     address internal wiringFeeRecipient;
 
@@ -614,16 +611,13 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.exposedDeployUETHPSM(1);
         _assertPSMInstance("OutrunPSMETH", "ETH", address(0), 800_000 ether);
 
-        // UUSD stablecoin legs: one call deploys both single-reserve instances.
+        // UUSD stablecoin leg: one call deploys the single-reserve USDC instance.
         script.setFamilyUAsset(_familyUAsset("USD"));
         script.setPSMCaps(600_000 ether);
         vm.expectEmit(true, true, false, true);
         emit IUniversalAssets.SetReserveMinter(_psmByStem("OutrunPSMUSDUSDC"), true);
-        vm.expectEmit(true, true, false, true);
-        emit IUniversalAssets.SetReserveMinter(_psmByStem("OutrunPSMUSDUSDT"), true);
         script.exposedDeployUUSDPSM(1);
         _assertPSMInstance("OutrunPSMUSDUSDC", "USD", address(wiringUSDC), 600_000 ether);
-        _assertPSMInstance("OutrunPSMUSDUSDT", "USD", address(wiringUSDT), 600_000 ether);
 
         // UBNB native leg.
         script.setFamilyUAsset(_familyUAsset("BNB"));
@@ -641,14 +635,13 @@ contract OutstakeScriptUpgradeableTest is Test {
         _deployPSMWiringStack();
         script.setFamilyUAsset(_familyUAsset("USD"));
         script.setPSMCaps(600_000 ether);
-        script.setUusdReserves(address(0), address(wiringUSDT));
+        script.setUusdReserve(address(0));
 
         vm.expectRevert(OutstakeScript.InvalidAddress.selector);
         script.exposedDeployUUSDPSM(1);
 
-        // Nothing was deployed: both leg salts are unspent.
+        // Nothing was deployed: the leg salt is unspent.
         assertEq(_psmByStem("OutrunPSMUSDUSDC").code.length, 0);
-        assertEq(_psmByStem("OutrunPSMUSDUSDT").code.length, 0);
     }
 
     /// @dev Family-identity re-check: a cross-filled family env (the UETH entry pointed at the
@@ -874,7 +867,7 @@ contract OutstakeScriptUpgradeableTest is Test {
 
     /// @dev Full stack the PSM wiring consumes: the three family uAssets (deployed through the
     ///      script's own uAsset path), the router (state-injected via setRouterConfig), and the
-    ///      UUSD-family ERC20 reserve stand-ins. Per-family stock caps are set per deploy below and
+    ///      UUSD-family ERC20 reserve stand-in. Per-family stock caps are set per deploy below and
     ///      are distinct so a cross-family wiring mistake cannot pass.
     function _deployPSMWiringStack() internal {
         _deployFamilyUAssets();
@@ -884,8 +877,7 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.setRouterConfig(_wiringRouter(), address(new EmptyMockLauncher()));
 
         wiringUSDC = new MockUSDC("Mock USDC", "USDC", 6, address(this));
-        wiringUSDT = new MockUSDC("Mock USDT", "USDT", 6, address(this));
-        script.setUusdReserves(address(wiringUSDC), address(wiringUSDT));
+        script.setUusdReserve(address(wiringUSDC));
 
         wiringFeeRecipient = makeAddr("psmFeeRecipient");
         script.setPSMFeeRecipient(wiringFeeRecipient);

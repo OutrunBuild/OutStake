@@ -1,10 +1,10 @@
 # PSM（Peg Stability Module）规格
 
-> 现状：单实例单储备已落地（四实例 + (uAsset, reserveToken) 配对绑定），详见下文各节。本文各章节的行为规格与验收基准随该现状描述。
+> 现状：单实例单储备已落地（三实例 + (uAsset, reserveToken) 配对绑定，UUSD 族仅设 USDC 储备腿），详见下文各节。本文各章节的行为规格与验收基准随该现状描述。
 
 ## 系统定位
 
-PSM 是 uAsset 三条供给路径（CDP / PSM / POLend，路径定义见 `docs/spec/protocol.md`）中的锚定兑换路径：以储备资产 1:1（面值）双向兑换 uAsset，不承担借贷、清算或收益职能。兑换对为 USDC/USDT ↔ UUSD、ETH ↔ UETH、BNB ↔ UBNB。POLend 指 Memeverse 侧杠杆创世供给路径，不在本仓库实现，接线缝为 `src/router/interfaces/IPOLendGenesis.sol`。
+PSM 是 uAsset 三条供给路径（CDP / PSM / POLend，路径定义见 `docs/spec/protocol.md`）中的锚定兑换路径：以储备资产 1:1（面值）双向兑换 uAsset，不承担借贷、清算或收益职能。兑换对为 USDC ↔ UUSD、ETH ↔ UETH、BNB ↔ UBNB。POLend 指 Memeverse 侧杠杆创世供给路径，不在本仓库实现，接线缝为 `src/router/interfaces/IPOLendGenesis.sol`。
 
 PSM 与 SP（position 层）同族——两者都是面值铸/烧语义，差异在背书持有与需求绑定：**PSM 储备由协议持有**（锁定 reserve 背书铸烧，供非借款人换汇，锚定管道对全部 uAsset 持有人开放）；**SP 抵押为用户自有生息 SY**（面值铸造背书，铸出与 Memeverse genesis 需求严格绑定，唯一铸造入口 `stakeForGenesis`，见 `docs/spec/position/accounting.md`）。uAsset 溢价时 PSM 储备放出、折价时债赎套利（SP 仓 owner 买折价 uAsset 还债赎 SY）构成回锚双管道（风险模型见 `docs/ARCHITECTURE.md` §7）。
 
@@ -13,8 +13,8 @@ PSM 与 SP（position 层）同族——两者都是面值铸/烧语义，差异
 ## 合约结构与部署绑定
 
 - 合约面：`src/psm/OutrunPSMUpgradeable.sol`（UUPS upgradeable，与产品族一致）与接口 `src/psm/interfaces/IPSM.sol`。
-- 实例粒度（现状即单实例单储备，共四实例）：单个 PSM 实例绑定单一储备（对标 MakerDAO dss-psm 单实例单 gem）：UUSD 拆为 USDC-PSM 与 USDT-PSM 两实例，UETH / UBNB 各一原生实例，共四实例；部署期绑定该实例 uAsset 地址、储备 token 地址、owner 与计费结余接收方 `feeRecipient`；`OutrunPSMUpgradeable.sol::initialize` 参数为 uAsset、reserveToken、owner、feeRecipient、初始 `stockCap`/`tin`/`tout`，均按各自边界校验（cap > 0、0 ≤ fee ≤ 1%、feeRecipient 非零），`feeRecipient` 初始化后 immutable、无 setter。
-- 储备绑定（现状即单实例单储备）：`reserveToken` 在 `initialize` 后 immutable，无 setter、无注册表。`address(0)` 为 NATIVE 哨兵，为 UETH / UBNB 实例的绑定储备形式；UUSD 两实例分别绑定 USDC / USDT 合约地址。已删除 `setReserveToken` / `activeReserveTokens` mapping / `UnregisteredReserveToken` / `InvalidReserveToken` / `SetReserveToken`——不存在实例内多储备切换面。该绑定域封闭为 UUSD 族 USDC/USDT、UETH 族 ETH、UBNB 族 BNB，均为标准转账语义 ERC20（非 fee-on-transfer/非 rebasing，名义转账额=实收额），与 `docs/spec/yield/yield-adapters.md` 背书对账守卫及 `docs/deployment.md` 投产前置校验同源。
+- 实例粒度（现状即单实例单储备，共三实例）：单个 PSM 实例绑定单一储备（对标 MakerDAO dss-psm 单实例单 gem）：UUSD 仅设 USDC-PSM 单实例，UETH / UBNB 各一原生实例，共三实例；部署期绑定该实例 uAsset 地址、储备 token 地址、owner 与计费结余接收方 `feeRecipient`；`OutrunPSMUpgradeable.sol::initialize` 参数为 uAsset、reserveToken、owner、feeRecipient、初始 `stockCap`/`tin`/`tout`，均按各自边界校验（cap > 0、0 ≤ fee ≤ 1%、feeRecipient 非零），`feeRecipient` 初始化后可经 owner-only 的 `OutrunPSMUpgradeable.sol::setFeeRecipient` 变更（零地址 revert `ZeroInput`，发出 `SetFeeRecipient(previous, new)`）。
+- 储备绑定（现状即单实例单储备）：`reserveToken` 在 `initialize` 后 immutable，无 setter、无注册表。`address(0)` 为 NATIVE 哨兵，为 UETH / UBNB 实例的绑定储备形式；UUSD 单实例绑定 USDC 合约地址。已删除 `setReserveToken` / `activeReserveTokens` mapping / `UnregisteredReserveToken` / `InvalidReserveToken` / `SetReserveToken`——不存在实例内多储备切换面。该绑定域封闭为 UUSD 族 USDC、UETH 族 ETH、UBNB 族 BNB，均为标准转账语义 ERC20（非 fee-on-transfer/非 rebasing，名义转账额=实收额），与 `docs/spec/yield/yield-adapters.md` 背书对账守卫及 `docs/deployment.md` 投产前置校验同源。
 - 部署布线：uAsset owner 经 `OutrunUniversalAssetsUpgradeable.sol::setReserveMinter` 把每个 PSM 实例逐个登记为储备 minter；无 PSM 侧储备登记步骤，uAsset 侧登记完成后该实例兑换入口方可用。router 侧按 (uAsset, reserveToken) 配对逐个登记该实例（`OutrunRouter.sol::setPsmForUAsset`，现状即配对三参，见 `docs/spec/router/router-and-user-flows.md`），接线细节见 `docs/spec/router/router-and-user-flows.md` 与 `docs/deployment.md`。
 
 ## 兑换与费率
@@ -38,7 +38,7 @@ native 腿 `msg.value` 一致性（`TokenHelper.sol::_transferIn` 契约口径�
 - `tout` 作用于 redeem 侧付出额：`付出额 = 面值(amountIn) × (1 − tout)`，销毁面值与付出面值之差为 `tout` 侧费额，沉淀 PSM。
 - 标度与取整：费率为 18-dec 点值（`1e18` = 100%，0.1% = `1e15`，上限 1% = `1e16`）；用户所得额（mint 侧铸出额、redeem 侧付出额）一律 mulDiv 向下取整（floor，协议有利侧）；费额 = 输入面值 − 用户所得额（差额导出，非独立计算）；redeem 付出额由 18-dec 面值折回 reserve decimals 时的非整数单位按同口径 floor 舍去（如 6-dec reserve）。
 - 计费结余沉淀 PSM，唯一流出口为 `OutrunPSMUpgradeable.sol::sweepFees()`（见下文「计费结余提取」）；本金面（净铸出面值）始终不可触碰，可流出的只有经 `sweepFees` 提取的沉淀——流内即费额沉淀，饱和（混合外部赎回）域另含不再背书本实例流通 uAsset 的本金沉淀（见「计费结余提取」）。
-- 计费结余提取：`OutrunPSMUpgradeable.sol::sweepFees()` 为无许可公开入口（任何人可调，无 owner 门，对标 dss-psm `kick()`），接收方为部署期 immutable 绑定的 `feeRecipient`（无参数、无 setter，接收方不能运行期变更）；可提取额 = 当前计费结余 = PSM 所持绑定 reserve 面值 − 该实例净铸出 uAsset 面值（`netUAssetMinted`），向下取整到绑定储备最小单位后以绑定储备支付（NATIVE 哨兵走低层 call，失败 revert `NativeTransferFailed`，同 TokenHelper 契约；ERC20 走 transfer）；可提取额为 0 时 revert `ZeroInput`；成功提取发出 `FeesSwept(reserveToken, to, amountOut)`；提取只减结余不减本金面（「赎回的 uAsset ⊆ 本实例铸出」流内口径），不触碰 `netUAssetMinted` 与 `stockCap` 口径；饱和（混合外部赎回）域内以「余额 − netUAssetMinted」公式为权威口径——`netUAssetMinted` 饱和到 0 后可提取额可超出历史差额口径费额，超出部分是不再背书任何本实例流通 uAsset 的本金沉淀，随费额一并可提取。只读口径为 `IPSM` `sweepableFees()` view（返回绑定储备最小单位计可提取额），与 mint/redeem 的 quote 只读口径成对。
+- 计费结余提取：`OutrunPSMUpgradeable.sol::sweepFees()` 为无许可公开入口（任何人可调，无 owner 门，对标 dss-psm `kick()`），接收方为当前 `feeRecipient`（部署期绑定初值，运行期可经 owner-only `setFeeRecipient` 变更）；可提取额 = 当前计费结余 = PSM 所持绑定 reserve 面值 − 该实例净铸出 uAsset 面值（`netUAssetMinted`），向下取整到绑定储备最小单位后以绑定储备支付（NATIVE 哨兵走低层 call，失败 revert `NativeTransferFailed`，同 TokenHelper 契约；ERC20 走 transfer）；可提取额为 0 时 revert `ZeroInput`；成功提取发出 `FeesSwept(reserveToken, to, amountOut)`；提取只减结余不减本金面（「赎回的 uAsset ⊆ 本实例铸出」流内口径），不触碰 `netUAssetMinted` 与 `stockCap` 口径；饱和（混合外部赎回）域内以「余额 − netUAssetMinted」公式为权威口径——`netUAssetMinted` 饱和到 0 后可提取额可超出历史差额口径费额，超出部分是不再背书任何本实例流通 uAsset 的本金沉淀，随费额一并可提取。只读口径为 `IPSM` `sweepableFees()` view（返回绑定储备最小单位计可提取额），与 mint/redeem 的 quote 只读口径成对。
 - 参数与调整：`tin` = `tout` = 0.1% 为上线默认；`OutrunPSMUpgradeable.sol::setFees(uint256 tin_, uint256 tout_)` 为 owner-only 调整入口，边界 `0 ≤ fee ≤ 1%`，超出 revert `FeeOutOfRange`，成功发出 `SetFees`；无单次调幅限制。
 
 ## cap
@@ -49,7 +49,7 @@ cap 只约束存量，为单一参数口径（无单笔流量维度），owner �
 
 ## 储备侧账务与 minter 豁免
 
-PSM 所持储备由兑换流沉淀形成，无主动管理入口。前置条件：绑定储备为标准币（非 fee-on-transfer/非 rebasing，名义转账额=实收额），UUSD 两实例 USDC/USDT 与原生腿均满足该前提，与 `docs/spec/yield/yield-adapters.md` 背书对账守卫及 `docs/deployment.md` 投产前置校验同源；该前提下储备守恒式（spec 与测试锚点，按实例口径，绑定储备按面值折算后比较）成立：
+PSM 所持储备由兑换流沉淀形成，无主动管理入口。前置条件：绑定储备为标准币（非 fee-on-transfer/非 rebasing，名义转账额=实收额），UUSD 单实例 USDC 与原生腿均满足该前提，与 `docs/spec/yield/yield-adapters.md` 背书对账守卫及 `docs/deployment.md` 投产前置校验同源；该前提下储备守恒式（spec 与测试锚点，按实例口径，绑定储备按面值折算后比较）成立：
 
 `PSM 所持绑定 reserve 余额 × _faceValueScale（按面值折算，6-dec 储备×1e12，原生腿×1）== 该实例累计净流入面值 + 该实例未提取计费结余`
 
@@ -94,7 +94,7 @@ PSM 侧（`OutrunPSMUpgradeable.sol`，声明见 `IPSM.sol`）：
 - `OutrunPSMUpgradeable.sol::sweepFees` 在当前计费结余（可提取额）为 0 时 revert `ZeroInput`；native 付出低层 call 失败时 revert `NativeTransferFailed`（同 TokenHelper 契约）。
 - `OutrunPSMUpgradeable.sol::_authorizeUpgrade` 在绑定的 uAsset decimals 漂移时 revert `UAssetDecimalsMismatch`
 - 绑定储备只读面（现状即单实例单储备）：`OutrunPSMUpgradeable.sol::reserveToken` 返回 immutable 绑定储备（`address(0)` 即 NATIVE）；兑换与 quote 失败仍 fail-closed（`decimals()` / 转账失败 revert），不设 decimals / fee-on-transfer 白名单
-- 事件面：`SwapMintForUAsset(reserveToken, to, amountIn, amountOut, feeIn)` 由 `OutrunPSMUpgradeable.sol::mint` 成功时发出（`reserveToken` 为绑定储备）；`SwapRedeemForReserve(reserveToken, to, amountIn, amountOut, feeOut)` 由 `OutrunPSMUpgradeable.sol::redeem` 成功时发出；`SetFees` 由 `OutrunPSMUpgradeable.sol::setFees` 成功时发出（记录调整后费率）；`SetStockCap` 由 `OutrunPSMUpgradeable.sol::setStockCap` 成功时发出（记录调整后 cap 值）；`FeesSwept(reserveToken, to, amountOut)` 由 `OutrunPSMUpgradeable.sol::sweepFees` 成功提取时发出（`to` 为 immutable 绑定的 `feeRecipient`，`amountOut` 为绑定储备最小单位计的提取额）
+- 事件面：`SwapMintForUAsset(reserveToken, to, amountIn, amountOut, feeIn)` 由 `OutrunPSMUpgradeable.sol::mint` 成功时发出（`reserveToken` 为绑定储备）；`SwapRedeemForReserve(reserveToken, to, amountIn, amountOut, feeOut)` 由 `OutrunPSMUpgradeable.sol::redeem` 成功时发出；`SetFees` 由 `OutrunPSMUpgradeable.sol::setFees` 成功时发出（记录调整后费率）；`SetStockCap` 由 `OutrunPSMUpgradeable.sol::setStockCap` 成功时发出（记录调整后 cap 值）；`SetFeeRecipient(previousRecipient, newRecipient)` 由 `OutrunPSMUpgradeable.sol::setFeeRecipient` 成功时发出（记录调整前后接收方）；`FeesSwept(reserveToken, to, amountOut)` 由 `OutrunPSMUpgradeable.sol::sweepFees` 成功提取时发出（`to` 为当前 `feeRecipient`，`amountOut` 为绑定储备最小单位计的提取额）
 
 uAsset 侧（储备铸烧路径，声明见 `IUniversalAssets.sol`）：
 
@@ -113,4 +113,4 @@ T1 验收清单：
 4. 储备 == 净铸出面值守恒：按实例口径断言守恒式（「赎回的 uAsset ⊆ 本实例铸出」流内口径，含 sweep 后「净铸出面值 + 未提取计费结余」口径），并断言不等式 `绑定 reserve 面值 ≥ 本实例净铸出 uAsset 面值`（标准币前提下全域口径——含混合外部赎回与饱和后状态，sweep 后仍成立）。
 5. PSM minter 台账豁免：兑换全程 PSM 的 `mintingStatusTable` 记录保持全零；`revokeMinter` / `setMintingCap` 置零不影响储备路径；`OutrunUniversalAssetsUpgradeable.sol::setReserveMinter(psm, false)` 后双向兑换 revert `NotReserveMinter`（kill switch fail-closed）；`transferMinterDebt` 禁止以储备 minter 为迁入目标（revert `InvalidTransferParams`），该台账永不经债务迁移写入。
 6. 零 oracle 断言（quote 与执行等价 + 对供给/兑换/时间的确定性，锁定执行路径无任何价格输入）：等价面 `testFuzz_QuoteMatchesExecutionForBoundedAmounts`（quoteMint == mint 返回值、quoteRedeem == redeem 返回值，dust 零输出域除外——quote 返 0 而执行 revert `ZeroInput`，见「零输出守卫」；测试 bound 下界已排除该域，上界取 stock cap 值——mint 侧 fuzz 量恒在 headroom 域内（测试自行把 mint 侧断言域限定在 headroom 内；redeem 侧赎回量为刚铸出量、付出由同笔拉入的储备覆盖，结构性处于持有余额域内））；确定性面 `test_ZeroOracleQuoteDeterminismAgainstSupplySwapsAndTime`（totalSupply 变化、他人兑换、时间/块高漂移下 quote 恒定）。
-7. 计费结余提取：费额沉淀可经无许可 `OutrunPSMUpgradeable.sol::sweepFees` 提取至 immutable `feeRecipient`（任何人可调），提取额 = 结余面值 floor 到绑定储备最小单位、发出 `FeesSwept`；提取后守恒式与新口径仍成立；结余为 0 时 revert `ZeroInput`。
+7. 计费结余提取：费额沉淀可经无许可 `OutrunPSMUpgradeable.sol::sweepFees` 提取至当前 `feeRecipient`（任何人可调，接收方可经 owner-only `setFeeRecipient` 变更），提取额 = 结余面值 floor 到绑定储备最小单位、发出 `FeesSwept`；提取后守恒式与新口径仍成立；结余为 0 时 revert `ZeroInput`。

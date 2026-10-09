@@ -27,11 +27,11 @@
 - `OutrunStakingPositionUpgradeable` 作为 UUPS implementation 部署在 `ERC1967Proxy` 后；`SY`、`uAsset`、`protocolTreasury`（协议金库，利息腿接收方）等依赖由 initializer 写入 storage。
 - 行为规格真源：`docs/spec/position/accounting.md`（账务、计息、背书不变式与错误/事件真源）、`docs/spec/position/state-machines.md`（状态机与暂停矩阵）。
 
-### 1.3 PSM 层（锚定兑换供给路径，现状：单实例单储备已落地（四实例 + (uAsset, reserveToken) 配对绑定））
+### 1.3 PSM 层（锚定兑换供给路径，现状：单实例单储备已落地（三实例 + (uAsset, reserveToken) 配对绑定，UUSD 族仅设 USDC 储备腿））
 
 - `src/psm/OutrunPSMUpgradeable.sol`
 - `src/psm/interfaces/IPSM.sol`
-- 每个 (uAsset, reserve) 配对一个实例（现状即单实例单储备，共四实例）：UUSD 拆为 USDC-PSM 与 USDT-PSM 两实例，UETH / UBNB 各一原生实例，共四实例，每实例绑定单一储备（UETH / UBNB 为 NATIVE 哨兵），以绑定储备与对应 uAsset 按固定 1:1 面值双向兑换（`OutrunPSMUpgradeable.sol::mint` / `::redeem`，只操作绑定储备），为 uAsset 提供独立于 CDP 的锚定供给来源。
+- 每个 (uAsset, reserve) 配对一个实例（现状即单实例单储备，共三实例）：UUSD 仅设 USDC-PSM 单实例，UETH / UBNB 各一原生实例，共三实例，每实例绑定单一储备（UETH / UBNB 为 NATIVE 哨兵），以绑定储备与对应 uAsset 按固定 1:1 面值双向兑换（`OutrunPSMUpgradeable.sol::mint` / `::redeem`，只操作绑定储备），为 uAsset 提供独立于 CDP 的锚定供给来源。
 - 铸 / 烧经 uAsset 储备铸烧路径（`reserveMint` / `reserveBurn`），豁免 minter 债务台账；兑换费率与 `stockCap` 口径以行为规格真源为准；PSM 自身不设 pause、无 owner 提取面——计费结余经无许可 `OutrunPSMUpgradeable.sol::sweepFees` 提取至部署期 immutable 绑定的 `feeRecipient`。
 - 行为规格真源：`docs/spec/psm/peg-stability-module.md`。
 

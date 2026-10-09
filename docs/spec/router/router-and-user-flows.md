@@ -2,7 +2,7 @@
 
 > 状态：现行行为规格，已落地（genesis 双路径三入口：路径 A 维持 router 侧 PSM 门 `genesisByPSM` 与 `psmForUAsset` registry；路径 B（CDP 门）为薄转发便利层——`genesisByToken`（token 计价正门）/ `genesisBySY` 转发至 SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（v1 唯一铸造入口、面值/价值平价铸出），全额消费断言为 SP 侧原生）。自由质押路径（`stakeFromToken`/`stakeFromSY`）随 v1 genesis-only 决策删除（pre-deployment ABI break 免费，禁用 flag 方案否决——不留死代码）。另有双门之外的杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`（reserve 经 PSM 面值铸 uAsset 后全额作为利息交 Memeverse 侧 POLend 杠杆创世），独立成节见「杠杆创世门」。position 侧语义真源为 `docs/spec/position/accounting.md`，PSM 侧为 `docs/spec/psm/peg-stability-module.md`。
 
-> 现状：单实例单储备已落地（四实例 + (uAsset, reserveToken) 配对绑定），详见下文各节。
+> 现状：单实例单储备已落地（三实例 + (uAsset, reserveToken) 配对绑定），详见下文各节。
 
 ## 1. 文档目的
 

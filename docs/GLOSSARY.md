@@ -30,7 +30,7 @@
 - **mintedUAsset**：调用级铸出量标识符（`Stake` / `StakeForGenesis` 事件字段；`stakeForGenesis` 返回 positionId，铸出量经事件携带）：本次调用实际 mint 的 uAsset 数量（uAsset decimals 口径），数值上等于两段 down 面值换算结果 `floor₂(syStaked × exchangeRate())`，并写入该仓初始 `principalDebt`。与 storage 域债务字段 `principalDebt`（`Position` 结构体字段/`IOutrunStakeManager.sol::positions` 返回）分属两域、刻意异名。
 - **NATIVE**：address(0) 的别名，用于统一标识 chain native coin（如 ETH、BNB）。
 - **Position Owner**：CDP 仓位的拥有者，拥有 redeem 权限（任意时刻，无到期门）。
-- **PSM (Peg Stability Module)**：uAsset 的储备兑换供给路径：每个 `(uAsset, reserveToken)` 配对一个 `OutrunPSMUpgradeable` 实例，共四实例（UUSD 拆 USDC-PSM 与 USDT-PSM 两实例，UETH/UBNB 各一），储备资产与对应 uAsset 按固定 1:1 面值双向兑换，经 uAsset 储备铸烧路径（`reserveMint`/`reserveBurn`）供给、豁免 minter 债务台账；完整规格见 `docs/spec/psm/peg-stability-module.md`。
+- **PSM (Peg Stability Module)**：uAsset 的储备兑换供给路径：每个 `(uAsset, reserveToken)` 配对一个 `OutrunPSMUpgradeable` 实例，共三实例（UUSD 仅设 USDC-PSM 单实例，UETH/UBNB 各一），储备资产与对应 uAsset 按固定 1:1 面值双向兑换，经 uAsset 储备铸烧路径（`reserveMint`/`reserveBurn`）供给、豁免 minter 债务台账；完整规格见 `docs/spec/psm/peg-stability-module.md`。
 - **USR (Universal Asset Savings Rate)**：uAsset 的储蓄层：每个 uAsset 族一个 `OutrunUSRVaultUpgradeable` 实例（suETH/suUSD/suBNB，ERC4626），存入对应 uAsset、份额价格按治理族利率按秒增长（timestamp 锚定）；硬预算 fail-safe（禁 mint 计息、余额不足自动暂停计息）、无回收入口；完整规格见 `docs/spec/usr/usr-vaults.md`。
 - **SSR (Sky Savings Rate)**：sUSDS 持有者按块累积的收益率（Sky 官方术语；Base 侧 RateProvider 以 1e27（ray）域跨链镜像该读数——收益累积率镜像，非市场价）：Base PSM3 消费该率源，`OutrunL2StakedUsdsSYUpgradeable.sol::exchangeRate` 以其为独立率源，与 `IPSM3.sol::previewSwapExactIn` 报价构成 PSM3-SSR 双源偏差守卫（偏离超 `maxDeviationBps`，默认 100 bps，即 revert `RateDeviationExceeded`）；守卫语义真源 `docs/spec/yield/oracles-and-integrations.md`。
 - **Minter**：在 uAsset 合约中被 owner 授予 mintingCap 的地址，可在额度内铸造 uAsset。

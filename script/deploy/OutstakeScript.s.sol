@@ -78,13 +78,13 @@ contract OutstakeScript is BaseScript {
     // Family uAsset addresses (already deployed, owned by OWNER): UETH, UUSD, UBNB.
     // Router address for the PSM registry wiring: OUTRUN_ROUTER (same key as _applyRouterConfig).
     // PSM, one instance per (family, reserve) pair: UETH_PSM_STOCK_CAP (native leg),
-    //   UUSD_USDC_PSM_STOCK_CAP / UUSD_USDT_PSM_STOCK_CAP (one per stablecoin leg),
+    //   UUSD_USDC_PSM_STOCK_CAP (USDC leg),
     //   UBNB_PSM_STOCK_CAP (native leg) — each required, 18-dec face value, no default (a
     //   family-agnostic placeholder would break the reserve anchoring); shared fees PSM_TIN /
     //   PSM_TOUT (optional, default 0.1% each, bounded to [0, 1%]); the shared sweep recipient
     //   PSM_FEE_RECIPIENT (required, no default — the binding is immutable post-initialize, so a
     //   placeholder would permanently misroute fee payouts); and the UUSD-family ERC20
-    //   reserve addresses PSM_USDC / PSM_USDT (required; the UETH/UBNB instances bind the native
+    //   reserve address PSM_USDC (required; the UETH/UBNB instances bind the native
     //   leg and read no reserve env).
     // mintingCap: SP_MINTING_CAP (CDP SPs, optional, placeholder default), POLEND_MINTER (engine
     //   minter address, required for the POLend wiring), and <SYMBOL>_POLEND_MINTING_CAP (optional
@@ -140,7 +140,7 @@ contract OutstakeScript is BaseScript {
             _deployOutrunRouter(nonce);
         } else if (batch == keccak256(bytes("psm"))) {
             _deployUETHPSM(nonce);
-            _deployUUSDPSM(nonce); // deploys both the USDC and the USDT leg
+            _deployUUSDPSM(nonce); // deploys the USDC leg
             _deployUBNBPSM(nonce);
         } else if (batch == keccak256(bytes("usr"))) {
             _deploySuETH(nonce);
@@ -317,15 +317,14 @@ contract OutstakeScript is BaseScript {
         _deployPSM(nonce, "UETH", address(0), "UETH_PSM_STOCK_CAP", "OutrunPSMETH");
     }
 
-    /// @dev The UUSD family serves two stablecoin legs, so one call deploys two single-reserve
-    ///      instances (USDC leg + USDT leg) at distinct salts with independent caps.
+    /// @dev The UUSD family binds a single stablecoin leg, so one call deploys the single-reserve
+    ///      USDC instance.
     function _deployUUSDPSM(uint256 nonce) internal {
-        (address usdc, address usdt) = _uusdReserveTokens();
-        if (usdc == address(0) || usdt == address(0) || usdc == usdt) {
+        address usdc = _uusdReserveToken();
+        if (usdc == address(0)) {
             revert InvalidAddress();
         }
         _deployPSM(nonce, "UUSD", usdc, "UUSD_USDC_PSM_STOCK_CAP", "OutrunPSMUSDUSDC");
-        _deployPSM(nonce, "UUSD", usdt, "UUSD_USDT_PSM_STOCK_CAP", "OutrunPSMUSDUSDT");
     }
 
     function _deployUBNBPSM(uint256 nonce) internal {
@@ -338,7 +337,7 @@ contract OutstakeScript is BaseScript {
     ///      travels in `initialize` — there is no post-deploy reserve registration. Both swap
     ///      directions stay unusable until the uAsset-side registration is in place. Env reads and
     ///      address-level checks (uAsset/router code and ownership, family identity, reserve
-    ///      zero/equality checks) run BEFORE the CREATE3 deploy, so a missing env key or invalid
+    ///      zero checks) run BEFORE the CREATE3 deploy, so a missing env key or invalid
     ///      address fails closed with nothing deployed. Value bounds the pre-deploy path does not
     ///      re-check — a zero stockCap or fees outside [0, 1%] — are enforced by `initialize` inside
     ///      the proxy deployment transaction: only that proxy transaction rolls back atomically (the
@@ -437,11 +436,10 @@ contract OutstakeScript is BaseScript {
         feeRecipient = vm.envAddress("PSM_FEE_RECIPIENT");
     }
 
-    /// @dev Env-read seam for the UUSD-family stablecoin reserve addresses (PSM_USDC / PSM_USDT);
-    ///      harness overrides inject them without env.
-    function _uusdReserveTokens() internal view virtual returns (address usdc, address usdt) {
+    /// @dev Env-read seam for the UUSD-family stablecoin reserve address (PSM_USDC);
+    ///      harness overrides inject it without env.
+    function _uusdReserveToken() internal view virtual returns (address usdc) {
         usdc = vm.envAddress("PSM_USDC");
-        usdt = vm.envAddress("PSM_USDT");
     }
 
     /// @dev Fail-closed pre-checks before any PSM wiring state changes: the two owner-only calls
