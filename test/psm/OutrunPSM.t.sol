@@ -406,7 +406,7 @@ contract OutrunPSMTest is UAssetHelper {
     }
 
     /// @notice Fee accumulation on the ERC20 leg: mint + redeem fees are sweepable by anyone
-    ///         (bob is not the owner) to the immutable feeRecipient, the payout equals
+    ///         (bob is not the owner) to the bound feeRecipient, the payout equals
     ///         sweepableFees(), the FeesSwept event fires, and the sweep leaves the
     ///         reserve-cover invariant (held face >= net minted) intact without touching the ledger.
     function test_SweepFeesERC20Leg() external {
@@ -429,6 +429,41 @@ contract OutrunPSMTest is UAssetHelper {
         assertEq(usdc.balanceOf(address(psm)), 0);
         // The sweep drains only the surplus: net minted and the cap headroom are untouched.
         assertEq(psm.netUAssetMinted(), 0);
+    }
+
+    /// @notice The sweep payout recipient is an owner-settable parameter: updating it emits
+    ///         SetFeeRecipient(previous, new) and redirects the next sweep to the new address,
+    ///         while a zero address reverts ZeroInput and a non-owner call reverts unauthorized.
+    ///         The sweepable surplus itself is unaffected — the parameter moves no funds, it only
+    ///         redirects where the surplus exits.
+    function test_SetFeeRecipientUpdatesSweepDestination() external {
+        vm.prank(alice);
+        psm.mint(alice, 1000e6); // 1e18 face fee retained; sweepable = 1_000_000 reserve units
+
+        address newRecipient = makeAddr("newRecipient");
+        vm.prank(psmOwner);
+        vm.expectEmit(true, true, false, true);
+        emit IPSM.SetFeeRecipient(feeRecipient, newRecipient);
+        psm.setFeeRecipient(newRecipient);
+
+        assertEq(psm.feeRecipient(), newRecipient);
+        assertEq(psm.sweepableFees(), 1_000_000);
+
+        // The next sweep pays the updated recipient; the old one receives nothing.
+        vm.prank(bob);
+        uint256 swept = psm.sweepFees();
+        assertEq(swept, 1_000_000);
+        assertEq(usdc.balanceOf(newRecipient), 1_000_000);
+        assertEq(usdc.balanceOf(feeRecipient), 0);
+
+        // Zero address fails closed; the parameter is owner-only.
+        vm.prank(psmOwner);
+        vm.expectRevert(IPSM.ZeroInput.selector);
+        psm.setFeeRecipient(address(0));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
+        psm.setFeeRecipient(feeRecipient);
     }
 
     /// @notice Fee accumulation on the native leg: the sweep pays out native via the low-level
@@ -454,8 +489,8 @@ contract OutrunPSMTest is UAssetHelper {
 
     /// @notice A native sweep to a feeRecipient that rejects native transfers reverts
     ///         NativeTransferFailed and leaves the sweepable surplus and the held native intact:
-    ///         the feeRecipient is immutable, so until it can receive native the surplus stays
-    ///         reserve cover in the PSM.
+    ///         until the owner redirects payouts via setFeeRecipient (or the recipient can receive
+    ///         native), the surplus stays reserve cover in the PSM.
     function test_RevertIf_SweepFeesToNativeRejectingFeeRecipient() external {
         NativeRejectingReceiver rejector = new NativeRejectingReceiver();
         OutrunPSMUpgradeable psmReject = _deploy(

@@ -20,8 +20,10 @@ import {IERC20, TokenHelper} from "../libraries/TokenHelper.sol";
 ///      only binding-time reserve check is the initialization `decimals()` read (skipped for the
 ///      native leg, must not exceed 18); there is otherwise no code check. Every reserve taken in stays in this contract: there is no
 ///      pause and no owner extraction surface — the only outflow besides swaps is the permissionless
-///      `sweepFees` fee-balance exit paid to the immutable `feeRecipient` — the owner only touches
-///      parameters and upgrades.
+///      `sweepFees` surplus exit paid to `feeRecipient`. The sweepable surplus never contains the
+///      reserve backing net-minted uAsset (it only grows through swap fees, direct transfers-in, and
+///      rescale dust), so `setFeeRecipient` moves no user funds — it only redirects where the
+///      surplus exits; the owner otherwise touches parameters and upgrades.
 ///      The uAsset-side pause is the circuit breaker for both swap directions (reserveMint/reserveBurn are
 ///      whenNotPaused on the uAsset).
 ///      Accounting invariant: PSM reserve balance == net uAsset face value minted + accumulated fees —
@@ -88,7 +90,7 @@ contract OutrunPSMUpgradeable layout at erc7201("outrun.storage.OutrunPSM")
     /// @param uAsset_ Family uAsset swapped against the bound reserve
     /// @param reserveToken_ The single reserve this instance serves (NATIVE sentinel for the native currency)
     /// @param owner_ Initial owner address
-    /// @param feeRecipient_ Recipient of sweepFees payouts; immutable after initialization (no setter)
+    /// @param feeRecipient_ Recipient of sweepFees payouts; initial value, updatable via setFeeRecipient
     /// @param stockCap_ Initial stock cap (18-dec face value)
     /// @param tin_ Initial mint-side fee
     /// @param tout_ Initial redeem-side fee
@@ -151,6 +153,23 @@ contract OutrunPSMUpgradeable layout at erc7201("outrun.storage.OutrunPSM")
         outrunPSMStorage.stockCap = stockCap_;
 
         emit SetStockCap(stockCap_);
+    }
+
+    /// @notice Updates the sweep payout recipient. Owner-only.
+    /// @dev The sweepable surplus is swap-fee income plus any non-swap inflows (direct transfers-in,
+    ///      rescale dust) — never the reserve backing net-minted uAsset — so this parameter moves no
+    ///      user funds, it only redirects where the surplus exits. A native-leg recipient that
+    ///      rejects native receipt makes every sweepFees revert NativeTransferFailed until changed
+    ///      here, so a rejecting recipient is recoverable rather than permanent.
+    /// @param feeRecipient_ New sweep payout recipient
+    function setFeeRecipient(address feeRecipient_) external override onlyOwner {
+        if (feeRecipient_ == address(0)) revert ZeroInput();
+
+        OutrunPSMStorage storage $ = outrunPSMStorage;
+        address previousRecipient = $.feeRecipient;
+        $.feeRecipient = feeRecipient_;
+
+        emit SetFeeRecipient(previousRecipient, feeRecipient_);
     }
 
     /// @notice Swaps the bound reserve for uAsset at 1:1 face value, net of the mint fee `tin`.
@@ -232,9 +251,9 @@ contract OutrunPSMUpgradeable layout at erc7201("outrun.storage.OutrunPSM")
         emit SwapRedeemForReserve(reserveToken_, to, amountIn, amountOut, feeOut);
     }
 
-    /// @notice Pays out the current accumulated fee surplus to the immutable `feeRecipient`.
-    /// @dev Permissionless — anyone may call it; the recipient is fixed at initialization (no
-    ///      setter, no parameters). The sweepable amount is the bound-reserve face value held minus
+    /// @notice Pays out the current accumulated fee surplus to the `feeRecipient`.
+    /// @dev Permissionless — anyone may call it; the recipient is the current `feeRecipient`
+    ///      (set at initialization, updatable via setFeeRecipient). The sweepable amount is the bound-reserve face value held minus
     ///      this instance's net minted uAsset face value — the authoritative measure under mixed
     ///      foreign redemptions: once `netUAssetMinted` saturates to zero, principal left behind by
     ///      foreign redemptions becomes sweepable together with the fees. Net minted can never
@@ -325,8 +344,8 @@ contract OutrunPSMUpgradeable layout at erc7201("outrun.storage.OutrunPSM")
     ///      `sweepFees` would revert ZeroInput — callers must treat a 0 quote as non-executable.
     ///      A positive quote does not by itself guarantee execution — the payout additionally
     ///      requires `feeRecipient` to accept the bound reserve; a native-leg feeRecipient that
-    ///      rejects native receipt reverts `NativeTransferFailed` on every sweep (permanent — the
-    ///      recipient is immutable).
+    ///      rejects native receipt reverts `NativeTransferFailed` on every sweep until the owner
+    ///      redirects payouts via `setFeeRecipient`.
     /// @return amountOut Sweepable reserve amount, floored to whole reserve units
     function sweepableFees() external view override returns (uint256 amountOut) {
         amountOut = _sweepableFees(outrunPSMStorage.reserveToken);

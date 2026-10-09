@@ -50,9 +50,17 @@ interface IPSM {
     event SetStockCap(uint256 stockCap);
 
     /**
+     * @notice Emitted by {setFeeRecipient} after the sweep payout recipient is updated.
+     * @param previousRecipient Recipient before the update.
+     * @param newRecipient Recipient after the update.
+     */
+    event SetFeeRecipient(address indexed previousRecipient, address indexed newRecipient);
+
+    /**
      * @notice Emitted by {sweepFees} after accumulated fees are paid out successfully.
      * @param reserveToken Bound reserve token paid out (NATIVE sentinel for the native currency).
-     * @param to Receiver of the payout: the immutable `feeRecipient` bound at initialization.
+     * @param to Receiver of the payout: the current `feeRecipient` (initial value bound at
+     *      initialization, updatable via {setFeeRecipient}).
      * @param amountOut Reserve amount paid to `to`, in the reserve token's own decimals, floor-rounded.
      */
     event FeesSwept(address indexed reserveToken, address indexed to, uint256 amountOut);
@@ -105,7 +113,7 @@ interface IPSM {
      * @param uAsset_ Family uAsset swapped against the bound reserve.
      * @param reserveToken_ The single reserve this instance serves (NATIVE sentinel for the native currency).
      * @param owner_ Initial owner address.
-     * @param feeRecipient_ Recipient of {sweepFees} payouts; immutable after initialization (no setter).
+     * @param feeRecipient_ Recipient of {sweepFees} payouts; initial value, updatable via {setFeeRecipient}.
      * @param stockCap_ Initial stock cap (18-dec face value).
      * @param tin_ Initial mint-side fee.
      * @param tout_ Initial redeem-side fee.
@@ -137,6 +145,16 @@ interface IPSM {
     function setStockCap(uint256 stockCap_) external;
 
     /**
+     * @notice Updates the sweep payout recipient. Owner-only.
+     * @dev The sweepable surplus never contains the reserve backing net-minted uAsset (it only
+     *      grows through swap fees, direct transfers-in, and rescale dust), so this parameter moves
+     *      no user funds — it only redirects where the surplus exits. Reverts ZeroInput for a zero
+     *      address. Emits {SetFeeRecipient}.
+     * @param feeRecipient_ New sweep payout recipient.
+     */
+    function setFeeRecipient(address feeRecipient_) external;
+
+    /**
      * @notice Swaps the bound reserve for uAsset at 1:1 face value, net of the mint fee `tin`.
      * @dev `msg.value` must equal `amountIn` for the native leg and be zero for an ERC20 leg (pulled via
      *      transferFrom). Reverts ZeroInput for a zero receiver/amount or an amount that floors to a
@@ -164,8 +182,9 @@ interface IPSM {
     function redeem(address to, uint256 amountIn) external returns (uint256 amountOut);
 
     /**
-     * @notice Pays out the current accumulated fee surplus to the immutable `feeRecipient`.
-     * @dev Permissionless — anyone may call it; the recipient is fixed at initialization. The
+     * @notice Pays out the current accumulated fee surplus to the `feeRecipient`.
+     * @dev Permissionless — anyone may call it; the recipient is the current `feeRecipient` (initial
+     *      value bound at initialization, updatable via {setFeeRecipient}). The
      *      sweepable amount is the bound-reserve face value held minus this instance's net minted
      *      uAsset face value (the authoritative measure under mixed foreign redemptions: once net
      *      minted saturates to zero, principal left behind by foreign redemptions becomes
@@ -184,8 +203,8 @@ interface IPSM {
      *      bound reserve token's own decimals; returns 0 where {sweepFees} would revert ZeroInput.
      *      A non-zero quote does not by itself guarantee the sweep executes — the payout additionally
      *      requires feeRecipient to accept the bound reserve; a native-leg feeRecipient that rejects
-     *      native receipt makes every {sweepFees} revert NativeTransferFailed (permanent: feeRecipient
-     *      is immutable).
+     *      native receipt makes every {sweepFees} revert NativeTransferFailed until the owner
+     *      redirects payouts via {setFeeRecipient}.
      * @return amountOut Sweepable reserve amount, floored to whole reserve units.
      */
     function sweepableFees() external view returns (uint256 amountOut);
@@ -233,7 +252,8 @@ interface IPSM {
     function reserveToken() external view returns (address);
 
     /**
-     * @notice Returns the recipient of {sweepFees} payouts, bound at initialization.
+     * @notice Returns the recipient of {sweepFees} payouts: the initial value bound at
+     *      initialization, updatable via {setFeeRecipient}.
      * @return feeRecipient address of the fee sweep recipient.
      */
     function feeRecipient() external view returns (address);
