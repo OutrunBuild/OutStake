@@ -292,6 +292,7 @@ contract OutstakeScriptUpgradeableTest is Test {
         _pushChain(97, LOCAL_EID);
         _pushChain(84532, 40_245);
         _pushChain(11155111, 40_161);
+        _pushChain(421614, 40_231);
     }
 
     function testDeployUETHUUSDAndUBNBCreateInitializedProxiesAndConfigureRemoteOmnichainState() external {
@@ -396,7 +397,7 @@ contract OutstakeScriptUpgradeableTest is Test {
     }
 
     function testDeployUAssetRevertsWhenLocalChainNotInOmnichainSet() external {
-        // A chain id outside the 3-chain mesh: fully wired locally but never a member of
+        // A chain id outside the 4-chain mesh: fully wired locally but never a member of
         // _sharedOmnichainIds, so validation must fail closed before any peer/rate-limit config.
         uint32 nonMemberChainId = 10143;
         vm.chainId(nonMemberChainId);
@@ -440,61 +441,137 @@ contract OutstakeScriptUpgradeableTest is Test {
         assertEq(deployedRouter.memeverseLauncher(), address(launcher));
     }
 
-    function testRunRouterOnlyDoesNotRequireChainEndpointEnv() external {
-        // Poison the 6 chain endpoint/EID envs that `_chainsInit` reads, overriding whatever the
-        // runner environment pre-sets (repo `.env`/CI/dev shells may already provide them). Each key
-        // is overwritten with a deliberately-invalid value: the 3 *_ENDPOINT keys get "0xdeadbeef"
-        // (not a valid 20-byte address → `vm.envAddress` reverts) and the 3 *_EID keys get
-        // "not-a-number" (not numeric → `vm.envUint` reverts). A fixed Router-only run() never reads
-        // them, so the test passes; a regression that re-reads any key reverts immediately. This is
-        // an explicit poison-pin rather than an "env must be absent" precondition, so the test is
+    // --- run()-level batch dispatch ---
+    // All run()-driven scenarios share one test function on purpose: forge executes test
+    // functions concurrently within a contract, and run()'s config travels through process-global
+    // env keys (BATCH / DEPLOYMENT_NONCE / OWNER / OUTRUN_DEPLOYER / MEMEVERSE_LAUNCHER) with no
+    // env-unset cheatcode. Single-writer ownership of those keys keeps the scenarios race-free;
+    // the parts below run strictly in sequence, so the unset-BATCH pin executes before any BATCH
+    // write in this function.
+    function testRunBatchDispatchUnsetUnknownAndRouterGenerationPaths() external {
+        // Part 1 — unset BATCH fail-closed. Reaching the UnknownBatch revert still requires the
+        // OUTRUN_DEPLOYER pin to pass first: run() reads it and runs `_assertOutrunDeployer(1)`
+        // before the batch dispatch, so the harness deploys the matching OutrunDeployer.
+        // An ambient ops export would route run() into a real batch instead of the unset path.
+        assertFalse(vm.envExists("BATCH"), "ambient BATCH export breaks unset-batch assert");
+
+        OutstakeScriptRunHarness runScriptUnset = new OutstakeScriptRunHarness();
+        vm.etch(runScriptUnset.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
+        address canonicalDeployerUnset = runScriptUnset.configureRun(1);
+
+        vm.setEnv("OWNER", vm.toString(address(runScriptUnset)));
+        vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployerUnset));
+
+        vm.expectRevert("UnknownBatch: '<unset>' (expected one of: deployer check uasset router psm usr polend mocks)");
+        runScriptUnset.run();
+        // The revert unwinds inside the `broadcaster` modifier, so its `vm.stopBroadcast` is
+        // unreachable and the broadcast stays open; close it so later parts can open their own.
+        vm.stopBroadcast();
+
+        // Part 2 — unknown BATCH echoes the rejected value, not the '<unset>' fallback: a dispatch
+        // that echoed the wrong operand would mislead the operator about which key to fix.
+        OutstakeScriptRunHarness runScriptUnknown = new OutstakeScriptRunHarness();
+        vm.etch(runScriptUnknown.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
+        address canonicalDeployerUnknown = runScriptUnknown.configureRun(1);
+
+        vm.setEnv("OWNER", vm.toString(address(runScriptUnknown)));
+        vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployerUnknown));
+        vm.setEnv("BATCH", "not-a-batch");
+
+        vm.expectRevert(
+            "UnknownBatch: 'not-a-batch' (expected one of: deployer check uasset router psm usr polend mocks)"
+        );
+        runScriptUnknown.run();
+        // Same open-broadcast cleanup as part 1: the revert bypasses the modifier's stop.
+        vm.stopBroadcast();
+
+        // Part 3 — unset DEPLOYMENT_NONCE must fall back to the envOr default of 1, not revert or
+        // silently shift salts: cross-chain address stability depends on every operator shell that
+        // leaves the key unset deploying at the same generation-1 addresses. The unset-key path is
+        // this part's subject, so an ambient ops export would silently shift the expected salt;
+        // fail with the culprit named instead of an unrelated-looking red.
+        assertFalse(vm.envExists("DEPLOYMENT_NONCE"), "ambient DEPLOYMENT_NONCE export breaks default-nonce assert");
+
+        OutstakeScriptRunHarness runScriptDefault = new OutstakeScriptRunHarness();
+        vm.etch(runScriptDefault.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
+        address canonicalDeployerDefault = runScriptDefault.configureRun(1);
+        EmptyMockLauncher launcherDefault = new EmptyMockLauncher();
+
+        vm.setEnv("OWNER", vm.toString(address(runScriptDefault)));
+        vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployerDefault));
+        vm.setEnv("MEMEVERSE_LAUNCHER", vm.toString(address(launcherDefault)));
+        vm.setEnv("BATCH", "router");
+        // DEPLOYMENT_NONCE deliberately left unset here; the chain endpoint/EID envs are not
+        // poisoned either — the router batch never reads them (pinned in part 4).
+
+        // Generation nonce defaults to 1, so the expected CREATE3 salt is the OutrunRouter/1
+        // namespace; the injected config override also reverts on any other deployed address.
+        bytes32 defaultSalt = keccak256(abi.encodePacked("OutrunRouter", uint256(1)));
+        runScriptDefault.setRouterConfigOverride(
+            OutrunDeployer(canonicalDeployerDefault).getDeployed(address(runScriptDefault), defaultSalt)
+        );
+
+        runScriptDefault.run();
+
+        // Router present at the generation-1 salt and owned by the run harness: an unset key that
+        // reverted, or defaulted to any other generation, fails one of these two asserts.
+        OutrunRouter defaultRouter =
+            OutrunRouter(OutrunDeployer(canonicalDeployerDefault).getDeployed(address(runScriptDefault), defaultSalt));
+        assertGt(address(defaultRouter).code.length, 0);
+        assertEq(defaultRouter.owner(), address(runScriptDefault));
+
+        // Part 4 — a Router-batch run() must never read the chain endpoint/EID envs. Poison the 8
+        // keys `_chainsInit` reads, overriding whatever the runner environment pre-sets (repo
+        // `.env`/CI/dev shells may already provide them): the 4 *_ENDPOINT keys get "0xdeadbeef"
+        // (not a valid 20-byte address → `vm.envAddress` reverts) and the 4 *_EID keys get
+        // "not-a-number" (not numeric → `vm.envUint` reverts). A regression that re-reads any key
+        // reverts immediately — the revert-if-read-on-regression behavior is the pin; an explicit
+        // poison-pin rather than an "env must be absent" precondition, so the part stays
         // discriminating regardless of what the environment pre-sets.
-        string[3] memory endpointKeys = ["BSC_TESTNET_ENDPOINT", "BASE_SEPOLIA_ENDPOINT", "ETHEREUM_SEPOLIA_ENDPOINT"];
+        string[4] memory endpointKeys =
+            ["BSC_TESTNET_ENDPOINT", "BASE_SEPOLIA_ENDPOINT", "ETHEREUM_SEPOLIA_ENDPOINT", "ARBITRUM_SEPOLIA_ENDPOINT"];
         for (uint256 i = 0; i < endpointKeys.length; i++) {
             vm.setEnv(endpointKeys[i], "0xdeadbeef");
         }
 
-        string[3] memory eidKeys = ["BSC_TESTNET_EID", "BASE_SEPOLIA_EID", "ETHEREUM_SEPOLIA_EID"];
+        string[4] memory eidKeys =
+            ["BSC_TESTNET_EID", "BASE_SEPOLIA_EID", "ETHEREUM_SEPOLIA_EID", "ARBITRUM_SEPOLIA_EID"];
         for (uint256 i = 0; i < eidKeys.length; i++) {
             vm.setEnv(eidKeys[i], "not-a-number");
         }
 
-        // Router-only owner/deployer/launcher: this harness uses the real `_chainsInit`, so it would
-        // revert on any chain endpoint/EID env read still reachable from `run()`.
-        OutstakeScriptRunHarness runScript = new OutstakeScriptRunHarness();
+        OutstakeScriptRunHarness runScriptPinned = new OutstakeScriptRunHarness();
+        vm.etch(runScriptPinned.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
+        address canonicalDeployerPinned = runScriptPinned.configureRun(1);
+        EmptyMockLauncher launcherPinned = new EmptyMockLauncher();
 
-        // Etch the CREATE2 stand-in at the canonical address so the real OutrunDeployer deploys at
-        // the CREATE2-expected address (mirrors testDeployOutrunDeployerMatchesAssertOutrunDeployer).
-        vm.etch(runScript.exposedCanonicalCreate2Factory(), type(DeterministicCreate2FactoryMock).runtimeCode);
-
-        address canonicalDeployer = runScript.configureRun(1);
-        EmptyMockLauncher launcher = new EmptyMockLauncher();
-
-        vm.setEnv("OWNER", vm.toString(address(runScript)));
-        vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployer));
-        vm.setEnv("MEMEVERSE_LAUNCHER", vm.toString(address(launcher)));
+        vm.setEnv("OWNER", vm.toString(address(runScriptPinned)));
+        vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployerPinned));
+        vm.setEnv("MEMEVERSE_LAUNCHER", vm.toString(address(launcherPinned)));
+        // Select the router batch and pin the generation at 7 so the expected CREATE3 salt below
+        // stays the historical OutrunRouter/7 namespace (part 3 pinned the default-1 fallback).
+        vm.setEnv("BATCH", "router");
+        vm.setEnv("DEPLOYMENT_NONCE", "7");
 
         // Inject the deterministic CREATE3 address this run() is about to deploy via the
         // `_routerConfigEnv` seam instead of process env: `_applyRouterConfig` switches on the
-        // seam's existence flag and `_deployOutrunRouter` reverts on mismatch, so the test stays
-        // independent of the runner's shell/.env, positively covers the enforcement-pass path,
-        // and cannot pollute concurrent tests sharing process env.
-        bytes32 salt = keccak256(abi.encodePacked("OutrunRouter", uint256(7)));
-        address expectedRouter = OutrunDeployer(canonicalDeployer).getDeployed(address(runScript), salt);
-        runScript.setRouterConfigOverride(expectedRouter);
+        // seam's existence flag and `_deployOutrunRouter` reverts on mismatch, so the part stays
+        // independent of the runner's shell/.env and positively covers the enforcement-pass path.
+        bytes32 pinnedSalt = keccak256(abi.encodePacked("OutrunRouter", uint256(7)));
+        runScriptPinned.setRouterConfigOverride(
+            OutrunDeployer(canonicalDeployerPinned).getDeployed(address(runScriptPinned), pinnedSalt)
+        );
 
-        // A Router-only run() must never read the (now-poisoned) chain endpoint/EID envs: if `run()`
-        // still loaded them, the first read reverts `vm.envAddress`/`vm.envUint` and fails this test —
-        // the revert-if-read-on-regression behavior is the pin.
-        runScript.run();
+        runScriptPinned.run();
 
-        // The router deploys with nonce 7 (`_deployOutrunRouter(7)`); assert it was created and
-        // owned by the run harness — proving run() reached the router deploy.
-        OutrunRouter deployedRouter =
-            OutrunRouter(OutrunDeployer(canonicalDeployer).getDeployed(address(runScript), salt));
-        assertGt(address(deployedRouter).code.length, 0);
-        assertEq(deployedRouter.owner(), address(runScript));
-        assertEq(deployedRouter.memeverseLauncher(), address(launcher));
+        // The router deploys at generation nonce 7 (DEPLOYMENT_NONCE=7 above); assert it was
+        // created, owned by the run harness, and pointed at the launcher — proving run() reached
+        // the router deploy.
+        OutrunRouter pinnedRouter =
+            OutrunRouter(OutrunDeployer(canonicalDeployerPinned).getDeployed(address(runScriptPinned), pinnedSalt));
+        assertGt(address(pinnedRouter).code.length, 0);
+        assertEq(pinnedRouter.owner(), address(runScriptPinned));
+        assertEq(pinnedRouter.memeverseLauncher(), address(launcherPinned));
     }
 
     function testUpdateRouterLauncherRevertsWhenLauncherIsZero() external {
@@ -678,14 +755,16 @@ contract OutstakeScriptUpgradeableTest is Test {
         script.exposedValidatedMintingCap(uint256(type(uint128).max) + 1);
     }
 
-    /// @dev Same over-width rejection on the per-family POLend env path, following the zero
-    ///      precedent's ZZZ symbol so the key collides with no family key (UETH/UBNB fall
-    ///      through to env, UUSD is injected and never reads env).
+    /// @dev Same over-width rejection on the per-family POLend env path. Uses its own YYY stand-in
+    ///      symbol rather than the zero test's ZZZ: test functions run concurrently sharing process
+    ///      env, so two tests writing one key could interleave between write and read; distinct
+    ///      keys keep the write-read pairs race-free. YYY still collides with no family key
+    ///      (UETH/UBNB fall through to env, UUSD is injected and never reads env).
     function test_RevertWhen_POLendMintingCapAboveUint128WidthEnv() external {
-        vm.setEnv("ZZZ_POLEND_MINTING_CAP", vm.toString(uint256(type(uint128).max) + 1));
+        vm.setEnv("YYY_POLEND_MINTING_CAP", vm.toString(uint256(type(uint128).max) + 1));
 
         vm.expectRevert(SPDefaults.MintingCapTooLarge.selector);
-        script.exposedPolendMintingCap("ZZZ", false);
+        script.exposedPolendMintingCap("YYY", false);
     }
 
     function testDeployOutrunDeployerMatchesAssertOutrunDeployer() external {
@@ -788,7 +867,7 @@ contract OutstakeScriptUpgradeableTest is Test {
     /// factory constant still comes from the script (`exposedCanonicalCreate2Factory`), and it is
     /// independently pinned by testCanonicalCreate2FactoryMatchesFirstPrinciplesAddress.
     function _expectedOutrunDeployerAddress(uint256 nonce) internal view returns (address) {
-        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
+        bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployerV1", nonce));
         bytes memory initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
         return Create2.computeAddress(salt, keccak256(initcode), script.exposedCanonicalCreate2Factory());
     }

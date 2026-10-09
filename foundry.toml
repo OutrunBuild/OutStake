@@ -41,19 +41,24 @@ depth = 500
 sepolia = "${ETHEREUM_SEPOLIA_RPC}"
 bsc_testnet = "${BSC_TESTNET_RPC}"
 base_sepolia = "${BASE_SEPOLIA_RPC}"
+arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
 
 eth_mainnet = "${ETHEREUM_MAINNET_RPC}"
 bsc_mainnet = "${BSC_MAINNET_RPC}"
 base_mainnet = "${BASE_MAINNET_RPC}"
 
 [etherscan]
-bsc_testnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "97", url = "${ETHEREUMSCAN_API_URL}" }
-base_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "84532", url = "${ETHEREUMSCAN_API_URL}" }
-sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155111", url = "${ETHEREUMSCAN_API_URL}" }
+# No custom `url` overrides: forge resolves the Etherscan V2 endpoint per chain and
+# appends the required `chainid`. A fixed url base (e.g. ETHEREUMSCAN_API_URL) breaks
+# every request with "Missing chainid parameter".
+bsc_testnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "97" }
+base_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "84532" }
+sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "11155111" }
+arbitrum_sepolia = { key = "${ETHEREUMSCAN_API_KEY}", chain = "421614" }
 
-eth_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "1", url = "${ETHEREUMSCAN_API_URL}" }
-bsc_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "56", url = "${ETHEREUMSCAN_API_URL}" }
-base_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "8453", url = "${ETHEREUMSCAN_API_URL}" }
+eth_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "1" }
+bsc_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "56" }
+base_mainnet = { key = "${ETHEREUMSCAN_API_KEY}", chain = "8453" }
 
 [lint]
 ignore = ["test/**/*", "script/**/*"]

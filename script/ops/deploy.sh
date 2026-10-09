@@ -1,32 +1,47 @@
+#!/usr/bin/env bash
+# OutStake batch deploy wrapper.
+#
+#   ./deploy.sh <chain> <batch> [extra forge args...]
+#
+#   chain: bsc_testnet | sepolia | base_sepolia | arbitrum_sepolia
+#   batch: deployer check uasset router psm usr polend mocks   (see OutstakeScript.run())
+#
+# The optimizer tier is derived from the batch (uAsset impl exceeds EIP-170 above 15000; the
+# OutrunDeployer creation bytecode is byte-identical across 15000..100000, so its CREATE2
+# address never moves with the tier). DEPLOYMENT_NONCE (default 1) passes through from the
+# environment as the deployment generation.
+set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
 
-# 所有链必须使用同一 optimizer-runs：OutrunDeployer 的 CREATE2 地址依赖 initcode，
-# 任一链编译参数不同都会导致同址部署失败（见 docs/deployment.md）。
-optimizer_runs=20000
+if [ $# -lt 2 ]; then
+    echo "usage: $0 <bsc_testnet|sepolia|base_sepolia|arbitrum_sepolia> <deployer|check|uasset|router|psm|usr|polend|mocks> [extra forge args...]" >&2
+    exit 1
+fi
+chain="$1"; batch="$2"; shift 2
+
+case "$batch" in
+    uasset) optimizer_runs=15000 ;;
+    deployer|check|router|psm|usr|polend|mocks) optimizer_runs=100000 ;;
+    *) echo "unknown batch: $batch" >&2; exit 1 ;;
+esac
+
+case "$chain" in
+    bsc_testnet) chain_flags=(--priority-gas-price 100000000 --with-gas-price 100000000 --slow) ;;
+    sepolia) chain_flags=(--priority-gas-price 1000000 --with-gas-price 1100000) ;;
+    base_sepolia) chain_flags=(--priority-gas-price 1000000 --with-gas-price 6000000) ;;
+    arbitrum_sepolia) chain_flags=(--priority-gas-price 1000000 --with-gas-price 100000000) ;;
+    *) echo "unknown chain: $chain" >&2; exit 1 ;;
+esac
 
 source "$repo_root/.env"
-cd "$repo_root"
+export BATCH="$batch"
 
-forge script script/deploy/OutstakeScript.s.sol:OutstakeScript --rpc-url bsc_testnet \
-    --with-gas-price 100000000 \
+cd "$repo_root"
+forge script script/deploy/OutstakeScript.s.sol:OutstakeScript --rpc-url "$chain" \
     --optimize --optimizer-runs "$optimizer_runs" \
     --via-ir \
+    "${chain_flags[@]}" \
     --broadcast --ffi -vvvv \
     --verify \
-    --slow
-
-# forge script script/deploy/OutstakeScript.s.sol:OutstakeScript --rpc-url sepolia \
-#     --priority-gas-price 500000000 --with-gas-price 1500000000 \
-#     --optimize --optimizer-runs "$optimizer_runs" \
-#     --via-ir \
-#     --broadcast --ffi -vvvv \
-#     --verify
-
-# forge script script/deploy/OutstakeScript.s.sol:OutstakeScript --rpc-url base_sepolia \
-#     --with-gas-price 100000000 \
-#     --optimize --optimizer-runs "$optimizer_runs" \
-#     --via-ir \
-#     --broadcast --ffi -vvvv \
-#     --verify
-
+    "$@"

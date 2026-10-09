@@ -96,55 +96,87 @@ contract OutstakeScript is BaseScript {
     //   target one launcher.
 
     function run() public broadcaster {
-        // deployerNonce = 1 is the OutrunDeployer instance selector (CREATE2 path shared by
-        // _deployOutrunDeployer/_assertOutrunDeployer).
-        // _deployOutrunRouter(7) is an independent CREATE3 salt-namespace counter; it must stay
-        // identical across chains.
-        // The disabled call sites below split into deployment-creating calls (uAsset, PSM, USR
-        // vault, and mock-stack deploys — their CREATE3 addresses depend on nonce/salt and
-        // compile-config consistency) and non-deploy config calls (_registerPOLendMinter,
-        // _updateRouterLauncher — they only touch already-deployed addresses). YieldDeployScript
-        // has 4 support functions/call sites (_supportWstETHOnSepolia, _supportSUSDeOnSepolia,
-        // _supportSlisBNBOnBscTestnet, _supportAUSDC), which are single-chain direct-new
-        // deployments with no cross-chain same-address requirement.
+        // Batch dispatch, no comment toggling: BATCH=<name> selects the call sites, DEPLOYMENT_NONCE
+        // (default 1) is the deployment generation — bump it to redeploy every CREATE3 artifact at
+        // fresh addresses. The OutrunDeployer instance is exempt: deployed once (batch "deployer",
+        // salt recipe pinned at nonce 1) and every other batch re-asserts the OUTRUN_DEPLOYER env
+        // pin against it before touching CREATE3.
+        //
+        // Batches (optimizer tier for the forge invocation, see script/ops/deploy.sh):
+        //   deployer — one-time CREATE2 bootstrap of OutrunDeployer (any tier; creation bytecode is
+        //              stable across 15000..100000, and the salt string "OutrunDeployerV1" fixes
+        //              the instance). Needs only OWNER; no OUTRUN_DEPLOYER pin required.
+        //   check    — assert-only run against the OUTRUN_DEPLOYER pin, no deployment
+        //   uasset   — UETH/UUSD/UBNB, tier 15000 (impl exceeds EIP-170 above 15000)
+        //   router   — OutrunRouter, tier 100000 (needs MEMEVERSE_LAUNCHER)
+        //   psm      — PSM instances per (family, reserve), tier 100000
+        //   usr      — USR savings vaults, tier 100000
+        //   polend   — cross-repo wiring: register the Memeverse POLend minter per family and
+        //              (re)point the router's launcher (config-only; needs MEMEVERSE_LAUNCHER)
+        //   mocks    — testnet mock stack, tier 100000
         owner = vm.envAddress("OWNER");
+        bytes32 batch = keccak256(bytes(vm.envOr("BATCH", string(""))));
+
+        if (batch == keccak256(bytes("deployer"))) {
+            uint256 deployerNonce = 1; // instance selector; never rotates with generations
+            _deployOutrunDeployer(deployerNonce);
+            return;
+        }
+
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
-        memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
-        _applyRouterConfig();
+        _assertOutrunDeployer(1);
 
-        uint256 deployerNonce = 1;
-        // _deployOutrunDeployer(deployerNonce);
+        uint256 nonce = vm.envOr("DEPLOYMENT_NONCE", uint256(1));
 
-        _assertOutrunDeployer(deployerNonce);
-        // _deployUETH(1);
-        // _deployUUSD(1);
-        // _deployUBNB(1);
-        _deployOutrunRouter(7);
-        // PSM wiring per (family, reserve) pair (requires the family uAsset deployed and OUTRUN_ROUTER set):
-        // _deployUETHPSM(1);
-        // _deployUUSDPSM(1); // deploys both the USDC and the USDT leg
-        // _deployUBNBPSM(1);
-        // USR savings vaults per family (no uAsset-side registration required):
-        // _deploySuETH(1);
-        // _deploySuUSD(1);
-        // _deploySuBNB(1);
-        // POLend (Memeverse engine) minter initial-cap registration per family:
-        // _registerPOLendMinter("UETH", false);
-        // _registerPOLendMinter("UUSD", false);
-        // _registerPOLendMinter("UBNB", true);
-        // _updateRouterLauncher();
-        // _deployMockERC20(1);
-        // _deployMockOracle(1);
-        // _deployMockERC20SY(1);
-        // _supportMockAUSDC(13); // Requires optimizer-runs=20000 to fit the code size limit
-        // _supportMockSUSDS(13); // Requires optimizer-runs=20000 to fit the code size limit
+        if (batch == keccak256(bytes("check"))) {
+            // assert-only; nothing else to do
+        } else if (batch == keccak256(bytes("uasset"))) {
+            _deployUETH(nonce);
+            _deployUUSD(nonce);
+            _deployUBNB(nonce);
+        } else if (batch == keccak256(bytes("router"))) {
+            memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
+            _applyRouterConfig();
+            _deployOutrunRouter(nonce);
+        } else if (batch == keccak256(bytes("psm"))) {
+            _deployUETHPSM(nonce);
+            _deployUUSDPSM(nonce); // deploys both the USDC and the USDT leg
+            _deployUBNBPSM(nonce);
+        } else if (batch == keccak256(bytes("usr"))) {
+            _deploySuETH(nonce);
+            _deploySuUSD(nonce);
+            _deploySuBNB(nonce);
+        } else if (batch == keccak256(bytes("polend"))) {
+            memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
+            _applyRouterConfig();
+            _registerPOLendMinter("UETH", false);
+            _registerPOLendMinter("UUSD", false);
+            _registerPOLendMinter("UBNB", true); // UBNB uses the small launch cap
+            _updateRouterLauncher();
+            require(outrunRouter != address(0), "OUTRUN_ROUTER_NOT_SET");
+            IOutrunRouter(outrunRouter).setPolend(vm.envAddress("POLEND_MINTER"));
+        } else if (batch == keccak256(bytes("mocks"))) {
+            _deployMockERC20(nonce);
+            _deployMockOracle(nonce);
+            _deployMockERC20SY(nonce);
+            _supportMockAUSDC(nonce); // fits the code size limit at any tier <= 100000
+            _supportMockSUSDS(nonce); // fits the code size limit at any tier <= 100000
+        } else {
+            revert(
+                string.concat(
+                    "UnknownBatch: '",
+                    vm.envOr("BATCH", string("<unset>")),
+                    "' (expected one of: deployer check uasset router psm usr polend mocks)"
+                )
+            );
+        }
     }
 
     /// @dev Single source of truth for the salt/initcode used to deploy OutrunDeployer.
     /// `_deployOutrunDeployer` and `_assertOutrunDeployer` share this recipe so the two
     /// CREATE2 expressions cannot drift apart.
     function _outrunDeployerRecipe(uint256 nonce) internal view returns (bytes32 salt, bytes memory initcode) {
-        salt = keccak256(abi.encodePacked(owner, "OutrunDeployer", nonce));
+        salt = keccak256(abi.encodePacked(owner, "OutrunDeployerV1", nonce));
         initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
     }
 
@@ -191,10 +223,12 @@ contract OutstakeScript is BaseScript {
         endpoints[97] = vm.envAddress("BSC_TESTNET_ENDPOINT");
         endpoints[84532] = vm.envAddress("BASE_SEPOLIA_ENDPOINT");
         endpoints[11155111] = vm.envAddress("ETHEREUM_SEPOLIA_ENDPOINT");
+        endpoints[421614] = vm.envAddress("ARBITRUM_SEPOLIA_ENDPOINT");
 
         endpointIds[97] = vm.envUint("BSC_TESTNET_EID").toUint32();
         endpointIds[84532] = vm.envUint("BASE_SEPOLIA_EID").toUint32();
         endpointIds[11155111] = vm.envUint("ETHEREUM_SEPOLIA_EID").toUint32();
+        endpointIds[421614] = vm.envUint("ARBITRUM_SEPOLIA_EID").toUint32();
     }
 
     /// @dev Deploys an upgradeable contract via ERC1967Proxy using CREATE3 through
@@ -218,14 +252,15 @@ contract OutstakeScript is BaseScript {
     /// @dev Shared chain list for the three uAsset deploys: one definition site, so the
     /// omnichain peer/rate-limit set can never drift between UETH/UUSD/UBNB.
     function _sharedOmnichainIds() internal pure returns (uint32[] memory omnichainIds) {
-        omnichainIds = new uint32[](3);
+        omnichainIds = new uint32[](4);
         omnichainIds[0] = 97; // BSC Testnet
         omnichainIds[1] = 84532; // Base Sepolia
         omnichainIds[2] = 11155111; // Sepolia
+        omnichainIds[3] = 421614; // Arbitrum Sepolia
     }
 
     function _deployUAsset(uint256 nonce, string memory symbol, string memory assetWord) internal {
-        // Load the 3 testnets' cross-chain endpoint/EID envs only here, where the uAsset
+        // Load the 4 testnets' cross-chain endpoint/EID envs only here, where the uAsset
         // cross-chain deploy actually consumes them; Router-only runs must never read these envs.
         _chainsInit();
         uint32[] memory omnichainIds = _sharedOmnichainIds();
@@ -586,14 +621,15 @@ contract OutstakeScript is BaseScript {
     }
 
     /// @dev Hardcoded allowlist of chain ids where the mock stack may run: anvil (31337) plus the
-    /// 3 testnets wired in `_chainsInit`. Single source of truth alongside `_chainsInit`: adding a
+    /// 4 testnets wired in `_chainsInit`. Single source of truth alongside `_chainsInit`: adding a
     /// testnet requires updating both, or the mock helpers below fail closed on the new chain.
     function _testnetChainIds() internal pure returns (uint32[] memory testnetChainIds) {
-        testnetChainIds = new uint32[](4);
+        testnetChainIds = new uint32[](5);
         testnetChainIds[0] = 31337; // Anvil local chain
         testnetChainIds[1] = 97; // BSC Testnet
         testnetChainIds[2] = 84532; // Base Sepolia
         testnetChainIds[3] = 11155111; // Sepolia
+        testnetChainIds[4] = 421614; // Arbitrum Sepolia
     }
 
     /// @dev Fail closed outside the testnet allowlist: the mock stack is testnet/local-only, and

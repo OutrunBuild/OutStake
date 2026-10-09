@@ -30,14 +30,36 @@ contract YieldDeployScript is BaseScript {
     address internal protocolTreasury;
 
     function run() public broadcaster {
+        // Batch dispatch, no comment toggling. BATCH selects the support entry; every support
+        // function self-skips (log + return) on non-matching chains, so "all" is safe on any chain.
+        // Optimizer tier 100000 — all SY/SP contracts fit the code size limit there.
         owner = vm.envAddress("OWNER");
         protocolTreasury = vm.envAddress("PROTOCOL_TREASURY");
 
-        // Requires optimizer-runs=20000 to fit the code size limit
-        // _supportWstETHOnSepolia();
-        // _supportSUSDeOnSepolia();
-        // _supportSlisBNBOnBscTestnet();
-        _supportAUSDC();
+        bytes32 batch = keccak256(bytes(vm.envOr("BATCH", string(""))));
+
+        if (batch == keccak256(bytes("wsteth"))) {
+            _supportWstETHOnSepolia();
+        } else if (batch == keccak256(bytes("susde"))) {
+            _supportSUSDeOnSepolia();
+        } else if (batch == keccak256(bytes("slisbnb"))) {
+            _supportSlisBNBOnBscTestnet();
+        } else if (batch == keccak256(bytes("ausdc"))) {
+            _supportAUSDC();
+        } else if (batch == keccak256(bytes("all"))) {
+            _supportWstETHOnSepolia();
+            _supportSUSDeOnSepolia();
+            _supportSlisBNBOnBscTestnet();
+            _supportAUSDC();
+        } else {
+            revert(
+                string.concat(
+                    "UnknownBatch: '",
+                    vm.envOr("BATCH", string("<unset>")),
+                    "' (expected one of: wsteth susde slisbnb ausdc all)"
+                )
+            );
+        }
     }
 
     // SP/SY are single-chain deployments with no cross-chain/co-location requirement,
@@ -59,6 +81,18 @@ contract YieldDeployScript is BaseScript {
         // Resolve the minting cap before deploying so an explicit-zero cap reverts
         // before any proxy is created.
         uint256 mintingCap_ = _spMintingCap();
+        // Optional genesis-gate wiring (GENESIS_LAUNCHER), validated before the proxy is created
+        // (mirrors OutstakeScript's mock-support path): an absent key leaves the SP at the zero
+        // default (stakeForGenesis disabled); a present key must equal MEMEVERSE_LAUNCHER so the
+        // SP-side and router-side genesis paths target one launcher.
+        bool wireGenesisLauncher;
+        address genesisLauncherAddr;
+        if (vm.envExists("GENESIS_LAUNCHER")) {
+            wireGenesisLauncher = true;
+            genesisLauncherAddr = vm.envAddress("GENESIS_LAUNCHER");
+            if (genesisLauncherAddr == address(0)) revert InvalidAddress();
+            if (genesisLauncherAddr != vm.envAddress("MEMEVERSE_LAUNCHER")) revert InvalidAddress();
+        }
         address impl = address(new OutrunStakingPositionUpgradeable());
         address sp = address(
             new ERC1967Proxy(
@@ -70,6 +104,9 @@ contract YieldDeployScript is BaseScript {
             )
         );
         IUniversalAssets(uAsset).setMintingCap(sp, mintingCap_);
+        if (wireGenesisLauncher) {
+            OutrunStakingPositionUpgradeable(sp).setGenesisLauncher(genesisLauncherAddr);
+        }
         return sp;
     }
 

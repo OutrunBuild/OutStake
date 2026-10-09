@@ -538,11 +538,12 @@ contract OutstakeScriptMockSYDeployTest is Test {
     // rejected fail-closed. Adding a new testnet requires updating two places in lockstep:
     // `_chainsInit` and `_testnetChainIds`; the literals below evolve with this test itself.
     function test_TestnetChainIdsEqualPinnedAllowlist() external {
-        uint32[4] memory expected = [
+        uint32[5] memory expected = [
             uint32(31337), // Anvil local chain
             97, // BSC Testnet
             84532, // Base Sepolia
-            11155111 // Sepolia
+            11155111, // Sepolia
+            421614 // Arbitrum Sepolia
         ];
 
         uint32[] memory actual = script.exposedTestnetChainIds();
