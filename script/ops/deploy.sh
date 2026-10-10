@@ -4,7 +4,7 @@
 #   ./deploy.sh <chain> <batch> [extra forge args...]
 #
 #   chain: bsc_testnet | sepolia | base_sepolia | arbitrum_sepolia
-#   batch: deployer check uasset router psm usr polend mocks   (see OutstakeScript.run())
+#   batch: deployer check uasset router psm usr polend mocks mocksy mocksp   (see OutstakeScript.run())
 #
 # The optimizer tier is derived from the batch (uAsset impl exceeds EIP-170 above 15000; the
 # OutrunDeployer creation bytecode is byte-identical across 15000..100000, so its CREATE2
