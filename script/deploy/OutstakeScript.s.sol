@@ -82,8 +82,9 @@ contract OutstakeScript is BaseScript {
     //   UBNB_PSM_STOCK_CAP (native leg) — each required, 18-dec face value, no default (a
     //   family-agnostic placeholder would break the reserve anchoring); shared fees PSM_TIN /
     //   PSM_TOUT (optional, default 0.1% each, bounded to [0, 1%]); the shared sweep recipient
-    //   PSM_FEE_RECIPIENT (required, no default — the binding is immutable post-initialize, so a
-    //   placeholder would permanently misroute fee payouts); and the UUSD-family ERC20
+    //   PSM_FEE_RECIPIENT (required, no default — the initial binding; the owner-only
+    //   setFeeRecipient can redirect payouts post-deploy, but a placeholder misroutes every
+    //   sweep until then); and the UUSD-family ERC20
     //   reserve address PSM_USDC (required; the UETH/UBNB instances bind the native
     //   leg and read no reserve env).
     // mintingCap: SP_MINTING_CAP (CDP SPs, optional, placeholder default), POLEND_MINTER (engine
@@ -113,7 +114,9 @@ contract OutstakeScript is BaseScript {
         //   usr      — USR savings vaults, tier 100000
         //   polend   — cross-repo wiring: register the Memeverse POLend minter per family and
         //              (re)point the router's launcher (config-only; needs MEMEVERSE_LAUNCHER)
-        //   mocks    — testnet mock stack, tier 100000
+        //   mocks    — testnet mock tokens + oracles, tier 100000 (env-free, run first)
+        //   mocksy   — mock SY adapters, tier 100000 (reads MOCK_* pins from the mocks batch)
+        //   mocksp   — mock SP staking positions, tier 100000 (reads MOCK_*_SY pins from mocksy)
         owner = vm.envAddress("OWNER");
         bytes32 batch = keccak256(bytes(vm.envOr("BATCH", string(""))));
 
@@ -158,7 +161,12 @@ contract OutstakeScript is BaseScript {
         } else if (batch == keccak256(bytes("mocks"))) {
             _deployMockERC20(nonce);
             _deployMockOracle(nonce);
+        } else if (batch == keccak256(bytes("mocksy"))) {
+            // Reads the MOCK_* env pins backfilled from the `mocks` batch output — the env seam
+            // exists for test-harness overrides, so the addresses travel via env, not in-process
+            // returns; the orchestrator must run `mocks` first and backfill between the two.
             _deployMockERC20SY(nonce);
+        } else if (batch == keccak256(bytes("mocksp"))) {
             _supportMockAUSDC(nonce); // fits the code size limit at any tier <= 100000
             _supportMockSUSDS(nonce); // fits the code size limit at any tier <= 100000
         } else {
@@ -166,7 +174,7 @@ contract OutstakeScript is BaseScript {
                 string.concat(
                     "UnknownBatch: '",
                     vm.envOr("BATCH", string("<unset>")),
-                    "' (expected one of: deployer check uasset router psm usr polend mocks)"
+                    "' (expected one of: deployer check uasset router psm usr polend mocks mocksy mocksp)"
                 )
             );
         }
@@ -182,6 +190,13 @@ contract OutstakeScript is BaseScript {
 
     function _deployOutrunDeployer(uint256 nonce) internal returns (address outrunDeployerAddr) {
         (bytes32 salt, bytes memory initcode) = _outrunDeployerRecipe(nonce);
+        // Idempotent: the recipe is nonce-independent by design (deploy-once-ever), so a rerun
+        // finds its own CREATE2 address already live and skips instead of reverting.
+        address expected = Create2.computeAddress(salt, keccak256(initcode), CANONICAL_CREATE2_FACTORY);
+        if (expected.code.length != 0) {
+            console.log("OutrunDeployer deployed on %s (existing)", expected);
+            return expected;
+        }
         // The factory is the CREATE2 creator, so the deployed address equals the three-param
         // expected address in `_assertOutrunDeployer` (same salt/initcode recipe). The canonical
         // deterministic-deployment proxy (Arachnid) is NOT ABI-encoded — it exposes no
@@ -231,22 +246,46 @@ contract OutstakeScript is BaseScript {
         endpointIds[421614] = vm.envUint("ARBITRUM_SEPOLIA_EID").toUint32();
     }
 
+    /// @dev Idempotent CREATE3 deploy through OutrunDeployer: when the predicted address
+    ///      (namespaced by the broadcaster; OWNER == broadcaster is asserted before every deploy
+    ///      path) already holds code, the contract is ours from a prior same-nonce run — log it
+    ///      in the backfill-compatible format and skip, so re-running a half-failed batch
+    ///      resumes to completion instead of colliding on the consumed salt (DEPLOYMENT_FAILED).
+    ///      Code at a predicted address can only be ours: the address commits to
+    ///      (OutrunDeployer, broadcaster, salt) and salts commit to DEPLOYMENT_NONCE.
+    function _deployOnce(bytes32 salt, bytes memory creationCode, string memory label)
+        internal
+        returns (address deployed)
+    {
+        address expected = IOutrunDeployer(outrunDeployer).getDeployed(owner, salt);
+        if (expected.code.length != 0) {
+            console.log(string.concat(label, " deployed on %s (existing)"), expected);
+            return expected;
+        }
+        return IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+    }
+
     /// @dev Deploys an upgradeable contract via ERC1967Proxy using CREATE3 through
     /// `OutrunDeployer.deploy`: both the implementation and proxy addresses depend only on
     /// (OutrunDeployer, broadcaster, salt), never on the initcode or initCalldata — which is
     /// what lets the same address be reproduced on every chain. The "impl" suffix gives the
     /// implementation its own salt namespace; reusing the proxy salt would make the second
-    /// CREATE3 deploy revert with DEPLOYMENT_FAILED.
-    function _deployUpgradeable(bytes memory implCreationCode, bytes memory initCalldata, bytes32 salt)
-        internal
-        returns (address)
-    {
+    /// CREATE3 deploy revert with DEPLOYMENT_FAILED. Both steps are idempotent via
+    /// `_deployOnce`, so a run that died between impl and proxy resumes cleanly; the impl
+    /// label carries an "Impl" suffix so a parsed skip line can never backfill an
+    /// implementation address onto the proxy's env pin.
+    function _deployUpgradeable(
+        bytes memory implCreationCode,
+        bytes memory initCalldata,
+        bytes32 salt,
+        string memory label
+    ) internal returns (address) {
         // Deploy implementation
         bytes32 implSalt = keccak256(abi.encodePacked(salt, "impl"));
-        address impl = IOutrunDeployer(outrunDeployer).deploy(implSalt, implCreationCode);
+        address impl = _deployOnce(implSalt, implCreationCode, string.concat(label, "Impl"));
         // Deploy proxy
         bytes memory proxyCode = abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initCalldata));
-        return IOutrunDeployer(outrunDeployer).deploy(salt, proxyCode);
+        return _deployOnce(salt, proxyCode, label);
     }
 
     /// @dev Shared chain list for the three uAsset deploys: one definition site, so the
@@ -279,7 +318,8 @@ contract OutstakeScript is BaseScript {
                 OutrunUniversalAssetsUpgradeable.initialize,
                 (string.concat("Omnichain Universal Assets ", assetWord), symbol, owner)
             ),
-            salt
+            salt,
+            symbol
         );
         bytes32 peer = bytes32(uint256(uint160(deployedUAsset)));
 
@@ -380,9 +420,9 @@ contract OutstakeScript is BaseScript {
         uint256 stockCap = _psmCapsConfig(capEnvKey);
         (uint256 tin, uint256 tout) = _psmFeesConfig();
         address feeRecipient = _psmFeeRecipientConfig();
-        // Mirror of the PSM `initialize` fee-recipient guard: the binding is immutable with no
-        // setter, so a zero recipient must fail closed before the CREATE3 deploy rather than
-        // inside the proxy deployment transaction.
+        // Mirror of the PSM `initialize` fee-recipient guard: a zero recipient must fail closed
+        // before the CREATE3 deploy rather than inside the proxy deployment transaction; a
+        // non-zero misroute is recoverable via the owner-only setFeeRecipient.
         if (feeRecipient == address(0)) revert InvalidAddress();
 
         bytes32 salt = keccak256(abi.encodePacked(saltStem, nonce));
@@ -391,7 +431,8 @@ contract OutstakeScript is BaseScript {
             abi.encodeCall(
                 OutrunPSMUpgradeable.initialize, (uAsset, reserve, owner, feeRecipient, stockCap, tin, tout)
             ),
-            salt
+            salt,
+            saltStem
         );
 
         // uAsset-side registration is also the swap kill switch surface: revoking it later halts
@@ -428,9 +469,10 @@ contract OutstakeScript is BaseScript {
         tout = vm.envOr("PSM_TOUT", PSM_DEFAULT_FEE);
     }
 
-    /// @dev The fee-sweep recipient is required with no default: the PSM binding is immutable
-    ///      post-initialize (no setter), so a placeholder address would permanently misroute fee
-    ///      payouts. A missing key reverts the env read before anything is deployed (fail-fast).
+    /// @dev The fee-sweep recipient is required with no default: the binding is the initial
+    ///      value of the PSM's updatable recipient (owner-only setFeeRecipient redirects
+    ///      post-deploy), so a placeholder address misroutes fee payouts until redirected.
+    ///      A missing key reverts the env read before anything is deployed (fail-fast).
     ///      Env-read seam: harness overrides inject the recipient without env.
     function _psmFeeRecipientConfig() internal view virtual returns (address feeRecipient) {
         feeRecipient = vm.envAddress("PSM_FEE_RECIPIENT");
@@ -504,7 +546,8 @@ contract OutstakeScript is BaseScript {
                 OutrunUSRVaultUpgradeable.initialize,
                 (uAsset, string.concat("Universal Savings ", assetWord), string.concat("su", assetWord), owner)
             ),
-            salt
+            salt,
+            string.concat("Su", assetWord)
         );
 
         console.log(string.concat("su", assetWord, " vault deployed on %s"), vault);
@@ -649,46 +692,39 @@ contract OutstakeScript is BaseScript {
 
         bytes32 salt = keccak256(abi.encodePacked("Faucet", nonce));
         bytes memory creationCode = abi.encodePacked(type(Faucet).creationCode, abi.encode(owner));
-        address faucetAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address faucetAddr = _deployOnce(salt, creationCode, "Faucet");
 
         salt = keccak256(abi.encodePacked("MockUSDC", nonce));
         creationCode = abi.encodePacked(type(MockUSDC).creationCode, abi.encode("Mock USDC", "USDC", 18, faucetAddr));
-        address mockUSDCAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address mockUSDCAddr = _deployOnce(salt, creationCode, "MockUSDC");
 
         salt = keccak256(abi.encodePacked("MockAUSDC", nonce));
         creationCode = abi.encodePacked(
             type(MockAUSDC).creationCode, abi.encode("Mock aUSDC", "aUSDC", 18, mockUSDCAddr, faucetAddr)
         );
-        address mockAUSDCAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address mockAUSDCAddr = _deployOnce(salt, creationCode, "MockAUSDC");
 
         salt = keccak256(abi.encodePacked("MockSUSDS", nonce));
         creationCode = abi.encodePacked(
             type(MockSUSDS).creationCode, abi.encode("Mock sUSDS", "sUSDS", 18, mockUSDCAddr, faucetAddr)
         );
-        address mockSUSDSAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address mockSUSDSAddr = _deployOnce(salt, creationCode, "MockSUSDS");
 
+        // addToken is a per-token setter, so re-running on the skip path is harmless.
         IFaucet(faucetAddr).addToken(mockUSDCAddr, 1000000 * 1e18);
         IFaucet(faucetAddr).addToken(mockAUSDCAddr, 1000000 * 1e18);
         IFaucet(faucetAddr).addToken(mockSUSDSAddr, 1000000 * 1e18);
-
-        console.log("Faucet deployed on %s", faucetAddr);
-        console.log("MockUSDC deployed on %s", mockUSDCAddr);
-        console.log("MockAUSDC deployed on %s", mockAUSDCAddr);
-        console.log("MockSUSDS deployed on %s", mockSUSDSAddr);
     }
 
     function _deployMockOracle(uint256 nonce) internal {
         _assertTestnetChain();
         bytes32 salt = keccak256(abi.encodePacked("MockAUSDCOracle", nonce));
         bytes memory creationCode = abi.encodePacked(type(MockAUSDCOracle).creationCode, abi.encode(owner));
-        address mockAUSDCOracle = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        _deployOnce(salt, creationCode, "MockAUSDCOracle");
 
         salt = keccak256(abi.encodePacked("MockSUSDSOracle", nonce));
         creationCode = abi.encodePacked(type(MockSUSDSOracle).creationCode, abi.encode(owner));
-        address mockSUSDSOracle = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
-
-        console.log("MockAUSDCOracle deployed on %s", mockAUSDCOracle);
-        console.log("MockSUSDSOracle deployed on %s", mockSUSDSOracle);
+        _deployOnce(salt, creationCode, "MockSUSDSOracle");
     }
 
     function _deployMockERC20SY(uint256 nonce) internal {
@@ -697,21 +733,20 @@ contract OutstakeScript is BaseScript {
             _mockStackConfig();
 
         bytes32 salt = keccak256(abi.encodePacked("MockAUSDCSY", nonce));
-        address mockAUSDCSY = _deployUpgradeable(
+        _deployUpgradeable(
             type(MockOutrunAUSDCSYUpgradeable).creationCode,
             abi.encodeCall(MockOutrunAUSDCSYUpgradeable.initialize, (owner, mockUSDC, mockAUSDC, mockAUSDCOracle)),
-            salt
+            salt,
+            "MockAUSDCSY"
         );
 
         salt = keccak256(abi.encodePacked("MockSUSDSSY", nonce));
-        address mockSUSDSSY = _deployUpgradeable(
+        _deployUpgradeable(
             type(MockOutrunSUSDSSYUpgradeable).creationCode,
             abi.encodeCall(MockOutrunSUSDSSYUpgradeable.initialize, (owner, mockUSDC, mockSUSDS, mockSUSDSOracle)),
-            salt
+            salt,
+            "MockSUSDSSY"
         );
-
-        console.log("MockAUSDCSY deployed on %s", mockAUSDCSY);
-        console.log("MockSUSDSSY deployed on %s", mockSUSDSSY);
     }
 
     /// @dev Env-read seam for the mock-stack token/oracle addresses (MOCK_USDC / MOCK_AUSDC /
@@ -770,7 +805,8 @@ contract OutstakeScript is BaseScript {
                 OutrunStakingPositionUpgradeable.initialize,
                 (owner, syAddress, uusd, protocolTreasury, SPDefaults.SP_DEFAULT_MIN_STAKE, SPDefaults.SP_DEFAULT_DUTY)
             ),
-            salt
+            salt,
+            logLabel
         );
 
         IUniversalAssets(uusd).setMintingCap(spAddress, mintingCap_);
@@ -930,12 +966,10 @@ contract OutstakeScript is BaseScript {
         bytes32 salt = keccak256(abi.encodePacked("OutrunRouter", nonce));
         bytes memory creationCode =
             abi.encodePacked(type(OutrunRouter).creationCode, abi.encode(owner, memeverseLauncher));
-        address outrunRouterAddr = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        address outrunRouterAddr = _deployOnce(salt, creationCode, "OutrunRouter");
 
         // The router address is CREATE3(creator, salt) and must match OUTRUN_ROUTER across chains when set.
         if (enforceOutrunRouter && outrunRouterAddr != outrunRouter) revert InvalidAddress();
-
-        console.log("OutrunRouter deployed on %s", outrunRouterAddr);
     }
 
     function _updateRouterLauncher() internal {

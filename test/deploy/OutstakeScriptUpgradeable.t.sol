@@ -459,7 +459,9 @@ contract OutstakeScriptUpgradeableTest is Test {
         vm.setEnv("OWNER", vm.toString(address(runScriptUnset)));
         vm.setEnv("OUTRUN_DEPLOYER", vm.toString(canonicalDeployerUnset));
 
-        vm.expectRevert("UnknownBatch: '<unset>' (expected one of: deployer check uasset router psm usr polend mocks)");
+        vm.expectRevert(
+            "UnknownBatch: '<unset>' (expected one of: deployer check uasset router psm usr polend mocks mocksy mocksp)"
+        );
         runScriptUnset.run();
         // The revert unwinds inside the `broadcaster` modifier, so its `vm.stopBroadcast` is
         // unreachable and the broadcast stays open; close it so later parts can open their own.
@@ -476,7 +478,7 @@ contract OutstakeScriptUpgradeableTest is Test {
         vm.setEnv("BATCH", "not-a-batch");
 
         vm.expectRevert(
-            "UnknownBatch: 'not-a-batch' (expected one of: deployer check uasset router psm usr polend mocks)"
+            "UnknownBatch: 'not-a-batch' (expected one of: deployer check uasset router psm usr polend mocks mocksy mocksp)"
         );
         runScriptUnknown.run();
         // Same open-broadcast cleanup as part 1: the revert bypasses the modifier's stop.
