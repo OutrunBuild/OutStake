@@ -9,6 +9,7 @@ import {IOAppCore} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOApp
 import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
 import {SPDefaults} from "../../script/lib/SPDefaults.sol";
 import {OutrunDeployer} from "../../script/deploy/deployment/OutrunDeployer.sol";
+import {CANONICAL_OUTRUN_DEPLOYER_CREATION_CODE} from "../../script/deploy/deployment/OutrunDeployerBytecode.sol";
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {OutrunOFTUpgradeable} from "../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
@@ -967,7 +968,7 @@ contract OutstakeScriptUpgradeableTest is Test {
     /// independently pinned by testCanonicalCreate2FactoryMatchesFirstPrinciplesAddress.
     function _expectedOutrunDeployerAddress(uint256 nonce) internal view returns (address) {
         bytes32 salt = keccak256(abi.encodePacked(owner, "OutrunDeployerV1", nonce));
-        bytes memory initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
+        bytes memory initcode = abi.encodePacked(CANONICAL_OUTRUN_DEPLOYER_CREATION_CODE, abi.encode(owner));
         return Create2.computeAddress(salt, keccak256(initcode), script.exposedCanonicalCreate2Factory());
     }
 

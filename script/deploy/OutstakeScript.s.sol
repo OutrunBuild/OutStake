@@ -14,7 +14,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {IOutrunDeployer} from "./deployment/interfaces/IOutrunDeployer.sol";
-import {OutrunDeployer} from "./deployment/OutrunDeployer.sol";
+import {CANONICAL_OUTRUN_DEPLOYER_CREATION_CODE} from "./deployment/OutrunDeployerBytecode.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {OutrunOFTUpgradeable} from "../../src/assets/omnichain/OutrunOFTUpgradeable.sol";
@@ -110,9 +110,10 @@ contract OutstakeScript is BaseScript {
         // pin against it before touching CREATE3.
         //
         // Batches (optimizer tier for the forge invocation, see script/ops/deploy.sh):
-        //   deployer — one-time CREATE2 bootstrap of OutrunDeployer (any tier; creation bytecode is
-        //              stable across 15000..100000, and the salt string "OutrunDeployerV1" fixes
-        //              the instance). Needs only OWNER; no OUTRUN_DEPLOYER pin required.
+        //   deployer — one-time CREATE2 bootstrap of OutrunDeployer (any tier: the recipe reads
+        //              the pinned CANONICAL_OUTRUN_DEPLOYER_CREATION_CODE constant, and the salt
+        //              string "OutrunDeployerV1" fixes the instance). Needs only OWNER; no
+        //              OUTRUN_DEPLOYER pin required.
         //   check    — assert-only run against the OUTRUN_DEPLOYER pin, no deployment
         //   uasset   — UETH/UUSD/UBNB, tier 15000 (impl exceeds EIP-170 above 15000)
         //   router   — OutrunRouter, tier 100000 (needs MEMEVERSE_LAUNCHER)
@@ -190,7 +191,10 @@ contract OutstakeScript is BaseScript {
     /// CREATE2 expressions cannot drift apart.
     function _outrunDeployerRecipe(uint256 nonce) internal view returns (bytes32 salt, bytes memory initcode) {
         salt = keccak256(abi.encodePacked(owner, "OutrunDeployerV1", nonce));
-        initcode = abi.encodePacked(type(OutrunDeployer).creationCode, abi.encode(owner));
+        // Pinned constant, NOT type(OutrunDeployer).creationCode: via_ir creation code is
+        // optimizer-runs sensitive, and this recipe is recomputed by every batch at different
+        // compile tiers — only the embedded bytes keep the CREATE2 address tier-invariant.
+        initcode = abi.encodePacked(CANONICAL_OUTRUN_DEPLOYER_CREATION_CODE, abi.encode(owner));
     }
 
     function _deployOutrunDeployer(uint256 nonce) internal returns (address outrunDeployerAddr) {
