@@ -32,7 +32,7 @@
 - `src/psm/OutrunPSMUpgradeable.sol`
 - `src/psm/interfaces/IPSM.sol`
 - 每个 (uAsset, reserve) 配对一个实例（现状即单实例单储备，共三实例）：UUSD 仅设 USDC-PSM 单实例，UETH / UBNB 各一原生实例，共三实例，每实例绑定单一储备（UETH / UBNB 为 NATIVE 哨兵），以绑定储备与对应 uAsset 按固定 1:1 面值双向兑换（`OutrunPSMUpgradeable.sol::mint` / `::redeem`，只操作绑定储备），为 uAsset 提供独立于 CDP 的锚定供给来源。
-- 铸 / 烧经 uAsset 储备铸烧路径（`reserveMint` / `reserveBurn`），豁免 minter 债务台账；兑换费率与 `stockCap` 口径以行为规格真源为准；PSM 自身不设 pause、无 owner 提取面——计费结余经无许可 `OutrunPSMUpgradeable.sol::sweepFees` 提取至部署期 immutable 绑定的 `feeRecipient`。
+- 铸 / 烧经 uAsset 储备铸烧路径（`reserveMint` / `reserveBurn`），豁免 minter 债务台账；兑换费率与 `stockCap` 口径以行为规格真源为准；PSM 自身不设 pause、无 owner 提取面——计费结余经无许可 `OutrunPSMUpgradeable.sol::sweepFees` 提取至 `feeRecipient`（部署期 initialize 绑定初值，运行期可经 owner-only `OutrunPSMUpgradeable.sol::setFeeRecipient` 变更）。
 - 行为规格真源：`docs/spec/psm/peg-stability-module.md`。
 
 ### 1.4 USR 层（储蓄金库）

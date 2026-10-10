@@ -8,7 +8,7 @@ PSM 是 uAsset 三条供给路径（CDP / PSM / POLend，路径定义见 `docs/s
 
 PSM 与 SP（position 层）同族——两者都是面值铸/烧语义，差异在背书持有与需求绑定：**PSM 储备由协议持有**（锁定 reserve 背书铸烧，供非借款人换汇，锚定管道对全部 uAsset 持有人开放）；**SP 抵押为用户自有生息 SY**（面值铸造背书，铸出与 Memeverse genesis 需求严格绑定，唯一铸造入口 `stakeForGenesis`，见 `docs/spec/position/accounting.md`）。uAsset 溢价时 PSM 储备放出、折价时债赎套利（SP 仓 owner 买折价 uAsset 还债赎 SY）构成回锚双管道（风险模型见 `docs/ARCHITECTURE.md` §7）。
 
-1:1 兑换汇率是结构性常数：按面值硬编码实现、无 setter、禁接 oracle（见「零 oracle」节）。PSM 自身不设 pause，也无 owner 提取面——计费结余经无许可公开入口 `OutrunPSMUpgradeable.sol::sweepFees` 提取（对标 dss-psm `kick()`），owner 仅参数面（费率、cap 与 UUPS 升级权，见 `docs/spec/access-control.md`）。
+1:1 兑换汇率是结构性常数：按面值硬编码实现、无 setter、禁接 oracle（见「零 oracle」节）。PSM 自身不设 pause，也无 owner 提取面——计费结余经无许可公开入口 `OutrunPSMUpgradeable.sol::sweepFees` 提取（对标 dss-psm `kick()`），owner 仅参数面（费率、cap、feeRecipient 与 UUPS 升级权，见 `docs/spec/access-control.md`）。
 
 ## 合约结构与部署绑定
 
