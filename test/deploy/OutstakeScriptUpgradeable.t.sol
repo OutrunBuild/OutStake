@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {IOAppCore} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
 
 import {OutstakeScript} from "../../script/deploy/OutstakeScript.s.sol";
@@ -17,6 +18,7 @@ import {OutrunPSMUpgradeable} from "../../src/psm/OutrunPSMUpgradeable.sol";
 import {OutrunUSRVaultUpgradeable} from "../../src/usr/OutrunUSRVaultUpgradeable.sol";
 import {MockLzEndpoint} from "../upgradeable/mocks/OFTMocks.sol";
 import {EmptyMockLauncher} from "../upgradeable/mocks/EmptyMockLauncher.sol";
+import {Faucet} from "../support/Faucet.sol";
 import {MockUSDC} from "../support/mocks/MockUSDC.sol";
 import {DeterministicCreate2FactoryMock} from "./mocks/DeterministicCreate2FactoryMock.sol";
 import {RouterConfigInjectionHarness} from "./mocks/RouterConfigInjectionHarness.sol";
@@ -125,6 +127,21 @@ contract OutstakeDeploymentScriptHarness is OutstakeScript {
 
     function exposedCanonicalCreate2Factory() external pure returns (address) {
         return CANONICAL_CREATE2_FACTORY;
+    }
+
+    function exposedDeployMockERC20(uint256 nonce) external {
+        _deployMockERC20(nonce);
+    }
+
+    function exposedDeployMockOracle(uint256 nonce) external {
+        _deployMockOracle(nonce);
+    }
+
+    function exposedDeployOnce(bytes32 salt, bytes memory creationCode, string memory label)
+        external
+        returns (address)
+    {
+        return _deployOnce(salt, creationCode, label);
     }
 
     function _rawOutboundRateLimitConfig(string memory, string memory)
@@ -447,8 +464,9 @@ contract OutstakeScriptUpgradeableTest is Test {
     // write in this function.
     function testRunBatchDispatchUnsetUnknownAndRouterGenerationPaths() external {
         // Part 1 — unset BATCH fail-closed. Reaching the UnknownBatch revert still requires the
-        // OUTRUN_DEPLOYER pin to pass first: run() reads it and runs `_assertOutrunDeployer(1)`
-        // before the batch dispatch, so the harness deploys the matching OutrunDeployer.
+        // OUTRUN_DEPLOYER pin to pass first: run() reads it and runs
+        // `_assertOutrunDeployer(DEPLOYER_INSTANCE_NONCE)` before the batch dispatch, so the
+        // harness deploys the matching OutrunDeployer.
         // An ambient ops export would route run() into a real batch instead of the unset path.
         assertFalse(vm.envExists("BATCH"), "ambient BATCH export breaks unset-batch assert");
 
@@ -690,6 +708,92 @@ contract OutstakeScriptUpgradeableTest is Test {
         _assertUSRVault("ETH", "Universal Savings ETH", "suETH");
         _assertUSRVault("USD", "Universal Savings USD", "suUSD");
         _assertUSRVault("BNB", "Universal Savings BNB", "suBNB");
+    }
+
+    // --- same-nonce resume (idempotent deploy paths) ---
+
+    /// @dev A same-nonce rerun of the mocks batch resumes instead of colliding on the spent
+    ///      CREATE3 salts: every artifact is found at its predicted address and skipped, and the
+    ///      Faucet.addToken replay is a per-token setter, so the rerun keeps every address and
+    ///      the faucet registration unchanged.
+    function testMocksBatchRerunAtSameNonceSkipsArtifactsAndKeepsRegistration() external {
+        script.exposedDeployMockERC20(1);
+        script.exposedDeployMockOracle(1);
+
+        address faucet = _mocksArtifact("Faucet");
+        address mockUSDC = _mocksArtifact("MockUSDC");
+        address mockAUSDC = _mocksArtifact("MockAUSDC");
+        address mockSUSDS = _mocksArtifact("MockSUSDS");
+        address mockAUSDCOracle = _mocksArtifact("MockAUSDCOracle");
+        address mockSUSDSOracle = _mocksArtifact("MockSUSDSOracle");
+
+        assertGt(faucet.code.length, 0);
+        assertEq(Faucet(faucet).tokenInfos(mockUSDC), 1000000 * 1e18);
+        assertEq(Faucet(faucet).tokenInfos(mockAUSDC), 1000000 * 1e18);
+        assertEq(Faucet(faucet).tokenInfos(mockSUSDS), 1000000 * 1e18);
+
+        // Same-nonce rerun must not revert, and every artifact stays at its predicted address
+        // (CREATE3 predictions are stable across runs by construction).
+        script.exposedDeployMockERC20(1);
+        script.exposedDeployMockOracle(1);
+
+        assertEq(_mocksArtifact("Faucet"), faucet);
+        assertEq(_mocksArtifact("MockUSDC"), mockUSDC);
+        assertEq(_mocksArtifact("MockAUSDC"), mockAUSDC);
+        assertEq(_mocksArtifact("MockSUSDS"), mockSUSDS);
+        assertEq(_mocksArtifact("MockAUSDCOracle"), mockAUSDCOracle);
+        assertEq(_mocksArtifact("MockSUSDSOracle"), mockSUSDSOracle);
+        // The addToken replay left the identical registration behind.
+        assertEq(Faucet(faucet).tokenInfos(mockUSDC), 1000000 * 1e18);
+        assertEq(Faucet(faucet).tokenInfos(mockAUSDC), 1000000 * 1e18);
+        assertEq(Faucet(faucet).tokenInfos(mockSUSDS), 1000000 * 1e18);
+    }
+
+    /// @dev Resume from the impl-deployed / proxy-missing intermediate state: pre-deploying only
+    ///      the implementation at the impl salt must make the next full run converge to the same
+    ///      proxy address an uninterrupted run produces, with the proxy's ERC1967 implementation
+    ///      slot pointing at the pre-deployed impl; a further full rerun skips both steps and
+    ///      keeps address and slot identical.
+    function testUpgradeableDeployResumesFromImplOnlyIntermediateState() external {
+        _deployFamilyUAssets();
+        script.setFamilyUAsset(_familyUAsset("ETH"));
+
+        bytes32 vaultSalt = keccak256(abi.encodePacked("OutrunUSRVaultETH", uint256(1)));
+        bytes32 implSalt = keccak256(abi.encodePacked(vaultSalt, "impl"));
+        address vaultAddr = outrunDeployer.getDeployed(address(script), vaultSalt);
+        assertEq(vaultAddr.code.length, 0);
+
+        // Intermediate state: implementation live at its own salt, proxy salt still unconsumed.
+        address impl = script.exposedDeployOnce(implSalt, type(OutrunUSRVaultUpgradeable).creationCode, "SuETH (impl)");
+        assertGt(impl.code.length, 0);
+
+        // Full run resumes: the impl skips, the proxy deploys, and the run converges at the
+        // predicted address with the ERC1967 slot equal to the pre-deployed impl. The slot holds
+        // the address right-aligned, so it is read through uint160.
+        script.exposedDeploySuETH(1);
+        assertGt(vaultAddr.code.length, 0);
+        address storedImpl = address(uint160(uint256(vm.load(vaultAddr, ERC1967Utils.IMPLEMENTATION_SLOT))));
+        assertEq(storedImpl, impl);
+        _assertUSRVault("ETH", "Universal Savings ETH", "suETH");
+
+        // Whole-batch rerun skips both steps and adopts the existing proxy unchanged.
+        script.exposedDeploySuETH(1);
+        assertEq(address(uint160(uint256(vm.load(vaultAddr, ERC1967Utils.IMPLEMENTATION_SLOT)))), impl);
+    }
+
+    /// @dev Negative path of the same-nonce rerun guard: when the existing proxy points at an
+    ///      implementation other than the one this run resolves (e.g. it was upgraded away
+    ///      between runs), the rerun must fail closed — proceeding would silently adopt the old
+    ///      proxy's initialization while the operator believes this run's env took effect.
+    function test_RevertWhen_ExistingProxyPointsAtDifferentImpl() external {
+        _deployFamilyUAssets();
+        script.setFamilyUAsset(_familyUAsset("ETH"));
+        script.exposedDeploySuETH(1);
+
+        vm.store(_familyUSRVault("ETH"), ERC1967Utils.IMPLEMENTATION_SLOT, bytes32(uint256(uint160(address(0xDEAD)))));
+
+        vm.expectRevert(OutstakeScript.ImplMismatch.selector);
+        script.exposedDeploySuETH(1);
     }
 
     // --- POLend minter initial mintingCap wiring ---
@@ -949,6 +1053,12 @@ contract OutstakeScriptUpgradeableTest is Test {
 
     function _psmByStem(string memory saltStem) internal view returns (address) {
         return outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked(saltStem, uint256(1))));
+    }
+
+    /// @dev Predicted CREATE3 address of one `mocks`-batch artifact at nonce 1, re-derived from
+    ///      the artifact stem as an independent oracle of the script's salt recipe.
+    function _mocksArtifact(string memory stem) internal view returns (address) {
+        return outrunDeployer.getDeployed(address(script), keccak256(abi.encodePacked(stem, uint256(1))));
     }
 
     function _familyUSRVault(string memory assetWord) internal view returns (address) {

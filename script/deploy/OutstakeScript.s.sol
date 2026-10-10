@@ -10,6 +10,7 @@ import {console} from "forge-std/console.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {IOutrunDeployer} from "./deployment/interfaces/IOutrunDeployer.sol";
@@ -45,6 +46,7 @@ contract OutstakeScript is BaseScript {
     error InvalidDeployer();
     error NotTestnetChain();
     error FactoryDeployFailed();
+    error ImplMismatch();
 
     // SP defaults are centralized in `SPDefaults` so both deploy scripts share the
     // same values by construction. See `script/lib/SPDefaults.sol`.
@@ -59,6 +61,10 @@ contract OutstakeScript is BaseScript {
     // supply stays small — hitting ReachMintCap inside this window is expected, not an incident.
     // Raise via setMintingCap as governance allows.
     uint256 internal constant UBNB_DEFAULT_MINTING_CAP = 100_000 ether;
+    // OutrunDeployer instance selector: the deploy-once-ever factory is pinned at nonce 1 and
+    // never rotates with DEPLOYMENT_NONCE generations — every other batch re-asserts the
+    // OUTRUN_DEPLOYER env pin against this single instance before touching CREATE3.
+    uint256 internal constant DEPLOYER_INSTANCE_NONCE = 1;
 
     // Canonical deterministic-deployment proxy (Arachnid; same address on every chain), used as
     // the CREATE2 creator so the script never needs its own ephemeral address(this) — forge script
@@ -121,13 +127,12 @@ contract OutstakeScript is BaseScript {
         bytes32 batch = keccak256(bytes(vm.envOr("BATCH", string(""))));
 
         if (batch == keccak256(bytes("deployer"))) {
-            uint256 deployerNonce = 1; // instance selector; never rotates with generations
-            _deployOutrunDeployer(deployerNonce);
+            _deployOutrunDeployer(DEPLOYER_INSTANCE_NONCE);
             return;
         }
 
         outrunDeployer = vm.envAddress("OUTRUN_DEPLOYER");
-        _assertOutrunDeployer(1);
+        _assertOutrunDeployer(DEPLOYER_INSTANCE_NONCE);
 
         uint256 nonce = vm.envOr("DEPLOYMENT_NONCE", uint256(1));
 
@@ -190,8 +195,9 @@ contract OutstakeScript is BaseScript {
 
     function _deployOutrunDeployer(uint256 nonce) internal returns (address outrunDeployerAddr) {
         (bytes32 salt, bytes memory initcode) = _outrunDeployerRecipe(nonce);
-        // Idempotent: the recipe is nonce-independent by design (deploy-once-ever), so a rerun
-        // finds its own CREATE2 address already live and skips instead of reverting.
+        // Idempotent: the instance is pinned at DEPLOYER_INSTANCE_NONCE (the salt embeds that
+        // nonce) and never rotates with DEPLOYMENT_NONCE generations, so a rerun finds its own
+        // CREATE2 address already live and skips instead of reverting.
         address expected = Create2.computeAddress(salt, keccak256(initcode), CANONICAL_CREATE2_FACTORY);
         if (expected.code.length != 0) {
             console.log("OutrunDeployer deployed on %s (existing)", expected);
@@ -246,23 +252,31 @@ contract OutstakeScript is BaseScript {
         endpointIds[421614] = vm.envUint("ARBITRUM_SEPOLIA_EID").toUint32();
     }
 
-    /// @dev Idempotent CREATE3 deploy through OutrunDeployer: when the predicted address
-    ///      (namespaced by the broadcaster; OWNER == broadcaster is asserted before every deploy
-    ///      path) already holds code, the contract is ours from a prior same-nonce run — log it
-    ///      in the backfill-compatible format and skip, so re-running a half-failed batch
-    ///      resumes to completion instead of colliding on the consumed salt (DEPLOYMENT_FAILED).
-    ///      Code at a predicted address can only be ours: the address commits to
-    ///      (OutrunDeployer, broadcaster, salt) and salts commit to DEPLOYMENT_NONCE.
+    /// @dev Idempotent CREATE3 deploy through OutrunDeployer, and the single emission point for
+    ///      every deploy log line: both outcomes print one backfill-compatible "<label> deployed
+    ///      on <address>" line (the skip adds " (existing)"), so a first-run output carries the
+    ///      same env-pin source a resume does. When the predicted address (namespaced by the
+    ///      broadcaster; OWNER == broadcaster is asserted before every deploy path) already holds
+    ///      code, the contract is ours from a prior same-nonce run — skip it, so re-running a
+    ///      half-failed batch resumes to completion instead of colliding on the consumed salt
+    ///      (DEPLOYMENT_FAILED). "Ours" is an ownership claim, not an initialization claim: a
+    ///      skipped contract keeps the env of the run that first deployed it, not this run's env,
+    ///      so changing initialization parameters requires a fresh DEPLOYMENT_NONCE. Code at a
+    ///      predicted address can only be ours: the address commits to (OutrunDeployer,
+    ///      broadcaster, salt) and salts commit to DEPLOYMENT_NONCE.
     function _deployOnce(bytes32 salt, bytes memory creationCode, string memory label)
         internal
         returns (address deployed)
     {
         address expected = IOutrunDeployer(outrunDeployer).getDeployed(owner, salt);
-        if (expected.code.length != 0) {
+        // The zero guard is test-environment armor: a real CREATE3 prediction is never zero, but a
+        // mock deployer predicting address(0) must not trip the skip on mocked-zero-address code.
+        if (expected != address(0) && expected.code.length != 0) {
             console.log(string.concat(label, " deployed on %s (existing)"), expected);
             return expected;
         }
-        return IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        deployed = IOutrunDeployer(outrunDeployer).deploy(salt, creationCode);
+        console.log(string.concat(label, " deployed on %s"), deployed);
     }
 
     /// @dev Deploys an upgradeable contract via ERC1967Proxy using CREATE3 through
@@ -271,21 +285,32 @@ contract OutstakeScript is BaseScript {
     /// what lets the same address be reproduced on every chain. The "impl" suffix gives the
     /// implementation its own salt namespace; reusing the proxy salt would make the second
     /// CREATE3 deploy revert with DEPLOYMENT_FAILED. Both steps are idempotent via
-    /// `_deployOnce`, so a run that died between impl and proxy resumes cleanly; the impl
-    /// label carries an "Impl" suffix so a parsed skip line can never backfill an
-    /// implementation address onto the proxy's env pin.
+    /// `_deployOnce`, so a run that died between impl and proxy resumes cleanly. The impl log
+    /// label is "<label> (impl)" — not a prefix of the proxy's "<label> deployed on" line in
+    /// either outcome — so even a lenient first-match parser cannot backfill an implementation
+    /// address onto the proxy's env pin.
     function _deployUpgradeable(
         bytes memory implCreationCode,
         bytes memory initCalldata,
         bytes32 salt,
         string memory label
-    ) internal returns (address) {
+    ) internal returns (address proxy) {
         // Deploy implementation
         bytes32 implSalt = keccak256(abi.encodePacked(salt, "impl"));
-        address impl = _deployOnce(implSalt, implCreationCode, string.concat(label, "Impl"));
+        address impl = _deployOnce(implSalt, implCreationCode, string.concat(label, " (impl)"));
         // Deploy proxy
         bytes memory proxyCode = abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initCalldata));
-        return _deployOnce(salt, proxyCode, label);
+        proxy = _deployOnce(salt, proxyCode, label);
+        // Same-nonce rerun consistency: a proxy found at the predicted address must point at the
+        // impl this run resolved, so impl-generation drift (e.g. the proxy was upgraded away)
+        // fails closed instead of silently adopting the old proxy's initialization. The check
+        // cannot see initCalldata drift (same impl, different initialize args): rerunning at the
+        // same nonce must reuse the env that produced the live proxy; changing initialization
+        // parameters requires bumping DEPLOYMENT_NONCE. The ERC1967 slot stores the address
+        // right-aligned, so it is read through uint160, never a bytes20 left-truncation.
+        if (address(uint160(uint256(vm.load(proxy, ERC1967Utils.IMPLEMENTATION_SLOT)))) != impl) {
+            revert ImplMismatch();
+        }
     }
 
     /// @dev Shared chain list for the three uAsset deploys: one definition site, so the
@@ -324,8 +349,6 @@ contract OutstakeScript is BaseScript {
         bytes32 peer = bytes32(uint256(uint160(deployedUAsset)));
 
         _configureUAssetOmnichain(deployedUAsset, peer, omnichainIds, outboundRateLimit, outboundRateWindow);
-
-        console.log(string.concat(symbol, " deployed on %s"), deployedUAsset);
     }
 
     /// @dev Thin named wrappers keep the per-asset deploy entrypoints discoverable by symbol for
@@ -382,13 +405,17 @@ contract OutstakeScript is BaseScript {
     ///      re-check — a zero stockCap or fees outside [0, 1%] — are enforced by `initialize` inside
     ///      the proxy deployment transaction: only that proxy transaction rolls back atomically (the
     ///      proxy salt stays unconsumed), while the implementation deployed by the earlier broadcast
-    ///      transaction stays on-chain with its impl salt namespace consumed — retrying at the same
-    ///      nonce reverts DEPLOYMENT_FAILED at the implementation step, so a retry needs a fresh nonce
-    ///      with the half-wired instance abandoned.
-    ///      Recovery from a run that fails AFTER the deploy is not "re-run this entry": the salt is
-    ///      spent (CREATE3 is one-shot per salt, a second run reverts DEPLOYMENT_FAILED). Complete
-    ///      the missing wiring with manual owner calls (setReserveMinter / setPsmForUAsset) or redeploy
-    ///      at a fresh nonce and abandon the half-wired instance.
+    ///      transaction stays on-chain — and is skipped by an idempotent rerun, not a collision.
+    ///      Same-nonce rerun semantics are resume, not redo: already-deployed artifacts are found
+    ///      at their predicted addresses and skipped, an unconsumed proxy salt deploys with the
+    ///      current env, and the post-deploy wiring replays are idempotent owner calls
+    ///      (setReserveMinter is a per-minter setter; setPsmForUAsset re-registers the same pair),
+    ///      so a run that died between the deploy and the wiring completes by re-running this entry.
+    ///      A rerun after the proxy is live adopts its existing initialization: `_deployUpgradeable`
+    ///      fails closed on impl-generation drift, but initCalldata drift (same impl, different
+    ///      initialize args) is invisible on-chain, so same-nonce reruns must keep the env that
+    ///      produced the live proxy, and changing initialization parameters requires a fresh
+    ///      DEPLOYMENT_NONCE.
     function _deployPSM(
         uint256 nonce,
         string memory symbol,
@@ -439,8 +466,6 @@ contract OutstakeScript is BaseScript {
         // both directions of this PSM without touching any other instance.
         IUniversalAssets(uAsset).setReserveMinter(psm, true);
         IOutrunRouter(router).setPsmForUAsset(uAsset, reserve, psm);
-
-        console.log(string.concat(saltStem, " deployed on %s"), psm);
     }
 
     /// @dev Env-read seam for the family uAsset address (UETH/UUSD/UBNB env keys), shared by the
@@ -540,7 +565,7 @@ contract OutstakeScript is BaseScript {
         _validateUSRVaultDeploymentConfig(uAsset, symbol);
 
         bytes32 salt = keccak256(abi.encodePacked(string.concat("OutrunUSRVault", assetWord), nonce));
-        address vault = _deployUpgradeable(
+        _deployUpgradeable(
             type(OutrunUSRVaultUpgradeable).creationCode,
             abi.encodeCall(
                 OutrunUSRVaultUpgradeable.initialize,
@@ -549,8 +574,6 @@ contract OutstakeScript is BaseScript {
             salt,
             string.concat("Su", assetWord)
         );
-
-        console.log(string.concat("su", assetWord, " vault deployed on %s"), vault);
     }
 
     /// @dev Pre-checks for the vault deploy: registration performs no code check on the uAsset.
@@ -816,8 +839,6 @@ contract OutstakeScript is BaseScript {
         if (wireGenesisLauncher) {
             OutrunStakingPositionUpgradeable(spAddress).setGenesisLauncher(genesisLauncherAddr);
         }
-
-        console.log(string.concat(logLabel, " deployed on %s"), spAddress);
     }
 
     /// @dev Env-read seam for the optional genesis launcher wiring (GENESIS_LAUNCHER): returns
