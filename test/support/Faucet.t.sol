@@ -10,7 +10,8 @@ import {
     InvalidDailyLimit,
     UnsupportedToken,
     ClaimTooSoon,
-    InsufficientFaucetBalance
+    InsufficientFaucetBalance,
+    BootstrapAlreadyDone
 } from "./Faucet.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
@@ -21,6 +22,31 @@ contract HeldToken is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+}
+
+/// @dev Minimal GenesisCredit stand-in: msg.sender-bound merkle claim mirroring the real
+///      contract's double-hash leaf and one-claim-per-address guard.
+contract MockMerkleCredit is ERC20 {
+    bytes32 public merkleRoot;
+    mapping(address => uint256) public claimed;
+
+    constructor() ERC20("Credit", "CRT") {}
+
+    function setMerkleRoot(bytes32 root) external {
+        merkleRoot = root;
+    }
+
+    function claim(uint256 amount, bytes32[] calldata proof) external {
+        require(claimed[msg.sender] == 0, "claimed");
+        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(msg.sender, amount))));
+        bytes32 node = leaf;
+        for (uint256 i = 0; i < proof.length; ++i) {
+            node = node < proof[i] ? keccak256(bytes.concat(node, proof[i])) : keccak256(bytes.concat(proof[i], node));
+        }
+        require(node == merkleRoot, "proof");
+        claimed[msg.sender] = amount;
+        _mint(msg.sender, amount);
     }
 }
 
@@ -150,5 +176,49 @@ contract FaucetTest is Test {
         vm.prank(alice);
         vm.expectRevert(UnsupportedToken.selector);
         faucet.claim(address(mintable));
+    }
+
+    // -------------------------------------------------- credit pot bootstrap
+
+    function testBootstrapGenesisCreditMintsPotIntoFaucet() external {
+        MockMerkleCredit credit = new MockMerkleCredit();
+        uint256 pot = 1_000_000e18;
+        // single-leaf tree: root = leaf(faucet, pot)
+        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(address(faucet), pot))));
+        credit.setMerkleRoot(leaf);
+        bytes32[] memory proof = new bytes32[](0);
+
+        vm.prank(owner);
+        faucet.bootstrapGenesisCredit(address(credit), pot, proof);
+
+        assertEq(credit.balanceOf(address(faucet)), pot);
+        assertTrue(faucet.bootstrappedCredits(address(credit)));
+
+        // pot immediately serves held drips
+        vm.prank(owner);
+        faucet.addHeldToken(address(credit), 100e18);
+        vm.prank(alice);
+        faucet.claimHeld(address(credit));
+        assertEq(credit.balanceOf(alice), 100e18);
+    }
+
+    function testBootstrapGenesisCreditOnlyOwner() external {
+        MockMerkleCredit credit = new MockMerkleCredit();
+        bytes32[] memory proof = new bytes32[](0);
+        vm.prank(alice);
+        vm.expectRevert();
+        faucet.bootstrapGenesisCredit(address(credit), 1e18, proof);
+    }
+
+    function testBootstrapGenesisCreditIsOneShot() external {
+        MockMerkleCredit credit = new MockMerkleCredit();
+        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(address(faucet), 1e18))));
+        credit.setMerkleRoot(leaf);
+        bytes32[] memory proof = new bytes32[](0);
+        vm.startPrank(owner);
+        faucet.bootstrapGenesisCredit(address(credit), 1e18, proof);
+        vm.expectRevert(BootstrapAlreadyDone.selector);
+        faucet.bootstrapGenesisCredit(address(credit), 1e18, proof);
+        vm.stopPrank();
     }
 }

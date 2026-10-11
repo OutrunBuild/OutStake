@@ -6,6 +6,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {IMintable} from "./mocks/MockUSDC.sol";
 
+interface ICreditMerkleClaim {
+    function claim(uint256 amount, bytes32[] calldata merkleProof) external;
+}
+
 interface IFaucet {
     function addToken(address token, uint256 dailyLimit) external;
 }
@@ -15,6 +19,7 @@ error InvalidDailyLimit();
 error UnsupportedToken();
 error ClaimTooSoon();
 error InsufficientFaucetBalance();
+error BootstrapAlreadyDone();
 error HeldTokenTransferFailed();
 
 contract Faucet is Ownable {
@@ -34,6 +39,8 @@ contract Faucet is Ownable {
     }
 
     mapping(address => HeldTokenInfo) public heldTokenInfos;
+
+    mapping(address => bool) public bootstrappedCredits;
 
     constructor(address _owner) Ownable(_owner) {}
 
@@ -97,6 +104,18 @@ contract Faucet is Ownable {
                 ++i;
             }
         }
+    }
+
+    /// @notice One-time merkle bootstrap of a GenesisCredit pot into this faucet.
+    /// @dev GenesisCredit's only mint door is its merkle claim and the leaf binds msg.sender,
+    ///      so the FAUCET must be the claimant: the credit owner rotates the root to a
+    ///      single-leaf (this faucet, amount) tree, then calls this exactly once per credit;
+    ///      the minted pot backs claimHeld. Guarded one-shot so a rotated root can never be
+    ///      used to inflate the pot behind the owner's back.
+    function bootstrapGenesisCredit(address credit, uint256 amount, bytes32[] calldata merkleProof) external onlyOwner {
+        if (bootstrappedCredits[credit]) revert BootstrapAlreadyDone();
+        bootstrappedCredits[credit] = true;
+        ICreditMerkleClaim(credit).claim(amount, merkleProof);
     }
 
     /// @notice Claim the daily drip of multiple registered held tokens in one call.
