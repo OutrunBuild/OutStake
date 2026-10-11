@@ -258,7 +258,8 @@
         "test/deploy/OutstakeScriptUpgradeable.t.sol",
         "test/deploy/YieldDeployScriptUpgradeable.t.sol",
         "test/upgradeable/OutstakeScriptMockSYDeploy.t.sol",
-        "test/deploy/OutstakeRouterDriftFix.t.sol"
+        "test/deploy/OutstakeRouterDriftFix.t.sol",
+        "test/support/Faucet.t.sol"
       ],
       "rules": [
         {
