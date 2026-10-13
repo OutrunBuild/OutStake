@@ -58,7 +58,13 @@ snapshot () { # snapshot <chain-alias> <batch> <tier>
     base="$repo_root/deployments"
     snap="$base/nonce-${DEPLOYMENT_NONCE:-1}/$1/$2"
     mkdir -p "$snap"
-    bi=$(ls -t "$repo_root/out/build-info/"*.json 2>/dev/null | head -1)
+    # 按本批档位过滤：编译跳过（缓存命中）时 forge 不写新 build-info，ls -t 会捞到
+    # 别的档位（或默认档）的过期文件（nonce-4 真跑教训：t100000 批冻结了 t200 预热构建）
+    bi=$(for f in "$repo_root/out/build-info/"*.json; do
+             [ -f "$f" ] || continue
+             if [ "$(jq -r '.input.settings.optimizer.runs // 0' "$f" 2>/dev/null)" = "$3" ]; then
+                 echo "$f"; fi
+         done | xargs -r ls -t 2>/dev/null | head -1)
     if [ -n "$bi" ]; then
         jq -c '{input: .input, bytecodes: (.output.contracts | map_values(map_values(.evm.bytecode.object // "")))}' "$bi" \
             | gzip > "$snap/compile.json.gz"
