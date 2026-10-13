@@ -37,8 +37,10 @@ export BATCH="$batch"
 
 # Verification is ON by default (VERIFY=0 disables): forge --verify failures are non-fatal,
 # and deploy-time verification shares this invocation's compile settings.
+# OFF by default: forge --verify exits non-zero on any verify failure (would abort the
+# run post-salts); post-hoc verification belongs to verify-contracts.sh
 verify_flags=()
-if [ "${VERIFY:-1}" = "1" ]; then verify_flags=(--verify); fi
+if [ "${VERIFY:-0}" = "1" ]; then verify_flags=(--verify); fi
 
 # Freeze the exact compile + broadcast for post-hoc verification (see ops/deploy.sh).
 snapshot () { # snapshot <chain-alias> <batch> <tier>
