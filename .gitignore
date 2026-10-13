@@ -64,3 +64,6 @@ skills/
 /.pi/skills
 /.dsh/skills
 lcov.info
+
+# 部署快照（compile/broadcast 固化件）：本地留存、不进 git；仅保留最新 nonce 一代
+deployments/

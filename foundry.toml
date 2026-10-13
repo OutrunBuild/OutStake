@@ -70,3 +70,9 @@ severity = ["high", "med", "low"]
 # lint report — use the wrapper.
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# 部署/验证档位 profiles（ops/deploy.sh uasset=15000，其余=100000）。
+[profile.t15000]
+optimizer_runs = 15000
+[profile.t100000]
+optimizer_runs = 100000

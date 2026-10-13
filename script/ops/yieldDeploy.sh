@@ -6,8 +6,8 @@
 #   chain: bsc_testnet | sepolia | base_sepolia | arbitrum_sepolia
 #   batch: wsteth susde slisbnb ausdc all   (support functions self-skip on non-matching chains)
 #
-# Optimizer tier 100000 — all SY/SP contracts fit the code size limit there. SP/SY are
-# single-chain direct-new deployments (no CREATE3 / cross-chain same-address requirement).
+# Optimizer tier 100000 via [profile.t100000] (see ops/deploy.sh). SP/SY are single-chain
+# direct-new deployments (no CREATE3 / cross-chain same-address requirement).
 set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
@@ -22,6 +22,7 @@ case "$batch" in
     wsteth|susde|slisbnb|ausdc|all) optimizer_runs=100000 ;;
     *) echo "unknown batch: $batch" >&2; exit 1 ;;
 esac
+profile="t$optimizer_runs"
 
 case "$chain" in
     bsc_testnet) chain_flags=(--priority-gas-price 100000000 --with-gas-price 600000000 --slow) ;;
@@ -34,16 +35,48 @@ esac
 source "$repo_root/.env"
 export BATCH="$batch"
 
-# Verification is opt-in (VERIFY=1), same rationale as deploy.sh: a post-broadcast etherscan
-# hiccup must not abort an orchestrated run after the salts are already consumed.
+# Verification is ON by default (VERIFY=0 disables): forge --verify failures are non-fatal,
+# and deploy-time verification shares this invocation's compile settings.
 verify_flags=()
-if [ "${VERIFY:-0}" = "1" ]; then verify_flags=(--verify); fi
+if [ "${VERIFY:-1}" = "1" ]; then verify_flags=(--verify); fi
+
+# Freeze the exact compile + broadcast for post-hoc verification (see ops/deploy.sh).
+snapshot () { # snapshot <chain-alias> <batch> <tier>
+    local id snap bi bd base n
+    case "$1" in
+        bsc_testnet) id=97 ;; sepolia) id=11155111 ;;
+        base_sepolia) id=84532 ;; arbitrum_sepolia) id=421614 ;; *) return 0 ;;
+    esac
+    base="$repo_root/deployments"
+    snap="$base/nonce-${DEPLOYMENT_NONCE:-1}/$1/$2"
+    mkdir -p "$snap"
+    bi=$(ls -t "$repo_root/out/build-info/"*.json 2>/dev/null | head -1)
+    if [ -n "$bi" ]; then
+        jq -c '{input: .input, bytecodes: (.output.contracts | map_values(map_values(.evm.bytecode.object // "")))}' "$bi" \
+            | gzip > "$snap/compile.json.gz"
+    fi
+    bd=$(ls -t "$repo_root/broadcast/"*/"$id"/run-latest.json 2>/dev/null | head -1)
+    if [ -n "$bd" ]; then gzip -c "$bd" > "$snap/broadcast.json.gz"; fi
+    {
+        echo "chain=$1 chainid=$id batch=$2 tier=$3 nonce=${DEPLOYMENT_NONCE:-1}"
+        echo "git_commit=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
+        echo "time=$(date -u +%FT%TZ)"
+        if [ -n "$bi" ]; then echo "compile=compile.json.gz"; fi
+        if [ -n "$bd" ]; then echo "broadcast=broadcast.json.gz"; fi
+    } > "$snap/MANIFEST"
+    for n in "$base"/nonce-*; do
+        if [ -d "$n" ] && [ "$n" != "$base/nonce-${DEPLOYMENT_NONCE:-1}" ]; then rm -rf "$n"; fi
+    done
+    echo "  [snapshot] deployments/nonce-${DEPLOYMENT_NONCE:-1}/$1/$2 frozen (older nonces pruned)"
+}
 
 cd "$repo_root"
-forge script script/deploy/YieldDeployScript.s.sol:YieldDeployScript --rpc-url "$chain" \
-    --optimize --optimizer-runs "$optimizer_runs" \
-    --via-ir \
+forge_batch_rc=0
+FOUNDRY_PROFILE="$profile" forge script script/deploy/YieldDeployScript.s.sol:YieldDeployScript --rpc-url "$chain" \
     "${chain_flags[@]}" \
     --broadcast --ffi -vvvv \
     "${verify_flags[@]}" \
-    "$@"
+    "$@" || forge_batch_rc=$?
+# Snapshot even on failure: consumed salts demand the evidence survives the run.
+snapshot "$chain" "$batch" "$optimizer_runs"
+exit "$forge_batch_rc"
