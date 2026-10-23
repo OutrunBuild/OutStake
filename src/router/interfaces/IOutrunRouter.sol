@@ -285,13 +285,18 @@ interface IOutrunRouter {
      *      (reverting `FundSourceNotAllowed`: the genesis leg rejects `Credit`, the preorder leg
      *      accepts only `UAsset` and `Psm`) and unused fields must be zero (reverting
      *      `FundFieldMustBeZero`); and `msg.value` must equal the legs' combined native need
-     *      (reverting `NativeAmountMismatch`; uAsset-funded legs take none). The uAsset- and
+     *      (reverting `NativeAmountMismatch`; uAsset-funded legs take none; the sum is computed
+     *      unchecked so an adversarial oversize native pair wraps and still fails the equality
+     *      gate with the named error instead of an arithmetic panic). The uAsset- and
      *      PSM-funded genesis legs and the preorder leg fund `IMemeverseLauncher.genesis` /
      *      `IMemeverseLauncher.preorder`, each crediting `user` with the leg's full amount, and
      *      every such leg must consume its uAsset in full or the whole call reverts (GenesisGateLib
      *      full-consumption assertion). The stake-funded genesis leg goes through the
-     *      owner-registered SP (same gates as `genesisByToken`/`genesisBySY`): a `token` equal to
-     *      the SP's canonical SY is charged directly in SY units (its `minSyOut` is accepted but
+     *      owner-registered SP (same gates as `genesisByToken`/`genesisBySY`): the SP's uAsset
+     *      family is bound to the verse-resolved uAsset (`SP.uAsset()` must equal it, else
+     *      `RouterTargetMismatch` with the family addresses before any pull or deposit), a
+     *      `token` equal to the SP's canonical SY is charged directly in SY units (its `minSyOut`
+     *      is accepted but
      *      ignored — `FundInput`'s only explicit silent-ignore exception, since no deposit
      *      conversion runs), any other input token converts through `SY.deposit` under `minSyOut`,
      *      and the SP performs the value-parity mint, the atomic launcher hand-off, and the

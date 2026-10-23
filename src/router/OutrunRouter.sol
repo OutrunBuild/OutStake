@@ -406,7 +406,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @dev The guards mirror the single-leg entries' ordering discipline: value and validity faults
      *      surface before any registry read or pull can move funds. An invalid verse fails closed
      *      through the launcher binding read (the real launcher reverts on an unknown verseId; a
-     *      zero read covers the minimal-interface floor).
+     *      zero read covers the minimal-interface floor). The native sum is computed unchecked:
+     *      an adversarial oversize pair wraps instead of panicking and still fails the equality
+     *      gate, so both overflow and plain mismatch revert `NativeAmountMismatch` pre-funds.
      * @param verseId Opaque launcher-assigned identifier for the target verse.
      * @param genesisInput Funding instruction for the genesis leg.
      * @param preorderInput Funding instruction for the preorder leg.
@@ -435,7 +437,14 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         _validateFundInput(preorderInput, true, leveragedFamily);
         genesisNative = _legNativeValue(genesisInput);
         preorderNative = _legNativeValue(preorderInput);
-        if (msg.value != genesisNative + preorderNative) revert NativeAmountMismatch();
+        // Adversarial-domain input: the sum runs unchecked so an oversize native pair wraps and fails
+        // the equality gate with the named error instead of an arithmetic panic; both paths revert
+        // pre-funds.
+        uint256 expectedNative;
+        unchecked {
+            expectedNative = genesisNative + preorderNative;
+        }
+        if (msg.value != expectedNative) revert NativeAmountMismatch();
     }
 
     /**
@@ -485,11 +494,14 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      *      the registered PSM and reuses `_genesisTail` (its consumer is `launcher.genesis`, the
      *      exact single-caller semantics that tail was factored for). The stake-funded branch
      *      mirrors the single-leg CDP-gate entries: it resolves the trusted SP and its canonical
-     *      SY with the launcher-parity gate, then either charges SY directly (token == canonical
-     *      SY; `amount` is in SY units and `minSyOut` is accepted but ignored — FundInput's only
-     *      explicit silent-ignore exception, since no deposit conversion runs) or converts through
-     *      `SY.deposit` under `minSyOut`, and thin-forwards into `SP.stakeForGenesis`, whose
-     *      uAsset-to-launcher atomic hand-off and full-consumption assertion are SP-side.
+     *      SY with the launcher-parity gate, then binds the SP's uAsset family to the
+     *      verse-resolved uAsset (`SP.uAsset()` must equal it, else `RouterTargetMismatch` with
+     *      the family addresses before any pull or deposit), and then either charges SY directly
+     *      (token == canonical SY; `amount` is in SY units and `minSyOut` is accepted but
+     *      ignored — FundInput's only explicit silent-ignore exception, since no deposit
+     *      conversion runs) or converts through `SY.deposit` under `minSyOut`, and
+     *      thin-forwards into `SP.stakeForGenesis`, whose uAsset-to-launcher atomic hand-off and
+     *      full-consumption assertion are SP-side.
      * @param uAsset The verse's uAsset resolved by the preamble.
      * @param verseId Opaque launcher-assigned identifier for the target verse.
      * @param f Genesis-leg funding instruction (already validated by the preamble).
@@ -510,6 +522,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             // Stake 腿：token == SP 的 canonical SY 时按 SY 单位直充（等价 genesisBySY），
             // 否则经 SY.deposit（等价 genesisByToken）；SP 自带 uAsset→launcher 的原子交接与消费断言。
             address SY = _trustedSYWithLauncherParity(f.sp);
+            // Verse↔SP uAsset family binding: the SP must mint the verse's own uAsset family, checked
+            // before any pull or deposit. The payload reuses `RouterTargetMismatch` (SY-flavored param
+            // names, same three-party SP/expected/actual shape) with the family addresses loaded.
+            address spUAsset = IOutrunStakeManager(f.sp).uAsset();
+            if (spUAsset != uAsset) revert RouterTargetMismatch(f.sp, uAsset, spUAsset);
             uint256 amountInSY;
             if (f.token == SY) {
                 _transferFrom(IERC20(SY), msg.sender, address(this), f.amount);

@@ -1262,16 +1262,18 @@ contract OutrunRouterTestNativeValueGate is Test {
 /**
  * @title OutrunRouterCombinedEntryTest
  * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
- *     gating and zero-field gating, both rejected before any funds move), the uAsset-funded legs
- *     of `genesisAndPreorder` (combination #1) and `leveragedGenesisAndPreorder` (combination #7),
- *     the PSM-funded legs of all three runners (combinations #2, #4, #10) with the summed
- *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
- *     credited by the preorder leg), the stake-funded genesis legs of the normal family
- *     (combinations #5, #6: the tokenIn deposit sub-path through SY.deposit with both slippage
- *     floors, and the token == canonical-SY direct charge in SY units that skips the deposit),
- *     and the credit-funded leveraged interest legs (combinations #11, #12: factory-resolved
- *     credit pull escrowed by POLend, the cached-token divergence fail-closed, and the
- *     unresolved-factory rejection).
+ *     gating and zero-field gating, both rejected before any funds move), the full 12-combo
+ *     end-to-end matrix (#1-#6 normal family: {UAsset, Psm, Stake} genesis x {UAsset, Psm}
+ *     preorder; #7-#12 leveraged family: {UAsset, Psm, Credit} genesis x {UAsset, Psm} preorder)
+ *     with the summed native accounting (msg.value == sum of per-leg native requirements,
+ *     fee-adjusted mint output credited by the preorder leg, and oversize native sums reverting
+ *     the named value-gate error instead of an arithmetic panic), the stake-funded genesis
+ *     sub-paths (the tokenIn deposit through SY.deposit with both slippage floors and the
+ *     token == canonical-SY direct charge in SY units that skips the deposit), the stake-leg
+ *     verse-SP uAsset family binding (a foreign-family SP reverts RouterTargetMismatch before
+ *     any pull), and the credit-funded leveraged interest legs (combinations #11, #12:
+ *     factory-resolved credit pull escrowed by POLend, the cached-token divergence fail-closed,
+ *     and the unresolved-factory rejection).
  * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
  *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
  *     fixture (so every parent test re-runs in this context) and extends it only with the
@@ -1371,6 +1373,52 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(lastPreorderBase, preorderAmount, "preorder credited");
     }
 
+    /// @notice 组合 #8：杠杆族 UAsset 利息腿 + PSM 预购（ERC20 reserve）；利息入 POLend，预购 mint 入 launcher。
+    function test_CombinedLeveragedUAssetAndPsmPreorder() external {
+        _wirePolendFixture();
+        uint256 interest = 3e18;
+        uint256 preorderReserve = 2e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, interest);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.leveragedGenesisAndPreorder(
+            VERSE_ID, _fundUAsset(interest), _fundPsm(address(underlying), preorderReserve), user
+        );
+        vm.stopPrank();
+
+        (, uint256 lastInterest,) = polend.interestSnapshot();
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(lastInterest, interest, "polend interest credited");
+        assertEq(uAsset.balanceOf(address(polend)), interest, "interest escrowed in polend");
+        assertEq(p, preorderReserve, "psm preorder credited the fee-free mint");
+        assertEq(uAsset.balanceOf(address(launcher)), preorderReserve, "launcher holds the preorder mint");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore - preorderReserve, "caller paid the preorder reserve");
+    }
+
+    /// @notice 组合 #9：杠杆族 PSM 利息腿 + UAsset 预购；零费 mint 全额付息，预购按 uAsset 拉取。
+    function test_CombinedLeveragedPsmAndUAssetPreorder() external {
+        _wirePolendFixture();
+        uint256 interestReserve = 4e18;
+        uint256 preorderAmount = 1e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, preorderAmount);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.leveragedGenesisAndPreorder(
+            VERSE_ID, _fundPsm(address(underlying), interestReserve), _fundUAsset(preorderAmount), user
+        );
+        vm.stopPrank();
+
+        (, uint256 lastInterest,) = polend.interestSnapshot();
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(lastInterest, interestReserve, "fee-free mint paid as interest in full");
+        assertEq(uAsset.balanceOf(address(polend)), interestReserve, "interest escrowed in polend");
+        assertEq(p, preorderAmount, "uAsset preorder credited");
+        assertEq(uAsset.balanceOf(address(launcher)), preorderAmount, "launcher holds the preorder pull");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore - interestReserve, "caller paid the interest reserve");
+    }
+
     /// @notice 组合 #2：UAsset 创世 + PSM 预购；预购额是扣 tin 后的 mint 输出，不是 reserve 输入量。
     function test_CombinedUAssetGenesisAndPsmPreorderFeeAdjustedPreorderAmount() external {
         vm.prank(owner);
@@ -1389,6 +1437,32 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(lastPreorderBase, expectedPreorder, "preorder credited the fee-adjusted mint output");
         (, uint256 lastGenesisAmount,) = launcher.snapshot();
         assertEq(lastGenesisAmount, genesisAmount, "genesis leg exact");
+    }
+
+    /// @notice 组合 #3：Psm 创世（ERC20 reserve，零费）+ UAsset 预购；两条腿的 launcher 记录各自精确。
+    function test_CombinedPsmGenesisAndUAssetPreorderErc20() external {
+        uint256 genesisReserve = 5e18;
+        uint256 preorderAmount = 3e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, preorderAmount);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.genesisAndPreorder(
+            VERSE_ID, _fundPsm(address(underlying), genesisReserve), _fundUAsset(preorderAmount), user
+        );
+        vm.stopPrank();
+
+        (, uint256 g, address genesisUser) = launcher.snapshot();
+        (, uint256 p, address preorderUser) = launcher.preorderSnapshot();
+        assertEq(g, genesisReserve, "genesis credited the fee-free face-value mint");
+        assertEq(genesisUser, user, "genesis user");
+        assertEq(p, preorderAmount, "preorder credited the pulled uAsset");
+        assertEq(preorderUser, user, "preorder user");
+        assertEq(uAsset.balanceOf(address(launcher)), genesisReserve + preorderAmount, "launcher holds both legs");
+        assertEq(
+            underlying.balanceOf(user), userUnderlyingBefore - genesisReserve, "caller paid only the genesis reserve"
+        );
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
     }
 
     /// @notice 组合 #10 native：杠杆 PSM 腿 + PSM 预购腿同用 native reserve，msg.value = 两腿之和。
@@ -1418,6 +1492,36 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(g, 5e18, "genesis mint exact (fee-free)");
         assertEq(p, 2e18, "preorder mint exact (fee-free)");
         assertEq(uAsset.balanceOf(address(router)), 0, "no residual between legs");
+    }
+
+    /// @notice 组合 #5：Stake 创世（tokenIn 经 SY.deposit 的 deposit 子路径）+ UAsset 预购。
+    /// @dev 同 #6 的 mock 平价事实：launcher 收款 = tokenInAmount + 预购 uAsset，仓位按价值平价开立。
+    function test_CombinedStakeTokenInLegAndUAssetPreorder() external {
+        uint256 tokenInAmount = 7e18;
+        uint256 preorderAmount = 2e18;
+        uAsset.mint(user, preorderAmount);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.genesisAndPreorder(
+            VERSE_ID,
+            _fundStakeWithMins(address(position), address(underlying), tokenInAmount, 1, 1),
+            _fundUAsset(preorderAmount),
+            user
+        );
+        vm.stopPrank();
+
+        (address positionOwner, uint256 syStaked, uint256 principalDebt,,) = position.positions(1);
+        assertEq(positionOwner, user, "position opened for user");
+        assertEq(syStaked, tokenInAmount, "deposit sub-path collateral recorded");
+        assertEq(principalDebt, tokenInAmount, "parity principal debt");
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(p, preorderAmount, "uAsset preorder credited");
+        assertEq(
+            uAsset.balanceOf(address(launcher)),
+            tokenInAmount + preorderAmount,
+            "launcher holds the parity mint and the preorder pull"
+        );
+        assertEq(uAsset.balanceOf(user), 0, "caller's preorder uAsset fully consumed");
     }
 
     /// @notice 组合 #6：生息资产（tokenIn 经 SY.deposit）创世 + PSM 预购；SP 侧开仓并直送 launcher。
@@ -1466,6 +1570,41 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         );
     }
 
+    /// @notice SR-001：Stake 腿家族绑定——SP 绑定外族 uAsset 时，必须先于任何拉取以
+    ///         RouterTargetMismatch（verse↔SP 家族三方负载）拒绝。
+    /// @dev 外族 SP 按 setUp 模式部署（同一 trusted SY 对 + launcher parity + 开放 mint cap），
+    ///      使 uAsset 家族成为唯一分歧：修复前调用会先拉 SY 并在 launcher 的外族 transferFrom
+    ///      处以无关错误回滚，修复后在拉取前精确命中家族错误。
+    function test_RevertIf_CombinedStakeLegOnForeignFamilySP() external {
+        RouterMockUAsset foreignUAsset = new RouterMockUAsset();
+        OutrunStakingPositionUpgradeable foreignPosition = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                SPTestDefaults.spInitCall(owner, address(sy), address(foreignUAsset), treasury)
+            )
+        );
+        vm.startPrank(owner);
+        router.setTrustedSP(address(foreignPosition), address(sy));
+        foreignPosition.setGenesisLauncher(address(launcher));
+        vm.stopPrank();
+        foreignUAsset.setMintingCap(address(foreignPosition), type(uint128).max);
+        uint256 userSYBefore = sy.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ROUTER_TARGET_MISMATCH_SELECTOR, address(foreignPosition), address(uAsset), address(foreignUAsset)
+            )
+        );
+        router.genesisAndPreorder(
+            VERSE_ID, _fundStake(address(foreignPosition), address(sy), 1e18), _fundUAsset(1e18), user
+        );
+
+        assertEq(sy.balanceOf(user), userSYBefore, "family mismatch must reject before any SY is pulled");
+        assertEq(sy.balanceOf(address(foreignPosition)), 0, "foreign SP must hold no SY");
+        assertEq(sy.balanceOf(address(router)), 0, "router must hold no SY from the rejected leg");
+    }
+
     /// @notice 组合 #11：Credit 利息腿 + UAsset 预购；credit 全额进入 POLend。
     function test_CombinedCreditInterestAndUAssetPreorder() external {
         _wirePolendFixture();
@@ -1480,6 +1619,27 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(credit.balanceOf(address(polend)), creditIn, "credit escrowed in polend");
         (, uint256 p,) = launcher.preorderSnapshot();
         assertEq(p, 1e18, "preorder credited");
+    }
+
+    /// @notice 组合 #12：Credit 利息腿 + PSM 预购；credit 全额进入 POLend，预购走 PSM mint。
+    function test_CombinedCreditInterestAndPsmPreorder() external {
+        _wirePolendFixture();
+        uint256 creditIn = 6e18;
+        uint256 preorderReserve = 2e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        vm.startPrank(user);
+        router.leveragedGenesisAndPreorder(
+            VERSE_ID, _fundCredit(creditIn), _fundPsm(address(underlying), preorderReserve), user
+        );
+        vm.stopPrank();
+
+        (, uint256 lastCreditAmount,) = polend.creditSnapshot();
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(lastCreditAmount, creditIn, "polend received the credit interest");
+        assertEq(credit.balanceOf(address(polend)), creditIn, "credit escrowed in polend");
+        assertEq(p, preorderReserve, "psm preorder credited the fee-free mint");
+        assertEq(uAsset.balanceOf(address(launcher)), preorderReserve, "launcher holds the preorder mint");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore - preorderReserve, "caller paid the preorder reserve");
     }
 
     /// @notice Review Focus 5：factory 换绑后 POLend 缓存 token 与 router 解析不一致 → POLend 内
@@ -1508,6 +1668,18 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
         router.genesisAndPreorder{value: 1}(VERSE_ID, _fundPsm(NATIVE, 1e18), _fundPsm(NATIVE, 1e18), user);
         vm.stopPrank();
+    }
+
+    /// @notice LR-003：两条 native 腿之和溢出 uint256（对抗域输入）：求和回绕后不等于 msg.value，
+    ///         按命名错误 NativeAmountMismatch 拒绝而非算术 Panic(0x11)，且先于任何资金移动。
+    function test_RevertIf_CombinedNativeLegSumOverflowsUint256() external {
+        vm.prank(user);
+        // type(uint256).max + 2 回绕为 1，与零 msg.value 不等：值门以命名错误生效。
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(NATIVE, type(uint256).max), _fundPsm(NATIVE, 2), user);
+
+        assertEq(address(router).balance, 0, "failed call must not move any native into the flow");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
     }
 
     /// @notice 族矩阵：普通族 Credit / 杠杆族 Stake / 预购腿 Stake|Credit 全部在资金移动前拒绝。
