@@ -181,9 +181,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         external
         nonReentrant
     {
-        // Entry-level value gate: this SY-denominated entry takes no native input, so any attached
-        // value is rejected (the entry is non-payable; the explicit check documents the shared rule).
-        _requireNoNativeValue();
+        // Entry-level value gate: the zero-value rule is structurally enforced by the non-payable
+        // dispatcher — a value-carrying call reverts before the body runs (and before `msg.value`
+        // is even readable here), so no explicit check is needed or reachable.
         address SY = _trustedSYWithLauncherParity(SP);
         // (1) Pull the caller's SY into the router.
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
@@ -297,16 +297,6 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         // reverting GenesisLauncherNotSet at the SP's zero-address gate.
         _trustedSYWithLauncherParity(SP);
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
-    }
-
-    /// @notice Rejects any attached native value; entry-level gate shared by entries that take no
-    ///      native input.
-    /// @dev `msg.value` is not readable inside non-payable external functions, so `genesisBySY`
-    ///      routes the check through this internal helper. Its dispatcher already reverts any
-    ///      value-carrying call before the body runs; the explicit check keeps the shared value
-    ///      rule stated once at the entry, mirroring the other four entrypoints.
-    function _requireNoNativeValue() internal view {
-        if (msg.value != 0) revert NativeAmountMismatch();
     }
 
     /**

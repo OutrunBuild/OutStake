@@ -1682,6 +1682,22 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
     }
 
+    /// @notice RR-001：`genesisBySY` 的零值规则由非 payable dispatcher 结构性强制——带值调用在
+    ///         函数体（及任何注册表读取）之前回滚。bare `vm.expectRevert()` 探针（经低级调用绕过
+    ///         Solidity 对非 payable 入口的类型层禁带值）锚定该回滚面，对不可达的显式
+    ///         `_requireNoNativeValue` 检查的移除保持行为等价。
+    function test_RevertIf_GenesisBySYCallCarriesValue() external {
+        vm.prank(user);
+        vm.expectRevert();
+        (bool ok,) = address(router).call{value: 1}(
+            abi.encodeCall(IOutrunRouter.genesisBySY, (address(position), 1e18, VERSE_ID, user, 0))
+        );
+        ok; // expectRevert consumes the revert surface; the raw result is intentionally not asserted.
+
+        _assertNoPositionCreated();
+        assertEq(sy.balanceOf(address(router)), 0, "value-carrying call must not pull SY");
+    }
+
     /// @notice 族矩阵：普通族 Credit / 杠杆族 Stake / 预购腿 Stake|Credit 全部在资金移动前拒绝。
     function test_RevertIf_CombinedFamilyMatrixViolations() external {
         vm.startPrank(user);
