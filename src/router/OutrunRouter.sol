@@ -220,6 +220,32 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     }
 
     /// @inheritdoc IOutrunRouter
+    function preorderByPSM(
+        address uAsset,
+        address reserveToken,
+        uint256 amountIn,
+        uint256 verseId,
+        address preorderUser
+    ) external payable nonReentrant {
+        // Entry-level value gate (native leg: msg.value == amountIn; ERC20 leg: msg.value == 0), hoisted
+        // above the registry reads so a multi-fault input surfaces the value error first.
+        uint256 nativeValue = reserveToken == NATIVE ? amountIn : 0;
+        if (msg.value != nativeValue) revert NativeAmountMismatch();
+        address psm = _registeredPsm(uAsset, reserveToken);
+        // Zero credited user would burn the preorder into an unrecoverable sink; fail before any pull.
+        if (preorderUser == address(0)) revert ZeroInput();
+
+        (uint256 minted, uint256 uAssetBalanceBefore) =
+            _psmMintForRouter(psm, uAsset, reserveToken, amountIn, nativeValue);
+        // Same tail discipline as the combined entries' PSM preorder leg (_runPreorderLeg): launcher
+        // amount bound, exact approval, preorder call, strict full-consumption post-condition.
+        GenesisGateLib.requireLauncherAmount(minted);
+        _approveExact(uAsset, memeverseLauncher, minted);
+        IMemeverseLauncher(memeverseLauncher).preorder(verseId, minted, preorderUser);
+        GenesisGateLib.assertFullConsumption(uAsset, memeverseLauncher, uAssetBalanceBefore);
+    }
+
+    /// @inheritdoc IOutrunRouter
     function genesisAndPreorder(
         uint256 verseId,
         FundInput calldata genesisInput,

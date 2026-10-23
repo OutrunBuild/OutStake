@@ -276,6 +276,35 @@ interface IOutrunRouter {
     ) external payable returns (uint256 borrowedAmount);
 
     /**
+     * @notice Mints uAsset through the owner-registered PSM for that (uAsset, reserveToken) pair and forwards the full
+     * minted amount into launcher preorder — the preorder-only twin of `genesisByPSM`.
+     * @dev Caller-funded path (PSM gate: no position, no genesis delivery). Requires the
+     * owner-registered pair -> PSM entry and re-reads `IPSM(psm).uAsset()` and `IPSM(psm).reserveToken()`
+     * against the registry keys on every call; drift reverts PsmBindingMismatch/PsmReserveMismatch before
+     * any funds move. The reserve leg follows the native/ERC20 value rules: `reserveToken == NATIVE`
+     * requires `msg.value == amountIn`, an ERC20 leg requires `msg.value == 0` and a prior caller
+     * approval to the router. The PSM output is deterministic face-value math (`quoteMint` equals the
+     * `mint` output on inputs that quote non-zero and fit the remaining stock-cap headroom), so there
+     * is no slippage floor parameter; the preorder base is the fee-adjusted mint output, not the reserve
+     * input. `amountIn` is uint256 (no input-side cap); when the minted amount exceeds type(uint128).max
+     * the call reverts InvalidParam(). A zero `preorderUser` reverts ZeroInput before any funds move.
+     * After `preorder` returns, the router's uAsset balance must be back at its pre-mint snapshot and
+     * the launcher allowance zero, else GenesisUAssetNotConsumed reverts the whole call.
+     * @param uAsset Family uAsset minted through the PSM gate.
+     * @param reserveToken Registered PSM reserve token to spend (`NATIVE` = address(0) for the native currency).
+     * @param amountIn Reserve amount to swap in, in the reserve token's own decimals.
+     * @param verseId Opaque launcher-assigned identifier for the target verse; the router forwards it unchanged and does not validate it.
+     * @param preorderUser User credited for the preorder action.
+     */
+    function preorderByPSM(
+        address uAsset,
+        address reserveToken,
+        uint256 amountIn,
+        uint256 verseId,
+        address preorderUser
+    ) external payable;
+
+    /**
      * @notice Atomically runs a genesis leg and a preorder leg for `user` against one verse, each leg
      *      funded by its own `FundInput`.
      * @dev Caller-funded path. The shared preamble validates both legs before any funds move: a zero

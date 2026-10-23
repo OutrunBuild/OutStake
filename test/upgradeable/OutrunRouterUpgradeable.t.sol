@@ -2090,3 +2090,93 @@ contract PairDonatingPSM {
         uAssetToken.reserveMint(donatee, amountOut);
     }
 }
+
+/**
+ * @title OutrunRouterPreorderByPSMTest
+ * @notice Covers the preorder-only PSM entry `preorderByPSM`: the ERC20/NATIVE reserve roundtrips
+ *     (fee-adjusted mint output reaching the launcher preorder), the entry-level value gate, the
+ *     zero-user guard, and the uint128 launcher-domain bound. Grows in a fresh contract because the
+ *     consolidated `OutrunRouterTest` sits at the solc 0.8.35 via-ir assembly-tag ceiling.
+ */
+contract OutrunRouterPreorderByPSMTest is OutrunRouterTest {
+    /// @notice ERC20 reserve leg: the caller pays `amountIn`, the PSM mints the fee-adjusted face-value
+    ///         amount to the router, and the launcher preorder credits the full minted amount; no
+    ///         residual stays anywhere and no genesis position is created.
+    function test_PreorderByPSMERC20LegRoundtrip() external {
+        vm.prank(owner);
+        psm.setFees(1e16, 0); // 1% mint fee so the fee math is observable.
+        uint256 amountIn = 10e18;
+        uint256 expectedOut = IPSM(address(psm)).quoteMint(amountIn);
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        router.preorderByPSM(address(uAsset), address(underlying), amountIn, VERSE_ID, user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore - amountIn, "caller did not pay the full reserve");
+        assertEq(underlying.balanceOf(address(psm)), amountIn, "PSM holds the taken reserve");
+        (uint256 lastVerseId, uint256 lastPreorderBase, address lastPreorderUser) = launcher.preorderSnapshot();
+        assertEq(lastVerseId, VERSE_ID, "verse id forwarded");
+        assertEq(lastPreorderBase, expectedOut, "preorder credited the fee-adjusted mint output");
+        assertEq(lastPreorderUser, user, "preorder user credited");
+        assertEq(uAsset.balanceOf(address(launcher)), expectedOut, "launcher holds the preorder mint");
+        _assertGenesisLeftNoResidual(address(underlying));
+        assertEq(underlying.allowance(address(router), address(psm)), 0, "PSM reserve allowance not cleared");
+        _assertNoPositionCreated();
+    }
+
+    /// @notice NATIVE reserve leg: `msg.value` carries the reserve into the PSM and the minted uAsset
+    ///         reaches the launcher preorder in full.
+    function test_PreorderByPSMNativeLegRoundtrip() external {
+        uint256 amountIn = 2e18;
+
+        vm.prank(user);
+        router.preorderByPSM{value: amountIn}(address(uAsset), NATIVE, amountIn, VERSE_ID, user);
+
+        assertEq(address(psmNative).balance, amountIn, "native reserve stayed in the PSM");
+        assertEq(uAsset.balanceOf(address(launcher)), amountIn, "launcher holds the preorder mint");
+        (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
+        assertEq(lastPreorderBase, amountIn, "preorder credited the fee-free mint");
+        _assertGenesisLeftNoResidual(NATIVE);
+    }
+
+    /// @notice The ERC20 reserve leg rejects any attached native value.
+    function test_RevertWhen_PreorderByPSMERC20LegWithValue() external {
+        vm.prank(user);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.preorderByPSM{value: 1}(address(uAsset), address(underlying), 1e18, VERSE_ID, user);
+    }
+
+    /// @notice The NATIVE reserve leg requires `msg.value == amountIn` exactly.
+    function test_RevertWhen_PreorderByPSMNativeLegValueMismatch() external {
+        vm.prank(user);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.preorderByPSM{value: 1e18}(address(uAsset), NATIVE, 2e18, VERSE_ID, user);
+    }
+
+    /// @notice A zero credited user fails ZeroInput before any funds move.
+    function test_RevertWhen_PreorderByPSMZeroUser() external {
+        vm.prank(user);
+        vm.expectRevert(IOutrunRouter.ZeroInput.selector);
+        router.preorderByPSM(address(uAsset), address(underlying), 1e18, VERSE_ID, address(0));
+        assertEq(IPSM(address(psm)).netUAssetMinted(), 0, "failed call must not move the PSM ledger");
+        assertEq(underlying.balanceOf(user), 1e40, "failed call must not pull the reserve");
+    }
+
+    /// @notice A mint above the uint128 launcher domain reverts InvalidParam before the launcher
+    ///         approval and the preorder call.
+    function test_RevertWhen_PreorderByPSMMintsAboveUint128Max() external {
+        vm.prank(user);
+        vm.expectRevert(INVALID_PARAM_SELECTOR);
+        router.preorderByPSM(address(uAsset), address(underlying), 4e38, VERSE_ID, user);
+    }
+
+    /// @notice A mint of exactly type(uint128).max passes the bound and is forwarded in full.
+    function test_PreorderByPSMAtUint128MaxSucceeds() external {
+        vm.prank(user);
+        router.preorderByPSM(address(uAsset), address(underlying), MAX_UINT128, VERSE_ID, user);
+
+        (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
+        assertEq(lastPreorderBase, type(uint128).max, "preorder credited exactly the uint128 cap");
+        assertEq(uAsset.balanceOf(address(launcher)), MAX_UINT128, "launcher holds the full cap amount");
+    }
+}
