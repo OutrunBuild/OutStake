@@ -222,6 +222,36 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
     }
 
     /// @inheritdoc IOutrunRouter
+    function genesisAndPreorder(
+        uint256 verseId,
+        FundInput calldata genesisInput,
+        FundInput calldata preorderInput,
+        address user
+    ) external payable nonReentrant {
+        address uAsset = _combinedPreamble(verseId, genesisInput, preorderInput, user, false);
+        _runGenesisLeg(uAsset, verseId, genesisInput, user);
+        _runPreorderLeg(uAsset, verseId, preorderInput, user);
+    }
+
+    /// @inheritdoc IOutrunRouter
+    function leveragedGenesisAndPreorder(
+        uint256 verseId,
+        FundInput calldata genesisInput,
+        FundInput calldata preorderInput,
+        address user
+    ) external payable nonReentrant {
+        address uAsset = _combinedPreamble(verseId, genesisInput, preorderInput, user, true);
+        // POLend family gate: source-independent and fail-closed before any funds move; the market
+        // binding re-read shares the existing leveraged entry's discipline.
+        address polend_ = polend;
+        if (polend_ == address(0)) revert PolendNotSet();
+        address boundUAsset = IPOLendGenesis(polend_).marketUAsset(verseId);
+        if (boundUAsset != uAsset) revert PolendMarketUAssetMismatch(verseId, uAsset, boundUAsset);
+        _runLeveragedGenesisLeg(uAsset, verseId, genesisInput, user, polend_);
+        _runPreorderLeg(uAsset, verseId, preorderInput, user);
+    }
+
+    /// @inheritdoc IOutrunRouter
     /// @dev Test-phase only: this setter exists for test deployment flexibility.
     /// Production will delete this method and make `memeverseLauncher` `immutable`, set only via constructor.
     /// Operational invariant: `memeverseLauncher` must equal each SP's `genesisLauncher()` for the two genesis
@@ -364,6 +394,179 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         _approveExact(uAsset, launcher, mintedUAsset);
         IMemeverseLauncher(launcher).genesis(verseId, mintedUAsset, genesisUser);
         GenesisGateLib.assertFullConsumption(uAsset, launcher, uAssetBalanceBefore);
+    }
+
+    /**
+     * @notice Shared preamble of both combined entrypoints: zero-input guards, verse-to-uAsset
+     *      resolution, the per-leg `FundInput` validation matrix, and the entry-level value gate —
+     *      all before any funds move.
+     * @dev The guards mirror the single-leg entries' ordering discipline: value and validity faults
+     *      surface before any registry read or pull can move funds. An invalid verse fails closed
+     *      through the launcher binding read (the real launcher reverts on an unknown verseId; a
+     *      zero read covers the minimal-interface floor).
+     * @param verseId Opaque launcher-assigned identifier for the target verse.
+     * @param genesisInput Funding instruction for the genesis leg.
+     * @param preorderInput Funding instruction for the preorder leg.
+     * @param user User credited by both legs.
+     * @param leveragedFamily Whether the calling entrypoint is the leveraged family.
+     * @return uAsset The verse's uAsset resolved through the launcher binding read.
+     */
+    function _combinedPreamble(
+        uint256 verseId,
+        FundInput calldata genesisInput,
+        FundInput calldata preorderInput,
+        address user,
+        bool leveragedFamily
+    ) internal view returns (address uAsset) {
+        if (user == address(0) || genesisInput.amount == 0 || preorderInput.amount == 0) revert ZeroInput();
+        // Invalid verse fails closed: the real launcher reverts on an unknown verseId; the zero-read
+        // backstop covers the minimal-interface contract.
+        uAsset = IMemeverseLauncher(memeverseLauncher).getUAssetByVerseId(verseId);
+        if (uAsset == address(0)) revert ZeroInput();
+        _validateFundInput(genesisInput, false, leveragedFamily);
+        _validateFundInput(preorderInput, true, leveragedFamily);
+        uint256 expectedNative = _legNativeValue(genesisInput) + _legNativeValue(preorderInput);
+        if (msg.value != expectedNative) revert NativeAmountMismatch();
+    }
+
+    /**
+     * @notice Validates one leg's `FundInput` against the family-scoped source matrix and the
+     *      forced-zero field rules, before any funds move.
+     * @dev Source matrix: the preorder leg accepts only `UAsset` and `Psm` on both families; the
+     *      genesis leg rejects `Credit` on the normal family and `Stake` on the leveraged family.
+     *      Forced-zero fields: `token` may be nonzero only for `Psm` (reserve) and `Stake` (input
+     *      token); `sp`, `minSyOut`, and `minUAssetMinted` may be nonzero only for `Stake`.
+     * @param f Leg funding instruction under validation.
+     * @param preorderLeg Whether the leg is the preorder leg.
+     * @param leveragedFamily Whether the calling entrypoint is the leveraged family.
+     */
+    function _validateFundInput(FundInput calldata f, bool preorderLeg, bool leveragedFamily) internal pure {
+        if (preorderLeg) {
+            if (f.source != FundSource.UAsset && f.source != FundSource.Psm) {
+                revert FundSourceNotAllowed(f.source, leveragedFamily);
+            }
+        } else if (leveragedFamily) {
+            if (f.source == FundSource.Stake) revert FundSourceNotAllowed(f.source, true);
+        } else {
+            if (f.source == FundSource.Credit) revert FundSourceNotAllowed(f.source, false);
+        }
+        if (f.source != FundSource.Psm && f.source != FundSource.Stake && f.token != address(0)) {
+            revert FundFieldMustBeZero(f.source);
+        }
+        if (f.source != FundSource.Stake && (f.sp != address(0) || f.minSyOut != 0 || f.minUAssetMinted != 0)) {
+            revert FundFieldMustBeZero(f.source);
+        }
+    }
+
+    /**
+     * @notice Returns the native value a leg's funding source requires the caller to attach.
+     * @dev Only the PSM and stake sources accept a native-currency input token; every other source
+     *      takes an ERC20 pulled from the caller and must arrive with zero attached value.
+     * @param f Leg funding instruction.
+     * @return Native amount the leg contributes to the entrypoint's `msg.value` expectation.
+     */
+    function _legNativeValue(FundInput calldata f) internal pure returns (uint256) {
+        if ((f.source == FundSource.Psm || f.source == FundSource.Stake) && f.token == NATIVE) return f.amount;
+        return 0;
+    }
+
+    /**
+     * @notice Runs the genesis leg of the normal-family combined entrypoint.
+     * @dev Only the uAsset-funded branch is implemented; the PSM- and stake-funded branches land
+     *      separately and fail closed with `FundSourceNotAllowed` until then.
+     * @param uAsset The verse's uAsset resolved by the preamble.
+     * @param verseId Opaque launcher-assigned identifier for the target verse.
+     * @param f Genesis-leg funding instruction (already validated by the preamble).
+     * @param user User credited for the genesis action.
+     */
+    function _runGenesisLeg(address uAsset, uint256 verseId, FundInput calldata f, address user) internal {
+        if (f.source == FundSource.UAsset) {
+            _uAssetToLauncher(uAsset, verseId, f.amount, user, false);
+        } else if (f.source == FundSource.Psm) {
+            // PSM-funded branch not implemented yet; fails closed.
+            revert FundSourceNotAllowed(f.source, false);
+        } else {
+            // Stake-funded branch not implemented yet; fails closed.
+            revert FundSourceNotAllowed(f.source, false);
+        }
+    }
+
+    /**
+     * @notice Runs the leveraged-genesis interest leg of the leveraged-family combined entrypoint.
+     * @dev The uAsset-funded branch pulls the caller's uAsset and pays it to POLend as interest
+     *      under the strict full-consumption post-condition, mirroring `leveragedGenesisByPSM`'s
+     *      tail. The PSM- and credit-funded branches land separately and fail closed with
+     *      `FundSourceNotAllowed` until then.
+     * @param uAsset The verse's uAsset resolved by the preamble.
+     * @param verseId POLend market identifier the interest is booked against.
+     * @param f Genesis-leg funding instruction (already validated by the preamble).
+     * @param user User credited with the borrowed debt.
+     * @param polend_ Owner-registered POLend target (already market-checked by the entrypoint).
+     */
+    function _runLeveragedGenesisLeg(
+        address uAsset,
+        uint256 verseId,
+        FundInput calldata f,
+        address user,
+        address polend_
+    ) internal {
+        if (f.source == FundSource.UAsset) {
+            uint256 baseline = IERC20(uAsset).balanceOf(address(this));
+            GenesisGateLib.requireLauncherAmount(f.amount);
+            _transferFrom(IERC20(uAsset), msg.sender, address(this), f.amount);
+            _approveExact(uAsset, polend_, f.amount);
+            IPOLendGenesis(polend_).leveragedGenesis(verseId, f.amount, user);
+            GenesisGateLib.assertFullConsumption(uAsset, polend_, baseline);
+        } else {
+            // PSM- and credit-funded branches not implemented yet; fails closed.
+            revert FundSourceNotAllowed(f.source, true);
+        }
+    }
+
+    /**
+     * @notice Runs the preorder leg shared by both combined entrypoints.
+     * @dev Only the uAsset-funded branch is implemented; the PSM-funded branch lands separately and
+     *      fails closed with `FundSourceNotAllowed` until then.
+     * @param uAsset The verse's uAsset resolved by the preamble.
+     * @param verseId Opaque launcher-assigned identifier for the target verse.
+     * @param f Preorder-leg funding instruction (already validated by the preamble).
+     * @param user User credited for the preorder participation.
+     */
+    function _runPreorderLeg(address uAsset, uint256 verseId, FundInput calldata f, address user) internal {
+        if (f.source == FundSource.UAsset) {
+            _uAssetToLauncher(uAsset, verseId, f.amount, user, true);
+        } else {
+            // PSM-funded branch not implemented yet; fails closed.
+            revert FundSourceNotAllowed(f.source, true);
+        }
+    }
+
+    /**
+     * @notice Consumer tail shared by the uAsset-funded genesis and preorder legs: uint128 bound,
+     *      caller pull, exact launcher approval, and the launcher call, followed by the strict
+     *      full-consumption post-condition.
+     * @dev Both legs share the same physical gate discipline as `genesisByPSM`'s tail: the bound
+     *      runs before the pull and the approval, and the post-condition compares the router's
+     *      uAsset balance against the pre-pull snapshot baseline.
+     * @param uAsset The verse's uAsset paid into the launcher.
+     * @param verseId Opaque launcher-assigned identifier for the target verse.
+     * @param amount uAsset amount pulled from the caller and forwarded.
+     * @param user User credited for the launcher action.
+     * @param preorderLeg Whether the launcher call is `preorder` (true) or `genesis` (false).
+     */
+    function _uAssetToLauncher(address uAsset, uint256 verseId, uint256 amount, address user, bool preorderLeg)
+        internal
+    {
+        uint256 baseline = IERC20(uAsset).balanceOf(address(this));
+        GenesisGateLib.requireLauncherAmount(amount);
+        _transferFrom(IERC20(uAsset), msg.sender, address(this), amount);
+        _approveExact(uAsset, memeverseLauncher, amount);
+        if (preorderLeg) {
+            IMemeverseLauncher(memeverseLauncher).preorder(verseId, amount, user);
+        } else {
+            IMemeverseLauncher(memeverseLauncher).genesis(verseId, amount, user);
+        }
+        GenesisGateLib.assertFullConsumption(uAsset, memeverseLauncher, baseline);
     }
 
     /**

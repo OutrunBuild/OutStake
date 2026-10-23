@@ -75,7 +75,7 @@ contract OutrunRouterTest is Test {
     address internal treasury = address(0xFEE);
     address internal user = address(0xB0B);
 
-    function setUp() external {
+    function setUp() public virtual {
         underlying = new RouterMockERC20("Mock Asset", "mAST");
         sy = new RouterMockSY(address(underlying));
         uAsset = new RouterMockUAsset();
@@ -1255,6 +1255,156 @@ contract OutrunRouterTestNativeValueGate is Test {
         // 未注册的 (uAsset, reserve) 且 msg.value 错误：期望 native 错误而非 UnregisteredPsm。
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
         router.genesisByPSM{value: 1}(address(uAsset), address(0xBEEF), 10e18, VERSE_ID, user);
+    }
+}
+
+/**
+ * @title OutrunRouterCombinedEntryTest
+ * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
+ *     gating and zero-field gating, both rejected before any funds move) and the uAsset-funded legs
+ *     of `genesisAndPreorder` (combination #1) and `leveragedGenesisAndPreorder` (combination #7).
+ * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
+ *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
+ *     fixture (so every parent test re-runs in this context) and extends it only with the
+ *     test-owned uAsset minting cap. The POLend market is wired per-test via
+ *     `_wirePolendFixture` instead of in setUp: inherited parent tests assert a pristine
+ *     `router.polend() == address(0)` start.
+ */
+contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
+    MockPOLend internal polend;
+
+    function setUp() public virtual override {
+        super.setUp();
+        // This contract owns the mock uAsset: open a minting cap so tests can mint user-side uAsset
+        // (mirrors the parent fixture's cap grant to the position).
+        uAsset.setMintingCap(address(this), type(uint128).max);
+    }
+
+    /// @dev Wires the leveraged-family fixture: a POLend market bound to the family uAsset, serving
+    ///      the verse. Per-test (not setUp) so inherited parent tests keep their pristine
+    ///      `router.polend() == address(0)` assumption.
+    function _wirePolendFixture() internal {
+        polend = new MockPOLend(address(uAsset), 1e17);
+        polend.setMarketUAsset(VERSE_ID, address(uAsset));
+        vm.prank(owner);
+        router.setPolend(address(polend));
+    }
+
+    /// @notice 组合 #1：UAsset 创世 + UAsset 预购，一笔原子完成，两条腿各记名 user。
+    function test_CombinedUAssetGenesisAndUAssetPreorder() external {
+        uint256 genesisAmount = 10e18;
+        uint256 preorderAmount = 2e18;
+        uAsset.mint(user, 100e18);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+
+        router.genesisAndPreorder(
+            VERSE_ID,
+            IOutrunRouter.FundInput({
+                source: IOutrunRouter.FundSource.UAsset,
+                token: address(0),
+                amount: genesisAmount,
+                sp: address(0),
+                minSyOut: 0,
+                minUAssetMinted: 0
+            }),
+            IOutrunRouter.FundInput({
+                source: IOutrunRouter.FundSource.UAsset,
+                token: address(0),
+                amount: preorderAmount,
+                sp: address(0),
+                minSyOut: 0,
+                minUAssetMinted: 0
+            }),
+            user
+        );
+        vm.stopPrank();
+
+        (, uint256 lastGenesisAmount, address lastGenesisUser) = launcher.snapshot();
+        (, uint256 lastPreorderBase, address lastPreorderUser) = launcher.preorderSnapshot();
+        assertEq(lastGenesisAmount, genesisAmount, "genesis leg credited");
+        assertEq(lastGenesisUser, user, "genesis user");
+        assertEq(lastPreorderBase, preorderAmount, "preorder leg credited");
+        assertEq(lastPreorderUser, user, "preorder user");
+        assertEq(uAsset.balanceOf(address(launcher)), genesisAmount + preorderAmount, "launcher holds both legs");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
+        assertEq(uAsset.allowance(address(router), address(launcher)), 0, "no allowance residual");
+    }
+
+    /// @notice 组合 #7：杠杆族 UAsset 利息腿 + UAsset 预购。
+    function test_CombinedLeveragedUAssetAndUAssetPreorder() external {
+        _wirePolendFixture();
+        uint256 interest = 3e18;
+        uint256 preorderAmount = 1e18;
+        uAsset.mint(user, 100e18);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundUAsset(interest), _fundUAsset(preorderAmount), user);
+        vm.stopPrank();
+
+        (, uint256 lastInterest,) = polend.interestSnapshot();
+        (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
+        assertEq(lastInterest, interest, "polend interest credited");
+        assertEq(lastPreorderBase, preorderAmount, "preorder credited");
+    }
+
+    /// @notice 族矩阵：普通族 Credit / 杠杆族 Stake / 预购腿 Stake|Credit 全部在资金移动前拒绝。
+    function test_RevertIf_CombinedFamilyMatrixViolations() external {
+        vm.startPrank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundSourceNotAllowed.selector, IOutrunRouter.FundSource.Credit, false)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundSourceNotAllowed.selector, IOutrunRouter.FundSource.Stake, true)
+        );
+        router.leveragedGenesisAndPreorder(
+            VERSE_ID, _fundStake(address(position), address(sy), 1e18), _fundUAsset(1e18), user
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundSourceNotAllowed.selector, IOutrunRouter.FundSource.Stake, false)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), _fundStake(address(position), address(sy), 1e18), user);
+        vm.stopPrank();
+    }
+
+    /// @notice 强制零字段：UAsset 来源带 token/sp/min 违规即拒。
+    function test_RevertIf_CombinedZeroFieldViolations() external {
+        vm.startPrank(user);
+        IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
+        bad.token = address(0xBEEF);
+        // Full-data expectation: FundFieldMustBeZero carries a FundSource argument, and a bare
+        // selector only matches parameterless errors under foundry's strict expectRevert.
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.UAsset)
+        );
+        router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
+        vm.stopPrank();
+    }
+
+    // --------------------------------------------------------------------------
+    // FundInput helpers
+    // --------------------------------------------------------------------------
+
+    function _fundUAsset(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.UAsset, address(0), amount, address(0), 0, 0);
+    }
+
+    function _fundPsm(address reserve, uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Psm, reserve, amount, address(0), 0, 0);
+    }
+
+    function _fundStake(address sp, address tokenIn, uint256 amount)
+        internal
+        pure
+        returns (IOutrunRouter.FundInput memory f)
+    {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, 0, 0);
+    }
+
+    function _fundCredit(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Credit, address(0), amount, address(0), 0, 0);
     }
 }
 

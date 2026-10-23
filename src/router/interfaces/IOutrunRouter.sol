@@ -15,6 +15,42 @@ pragma solidity ^0.8.35;
  */
 interface IOutrunRouter {
     /**
+     * @notice Funding source a combined-entrypoint leg draws its input from.
+     * @dev `UAsset` pulls the verse's uAsset directly from the caller; `Psm` mints uAsset through the
+     *      owner-registered PSM for the (uAsset, reserveToken) pair; `Stake` converts an input token
+     *      into a genesis CDP position through a trusted SP; `Credit` pays pre-minted GenesisCredit.
+     *      The allowed matrix is family-scoped and enforced per leg before any funds move
+     *      (see `FundSourceNotAllowed`).
+     */
+    enum FundSource {
+        UAsset,
+        Psm,
+        Stake,
+        Credit
+    }
+
+    /**
+     * @notice Per-leg funding instruction of a combined entrypoint call.
+     * @dev Fields unused by the selected `source` are not ignored: they must be left zero or the
+     *      call reverts `FundFieldMustBeZero` before any funds move.
+     * @param source Funding source the leg draws from.
+     * @param token Input token address (`NATIVE` = address(0) for the native currency); must be zero
+     *      unless `source` is `Psm` (the reserve token) or `Stake` (the token converted into SY).
+     * @param amount Input amount to fund the leg with.
+     * @param sp Stake manager driving the stake-funded genesis leg; must be zero unless `source` is `Stake`.
+     * @param minSyOut Minimum acceptable SY output for the stake-funded conversion; zero disables the floor.
+     * @param minUAssetMinted Minimum acceptable minted uAsset for the stake-funded genesis; zero disables the floor.
+     */
+    struct FundInput {
+        FundSource source;
+        address token;
+        uint256 amount;
+        address sp;
+        uint256 minSyOut;
+        uint256 minUAssetMinted;
+    }
+
+    /**
      * @notice Emitted when an SY target is added to or removed from the router registry.
      */
     event TrustedSYUpdated(address indexed SY, bool trusted);
@@ -89,6 +125,27 @@ interface IOutrunRouter {
     /// @notice Thrown by `leveragedGenesisByPSM` when the verse market's bound uAsset diverges from
     ///      the registry-keyed uAsset (an unregistered verse reads address(0) and fails closed here).
     error PolendMarketUAssetMismatch(uint256 verseId, address uAsset, address marketUAsset);
+
+    /**
+     * @notice Thrown by the combined entrypoints when a leg's funding source is outside the family's
+     *      allowed matrix; checked before any funds move.
+     * @dev Family matrix: the genesis leg rejects `Credit` on the normal family and `Stake` on the
+     *      leveraged family; the preorder leg accepts only `UAsset` and `Psm` on both families.
+     * @param source Rejected funding source.
+     * @param leveragedFamily Whether the rejecting entrypoint is the leveraged family
+     *      (`leveragedGenesisAndPreorder`).
+     */
+    error FundSourceNotAllowed(FundSource source, bool leveragedFamily);
+
+    /**
+     * @notice Thrown by the combined entrypoints when a `FundInput` sets a field its funding source
+     *      leaves unused; checked before any funds move.
+     * @param source Funding source whose must-be-zero fields are set.
+     */
+    error FundFieldMustBeZero(FundSource source);
+
+    /// @notice Thrown when no GenesisCredit token is registered for the uAsset family.
+    error NoCreditForUAsset(address uAsset);
 
     /**
      * @notice Registers or revokes a standardized-yield target for router entrypoints.
@@ -213,6 +270,62 @@ interface IOutrunRouter {
         uint256 verseId,
         address genesisUser
     ) external payable returns (uint256 borrowedAmount);
+
+    /**
+     * @notice Atomically runs a genesis leg and a preorder leg for `user` against one verse, each leg
+     *      funded by its own `FundInput`.
+     * @dev Caller-funded path. The shared preamble validates both legs before any funds move: a zero
+     *      `user` or leg amount reverts `ZeroInput`; the verse's uAsset is resolved through
+     *      `IMemeverseLauncher(memeverseLauncher).getUAssetByVerseId(verseId)` and a zero read fails
+     *      closed with `ZeroInput`; each leg's funding source is checked against the family matrix
+     *      (reverting `FundSourceNotAllowed`: the genesis leg rejects `Credit`, the preorder leg
+     *      accepts only `UAsset` and `Psm`) and unused fields must be zero (reverting
+     *      `FundFieldMustBeZero`); and `msg.value` must equal the legs' combined native need
+     *      (reverting `NativeAmountMismatch`; uAsset-funded legs take none). The genesis leg then
+     *      funds `IMemeverseLauncher.genesis` and the preorder leg funds
+     *      `IMemeverseLauncher.preorder`, each crediting `user` with the leg's full amount; every
+     *      leg must consume its uAsset in full or the whole call reverts (GenesisGateLib
+     *      full-consumption assertion). PSM-, stake-, and credit-funded branches land incrementally;
+     *      until then those sources revert `FundSourceNotAllowed` before any funds move.
+     * @param verseId Opaque launcher-assigned identifier for the target verse; the router resolves it
+     *      to the verse's uAsset and forwards it unchanged.
+     * @param genesisInput Funding instruction for the genesis leg.
+     * @param preorderInput Funding instruction for the preorder leg.
+     * @param user User credited for both the genesis action and the preorder participation.
+     */
+    function genesisAndPreorder(
+        uint256 verseId,
+        FundInput calldata genesisInput,
+        FundInput calldata preorderInput,
+        address user
+    ) external payable;
+
+    /**
+     * @notice Atomically runs a leveraged-genesis interest leg and a preorder leg for `user` against
+     *      one verse, each leg funded by its own `FundInput`.
+     * @dev Caller-funded path. Same shared preamble as `genesisAndPreorder` with the leveraged family
+     *      matrix (the genesis leg rejects `Stake`; the preorder leg accepts only `UAsset` and `Psm`),
+     *      then the POLend family gate runs source-independently before any funds move: a zero
+     *      `polend` reverts `PolendNotSet` and `IPOLendGenesis(polend).marketUAsset(verseId)` must
+     *      equal the launcher-resolved uAsset (an unregistered verse reads address(0) and reverts
+     *      `PolendMarketUAssetMismatch`), mirroring `leveragedGenesisByPSM`. The interest leg then
+     *      funds `IPOLendGenesis.leveragedGenesis` (crediting the borrowed debt to `user`) and the
+     *      preorder leg funds `IMemeverseLauncher.preorder`; every leg must consume its uAsset in
+     *      full or the whole call reverts (GenesisGateLib full-consumption assertion). PSM- and
+     *      credit-funded branches land incrementally; until then those sources revert
+     *      `FundSourceNotAllowed` before any funds move.
+     * @param verseId POLend market identifier the interest is booked against; the router resolves it
+     *      to the verse's uAsset and forwards it unchanged.
+     * @param genesisInput Funding instruction for the leveraged-genesis interest leg.
+     * @param preorderInput Funding instruction for the preorder leg.
+     * @param user User credited with the borrowed debt and the preorder participation.
+     */
+    function leveragedGenesisAndPreorder(
+        uint256 verseId,
+        FundInput calldata genesisInput,
+        FundInput calldata preorderInput,
+        address user
+    ) external payable;
 
     /**
      * @notice Creates a genesis position starting from an input token: the token-denominated front door

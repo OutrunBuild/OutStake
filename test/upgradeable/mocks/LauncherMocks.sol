@@ -167,9 +167,9 @@ contract MockGenesisRevertingLauncher is IMemeverseLauncher {
  *         the interest from the payer.
  * @dev Partial mock: models only the POLend seams the router's leveraged-genesis entries depend
  *      on — the marketUAsset binding read, the exact interest pull via transferFrom, the
- *      user-keyed interest ledger, the borrowedAmount quote at a fixed rate, and the credit-funded
- *      leg's cached-token pull. Does not model market states, debt caps, launcher reads, or
- *      settlement.
+ *      user-keyed interest ledger, the last-call interest record (interestSnapshot), the
+ *      borrowedAmount quote at a fixed rate, and the credit-funded leg's cached-token pull.
+ *      Does not model market states, debt caps, launcher reads, or settlement.
  */
 contract MockPOLend is IPOLendGenesis {
     using Math for uint256;
@@ -184,6 +184,10 @@ contract MockPOLend is IPOLendGenesis {
     mapping(uint256 => mapping(address => uint256)) public leveragedInterestPaid;
     address public lastPayer;
     address public lastUser;
+    // Last-call record of the uAsset interest leg, mirroring the credit face's snapshot seam.
+    uint256 internal lastInterestVerseId;
+    uint256 internal lastInterestAmount;
+    address internal lastInterestUser;
 
     address internal creditFactory_;
     address internal creditToken_;
@@ -221,7 +225,14 @@ contract MockPOLend is IPOLendGenesis {
         borrowedAmount = interestAmount.mulDiv(1e18, interestRate);
         leveragedInterestPaid[verseId][user] += interestAmount;
         (lastPayer, lastUser) = (msg.sender, user);
+        lastInterestVerseId = verseId;
+        lastInterestAmount = interestAmount;
+        lastInterestUser = user;
         IERC20(uAsset).transferFrom(msg.sender, address(this), pullHalf ? interestAmount / 2 : interestAmount);
+    }
+
+    function interestSnapshot() external view returns (uint256, uint256, address) {
+        return (lastInterestVerseId, lastInterestAmount, lastInterestUser);
     }
 
     function leveragedGenesisWithCredit(uint256 verseId, uint256 creditAmount, address user)
