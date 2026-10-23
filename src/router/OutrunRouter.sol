@@ -6,7 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IOutrunRouter} from "./interfaces/IOutrunRouter.sol";
 import {IMemeverseLauncher} from "./interfaces/IMemeverseLauncher.sol";
 import {IPOLendGenesis} from "./interfaces/IPOLendGenesis.sol";
-import {IGenesisCreditFactory} from "./interfaces/IGenesisCreditFactory.sol";
+import {IGenesisCreditRegistry} from "./interfaces/IGenesisCreditRegistry.sol";
 import {IPSM} from "../psm/interfaces/IPSM.sol";
 import {IStandardizedYield} from "../yield/interfaces/IStandardizedYield.sol";
 import {IERC20, TokenHelper, NativeAmountMismatch} from "../libraries/TokenHelper.sol";
@@ -536,7 +536,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      *      tail. The PSM-funded branch mints through the registered PSM and keeps that same
      *      explicit tail (it does not reuse `_genesisTail`, whose consumer is hardcoded to
      *      `launcher.genesis`). The credit-funded branch resolves the family's credit token
-     *      through the POLend-registered factory (`IGenesisCreditFactory(...).creditOf(uAsset)`,
+     *      through the POLend-registered factory (`IGenesisCreditRegistry(...).creditOf(uAsset)`,
      *      the deterministic per-uAsset derivation in production); a zero resolution reverts
      *      `NoCreditForUAsset` before any pull, then the pull / exact-approve /
      *      `leveragedGenesisWithCredit` / full-consumption sequence runs with the same discipline
@@ -577,7 +577,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             // Credit leg: the credit token resolves deterministically from POLend's factory
             // (CREATE3 keyed by uAsset); the exact-approve and full-consumption assertion follow
             // the same discipline as the uAsset leg.
-            address credit = IGenesisCreditFactory(IPOLendGenesis(polend_).creditFactory()).creditOf(uAsset);
+            address credit = IGenesisCreditRegistry(IPOLendGenesis(polend_).creditFactory()).creditOf(uAsset);
             if (credit == address(0)) revert NoCreditForUAsset(uAsset);
             uint256 baseline = IERC20(credit).balanceOf(address(this));
             _transferFrom(IERC20(credit), msg.sender, address(this), f.amount);

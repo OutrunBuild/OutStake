@@ -23,7 +23,7 @@ import {
     MockGenesisRevertingLauncher,
     MockPreorderRevertingLauncher,
     MockPOLend,
-    MockCreditFactory
+    MockCreditRegistry
 } from "./mocks/LauncherMocks.sol";
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset} from "./mocks/RouterMocks.sol";
 
@@ -1285,7 +1285,7 @@ contract OutrunRouterTestNativeValueGate is Test {
 contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
     MockPOLend internal polend;
     RouterMockERC20 internal credit;
-    MockCreditFactory internal creditFactory;
+    MockCreditRegistry internal creditFactory;
 
     function setUp() public virtual override {
         super.setUp();
@@ -1296,7 +1296,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         // POLend. RouterMockERC20 exposes an open faucet mint, so the user-side pile is minted
         // directly here (individual tests may rewire the factory or the cached token).
         credit = new RouterMockERC20("Mock Genesis Credit", "mGC");
-        creditFactory = new MockCreditFactory(address(credit));
+        creditFactory = new MockCreditRegistry(address(credit));
         credit.mint(user, 1e24);
         vm.prank(user);
         credit.approve(address(router), type(uint256).max);
@@ -1671,7 +1671,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
     /// @notice No credit contract for this uAsset: a zero resolution is rejected before any pull.
     function test_RevertIf_CombinedCreditUnresolved() external {
         _wirePolendFixture();
-        polend.setCreditWiring(address(new MockCreditFactory(address(0))), address(credit));
+        polend.setCreditWiring(address(new MockCreditRegistry(address(0))), address(credit));
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.NoCreditForUAsset.selector, address(uAsset)));
         router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);

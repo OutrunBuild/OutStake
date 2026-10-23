@@ -26,6 +26,6 @@ interface IPOLendGenesis {
         external
         returns (uint256 borrowedAmount);
 
-    /// @notice Returns the GenesisCreditFactory address this POLend resolves credit tokens through.
+    /// @notice Returns the GenesisCreditRegistry address this POLend resolves credit tokens through.
     function creditFactory() external view returns (address);
 }

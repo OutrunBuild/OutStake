@@ -328,7 +328,7 @@ interface IOutrunRouter {
      *      mirroring `leveragedGenesisByPSM`. The interest leg books its source into POLend — the
      *      uAsset-funded branch pulls the caller's uAsset, the PSM-funded branch mints through the
      *      registered PSM, and the credit-funded branch resolves the family's credit token through
-     *      `IGenesisCreditFactory(IPOLendGenesis(polend).creditFactory()).creditOf(uAsset)` (a zero
+     *      `IGenesisCreditRegistry(IPOLendGenesis(polend).creditFactory()).creditOf(uAsset)` (a zero
      *      resolution reverts `NoCreditForUAsset` before any funds move) and pays it via
      *      `leveragedGenesisWithCredit` — each branch approving exactly its amount to `polend` and
      *      crediting the borrowed debt to `user`; the preorder leg funds

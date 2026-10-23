@@ -297,12 +297,12 @@ contract MockPOLend is IPOLendGenesis {
 }
 
 /**
- * @title MockCreditFactory
- * @notice Mock GenesisCreditFactory returning one fixed credit token for every uAsset family.
+ * @title MockCreditRegistry
+ * @notice Mock GenesisCreditRegistry returning one fixed credit token for every uAsset family.
  * @dev Minimal stand-in for the router's credit-token resolution leg (`creditOf`); no CREATE3
  *      derivation is modeled.
  */
-contract MockCreditFactory {
+contract MockCreditRegistry {
     address internal credit;
 
     constructor(address c) {
