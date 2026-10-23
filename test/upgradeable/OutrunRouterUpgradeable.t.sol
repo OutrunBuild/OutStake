@@ -1261,8 +1261,11 @@ contract OutrunRouterTestNativeValueGate is Test {
 /**
  * @title OutrunRouterCombinedEntryTest
  * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
- *     gating and zero-field gating, both rejected before any funds move) and the uAsset-funded legs
- *     of `genesisAndPreorder` (combination #1) and `leveragedGenesisAndPreorder` (combination #7).
+ *     gating and zero-field gating, both rejected before any funds move), the uAsset-funded legs
+ *     of `genesisAndPreorder` (combination #1) and `leveragedGenesisAndPreorder` (combination #7),
+ *     and the PSM-funded legs of all three runners (combinations #2, #4, #10) with the summed
+ *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
+ *     credited by the preorder leg).
  * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
  *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
  *     fixture (so every parent test re-runs in this context) and extends it only with the
@@ -1347,6 +1350,63 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
         assertEq(lastInterest, interest, "polend interest credited");
         assertEq(lastPreorderBase, preorderAmount, "preorder credited");
+    }
+
+    /// @notice 组合 #2：UAsset 创世 + PSM 预购；预购额是扣 tin 后的 mint 输出，不是 reserve 输入量。
+    function test_CombinedUAssetGenesisAndPsmPreorderFeeAdjustedPreorderAmount() external {
+        vm.prank(owner);
+        psm.setFees(1e16, 0); // 1% mint fee
+        uint256 genesisAmount = 10e18;
+        uint256 reserveIn = 10e18;
+        uint256 expectedPreorder = IPSM(address(psm)).quoteMint(reserveIn);
+        uAsset.mint(user, 100e18);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(genesisAmount), _fundPsm(address(underlying), reserveIn), user);
+        vm.stopPrank();
+
+        (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
+        assertEq(lastPreorderBase, expectedPreorder, "preorder credited the fee-adjusted mint output");
+        (, uint256 lastGenesisAmount,) = launcher.snapshot();
+        assertEq(lastGenesisAmount, genesisAmount, "genesis leg exact");
+    }
+
+    /// @notice 组合 #10 native：杠杆 PSM 腿 + PSM 预购腿同用 native reserve，msg.value = 两腿之和。
+    function test_CombinedPsmGenesisAndPsmPreorderNativeSum() external {
+        _wirePolendFixture();
+        uint256 interestReserve = 2e18;
+        uint256 preorderReserve = 1e18;
+        vm.startPrank(user);
+        router.leveragedGenesisAndPreorder{value: interestReserve + preorderReserve}(
+            VERSE_ID, _fundPsm(NATIVE, interestReserve), _fundPsm(NATIVE, preorderReserve), user
+        );
+        vm.stopPrank();
+        assertEq(address(psmNative).balance, interestReserve + preorderReserve, "both native legs reached the PSM");
+        (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
+        assertEq(lastPreorderBase, preorderReserve, "native PSM preorder fee-free exact");
+    }
+
+    /// @notice 组合 #4：双腿同 ERC20 reserve，两次 mint 各自独立完成消费断言。
+    function test_CombinedPsmGenesisAndPsmPreorderErc20() external {
+        vm.startPrank(user);
+        router.genesisAndPreorder(
+            VERSE_ID, _fundPsm(address(underlying), 5e18), _fundPsm(address(underlying), 2e18), user
+        );
+        vm.stopPrank();
+        (, uint256 g,) = launcher.snapshot();
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(g, 5e18, "genesis mint exact (fee-free)");
+        assertEq(p, 2e18, "preorder mint exact (fee-free)");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no residual between legs");
+    }
+
+    /// @notice native 总量错配（少付）整笔拒绝。
+    function test_RevertIf_CombinedNativeUnderfunded() external {
+        vm.startPrank(user);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.genesisAndPreorder{value: 1}(VERSE_ID, _fundPsm(NATIVE, 1e18), _fundPsm(NATIVE, 1e18), user);
+        vm.stopPrank();
     }
 
     /// @notice 族矩阵：普通族 Credit / 杠杆族 Stake / 预购腿 Stake|Credit 全部在资金移动前拒绝。

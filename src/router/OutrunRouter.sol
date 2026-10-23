@@ -228,9 +228,10 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         FundInput calldata preorderInput,
         address user
     ) external payable nonReentrant {
-        address uAsset = _combinedPreamble(verseId, genesisInput, preorderInput, user, false);
-        _runGenesisLeg(uAsset, verseId, genesisInput, user);
-        _runPreorderLeg(uAsset, verseId, preorderInput, user);
+        (address uAsset, uint256 genesisNative, uint256 preorderNative) =
+            _combinedPreamble(verseId, genesisInput, preorderInput, user, false);
+        _runGenesisLeg(uAsset, verseId, genesisInput, user, genesisNative);
+        _runPreorderLeg(uAsset, verseId, preorderInput, user, preorderNative);
     }
 
     /// @inheritdoc IOutrunRouter
@@ -240,15 +241,16 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         FundInput calldata preorderInput,
         address user
     ) external payable nonReentrant {
-        address uAsset = _combinedPreamble(verseId, genesisInput, preorderInput, user, true);
+        (address uAsset, uint256 genesisNative, uint256 preorderNative) =
+            _combinedPreamble(verseId, genesisInput, preorderInput, user, true);
         // POLend family gate: source-independent and fail-closed before any funds move; the market
         // binding re-read shares the existing leveraged entry's discipline.
         address polend_ = polend;
         if (polend_ == address(0)) revert PolendNotSet();
         address boundUAsset = IPOLendGenesis(polend_).marketUAsset(verseId);
         if (boundUAsset != uAsset) revert PolendMarketUAssetMismatch(verseId, uAsset, boundUAsset);
-        _runLeveragedGenesisLeg(uAsset, verseId, genesisInput, user, polend_);
-        _runPreorderLeg(uAsset, verseId, preorderInput, user);
+        _runLeveragedGenesisLeg(uAsset, verseId, genesisInput, user, polend_, genesisNative);
+        _runPreorderLeg(uAsset, verseId, preorderInput, user, preorderNative);
     }
 
     /// @inheritdoc IOutrunRouter
@@ -410,6 +412,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @param user User credited by both legs.
      * @param leveragedFamily Whether the calling entrypoint is the leveraged family.
      * @return uAsset The verse's uAsset resolved through the launcher binding read.
+     * @return genesisNative Native value the genesis leg requires (its PSM/stake `f.amount` when the
+     *      leg's input token is NATIVE, else `0`), passed down as the leg runner's `nativeValueIn`.
+     * @return preorderNative Native value the preorder leg requires, same rule as `genesisNative`.
      */
     function _combinedPreamble(
         uint256 verseId,
@@ -417,16 +422,19 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         FundInput calldata preorderInput,
         address user,
         bool leveragedFamily
-    ) internal view returns (address uAsset) {
-        if (user == address(0) || genesisInput.amount == 0 || preorderInput.amount == 0) revert ZeroInput();
+    ) internal view returns (address uAsset, uint256 genesisNative, uint256 preorderNative) {
+        if (user == address(0) || genesisInput.amount == 0 || preorderInput.amount == 0) {
+            revert ZeroInput();
+        }
         // Invalid verse fails closed: the real launcher reverts on an unknown verseId; the zero-read
         // backstop covers the minimal-interface contract.
         uAsset = IMemeverseLauncher(memeverseLauncher).getUAssetByVerseId(verseId);
         if (uAsset == address(0)) revert ZeroInput();
         _validateFundInput(genesisInput, false, leveragedFamily);
         _validateFundInput(preorderInput, true, leveragedFamily);
-        uint256 expectedNative = _legNativeValue(genesisInput) + _legNativeValue(preorderInput);
-        if (msg.value != expectedNative) revert NativeAmountMismatch();
+        genesisNative = _legNativeValue(genesisInput);
+        preorderNative = _legNativeValue(preorderInput);
+        if (msg.value != genesisNative + preorderNative) revert NativeAmountMismatch();
     }
 
     /**
@@ -472,19 +480,26 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
 
     /**
      * @notice Runs the genesis leg of the normal-family combined entrypoint.
-     * @dev Only the uAsset-funded branch is implemented; the PSM- and stake-funded branches land
-     *      separately and fail closed with `FundSourceNotAllowed` until then.
+     * @dev The uAsset-funded branch pulls the caller's uAsset; the PSM-funded branch mints through
+     *      the registered PSM and reuses `_genesisTail` (its consumer is `launcher.genesis`, the
+     *      exact single-caller semantics that tail was factored for). The stake-funded branch lands
+     *      separately and fails closed with `FundSourceNotAllowed` until then.
      * @param uAsset The verse's uAsset resolved by the preamble.
      * @param verseId Opaque launcher-assigned identifier for the target verse.
      * @param f Genesis-leg funding instruction (already validated by the preamble).
      * @param user User credited for the genesis action.
+     * @param nativeValueIn Native value forwarded to the PSM mint (preamble-validated; `f.amount`
+     *      when the leg's reserve token is NATIVE, `0` otherwise).
      */
-    function _runGenesisLeg(address uAsset, uint256 verseId, FundInput calldata f, address user) internal {
+    function _runGenesisLeg(address uAsset, uint256 verseId, FundInput calldata f, address user, uint256 nativeValueIn)
+        internal
+    {
         if (f.source == FundSource.UAsset) {
             _uAssetToLauncher(uAsset, verseId, f.amount, user, false);
         } else if (f.source == FundSource.Psm) {
-            // PSM-funded branch not implemented yet; fails closed.
-            revert FundSourceNotAllowed(f.source, false);
+            (uint256 minted, uint256 baseline) =
+                _psmMintForRouter(_registeredPsm(uAsset, f.token), uAsset, f.token, f.amount, nativeValueIn);
+            _genesisTail(uAsset, verseId, user, minted, baseline);
         } else {
             // Stake-funded branch not implemented yet; fails closed.
             revert FundSourceNotAllowed(f.source, false);
@@ -495,20 +510,25 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @notice Runs the leveraged-genesis interest leg of the leveraged-family combined entrypoint.
      * @dev The uAsset-funded branch pulls the caller's uAsset and pays it to POLend as interest
      *      under the strict full-consumption post-condition, mirroring `leveragedGenesisByPSM`'s
-     *      tail. The PSM- and credit-funded branches land separately and fail closed with
+     *      tail. The PSM-funded branch mints through the registered PSM and keeps that same
+     *      explicit tail (it does not reuse `_genesisTail`, whose consumer is hardcoded to
+     *      `launcher.genesis`). The credit-funded branch lands separately and fails closed with
      *      `FundSourceNotAllowed` until then.
      * @param uAsset The verse's uAsset resolved by the preamble.
      * @param verseId POLend market identifier the interest is booked against.
      * @param f Genesis-leg funding instruction (already validated by the preamble).
      * @param user User credited with the borrowed debt.
      * @param polend_ Owner-registered POLend target (already market-checked by the entrypoint).
+     * @param nativeValueIn Native value forwarded to the PSM mint (preamble-validated; `f.amount`
+     *      when the leg's reserve token is NATIVE, `0` otherwise).
      */
     function _runLeveragedGenesisLeg(
         address uAsset,
         uint256 verseId,
         FundInput calldata f,
         address user,
-        address polend_
+        address polend_,
+        uint256 nativeValueIn
     ) internal {
         if (f.source == FundSource.UAsset) {
             uint256 baseline = IERC20(uAsset).balanceOf(address(this));
@@ -517,27 +537,44 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             _approveExact(uAsset, polend_, f.amount);
             IPOLendGenesis(polend_).leveragedGenesis(verseId, f.amount, user);
             GenesisGateLib.assertFullConsumption(uAsset, polend_, baseline);
+        } else if (f.source == FundSource.Psm) {
+            (uint256 minted, uint256 baseline) =
+                _psmMintForRouter(_registeredPsm(uAsset, f.token), uAsset, f.token, f.amount, nativeValueIn);
+            GenesisGateLib.requireLauncherAmount(minted);
+            _approveExact(uAsset, polend_, minted);
+            IPOLendGenesis(polend_).leveragedGenesis(verseId, minted, user);
+            GenesisGateLib.assertFullConsumption(uAsset, polend_, baseline);
         } else {
-            // PSM- and credit-funded branches not implemented yet; fails closed.
+            // Credit-funded branch not implemented yet; fails closed.
             revert FundSourceNotAllowed(f.source, true);
         }
     }
 
     /**
      * @notice Runs the preorder leg shared by both combined entrypoints.
-     * @dev Only the uAsset-funded branch is implemented; the PSM-funded branch lands separately and
-     *      fails closed with `FundSourceNotAllowed` until then.
+     * @dev The uAsset-funded branch pulls the caller's uAsset; the PSM-funded branch mints through
+     *      the registered PSM with an explicit tail (consumer `launcher.preorder`, so no
+     *      `_genesisTail` reuse) and books the fee-adjusted mint output — not the reserve input —
+     *      as the preorder base.
      * @param uAsset The verse's uAsset resolved by the preamble.
      * @param verseId Opaque launcher-assigned identifier for the target verse.
      * @param f Preorder-leg funding instruction (already validated by the preamble).
      * @param user User credited for the preorder participation.
+     * @param nativeValueIn Native value forwarded to the PSM mint (preamble-validated; `f.amount`
+     *      when the leg's reserve token is NATIVE, `0` otherwise).
      */
-    function _runPreorderLeg(address uAsset, uint256 verseId, FundInput calldata f, address user) internal {
+    function _runPreorderLeg(address uAsset, uint256 verseId, FundInput calldata f, address user, uint256 nativeValueIn)
+        internal
+    {
         if (f.source == FundSource.UAsset) {
             _uAssetToLauncher(uAsset, verseId, f.amount, user, true);
         } else {
-            // PSM-funded branch not implemented yet; fails closed.
-            revert FundSourceNotAllowed(f.source, true);
+            (uint256 minted, uint256 baseline) =
+                _psmMintForRouter(_registeredPsm(uAsset, f.token), uAsset, f.token, f.amount, nativeValueIn);
+            GenesisGateLib.requireLauncherAmount(minted);
+            _approveExact(uAsset, memeverseLauncher, minted);
+            IMemeverseLauncher(memeverseLauncher).preorder(verseId, minted, user);
+            GenesisGateLib.assertFullConsumption(uAsset, memeverseLauncher, baseline);
         }
     }
 
