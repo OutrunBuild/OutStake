@@ -1225,6 +1225,40 @@ contract OutrunRouterTest is Test {
 }
 
 /**
+ * @title OutrunRouterTestNativeValueGate
+ * @notice Anchors the entry-top placement of the router's `msg.value` gate: a wrong `msg.value`
+ *     surfaces before the PSM registry gate on a multi-fault input.
+ * @dev Sibling of `OutrunRouterTest` in this shared file rather than another member function:
+ *     the consolidated contract sits at a solc 0.8.35 via-ir assembly-tag ceiling ("Tag too large
+ *     for reserved space" ICE on any added test function), so further router tests grow in fresh
+ *     contracts. The check under test runs before any registry read, so a minimal fixture with no
+ *     PSM registration suffices: every pair is unregistered against a fresh router.
+ */
+contract OutrunRouterTestNativeValueGate is Test {
+    bytes4 internal constant NATIVE_AMOUNT_MISMATCH_SELECTOR = NativeAmountMismatch.selector;
+    uint256 internal constant VERSE_ID = 42;
+
+    RouterMockUAsset internal uAsset;
+    OutrunRouter internal router;
+    address internal user = address(0xB0B);
+
+    function setUp() external {
+        uAsset = new RouterMockUAsset();
+        router = new OutrunRouter(makeAddr("owner"), makeAddr("launcher"));
+        vm.deal(user, 1 ether);
+    }
+
+    /// @notice The native-value check moved to the entry top: a wrong `msg.value` now surfaces
+    ///         before the PSM registry gate for a multi-fault input.
+    function test_RevertIf_GenesisByPSMNativeValueCheckPrecedesRegistryGate() external {
+        vm.prank(user);
+        // 未注册的 (uAsset, reserve) 且 msg.value 错误：期望 native 错误而非 UnregisteredPsm。
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.genesisByPSM{value: 1}(address(uAsset), address(0xBEEF), 10e18, VERSE_ID, user);
+    }
+}
+
+/**
  * @title PairDriftPSM
  * @notice Mock PSM whose uAsset and reserve bindings can each be flipped after registration.
  * @dev Partial mock: models only the `uAsset()` / `reserveToken()` getters with test-settable

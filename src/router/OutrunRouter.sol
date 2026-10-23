@@ -8,7 +8,7 @@ import {IMemeverseLauncher} from "./interfaces/IMemeverseLauncher.sol";
 import {IPOLendGenesis} from "./interfaces/IPOLendGenesis.sol";
 import {IPSM} from "../psm/interfaces/IPSM.sol";
 import {IStandardizedYield} from "../yield/interfaces/IStandardizedYield.sol";
-import {IERC20, TokenHelper} from "../libraries/TokenHelper.sol";
+import {IERC20, TokenHelper, NativeAmountMismatch} from "../libraries/TokenHelper.sol";
 import {GenesisGateLib} from "../libraries/GenesisGateLib.sol";
 import {IOutrunStakeManager} from "../position/interfaces/IOutrunStakeManager.sol";
 
@@ -105,7 +105,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         nonReentrant
         returns (uint256 amountInSYOut)
     {
-        amountInSYOut = _mintSY(SY, tokenIn, receiver, amountInput, minSyOut);
+        // Entry-level value gate (native leg: msg.value == amountInput; ERC20 leg: msg.value == 0);
+        // the resolved amount is passed down as the primitive's explicit `nativeValue`.
+        uint256 nativeValue = tokenIn == NATIVE ? amountInput : 0;
+        if (msg.value != nativeValue) revert NativeAmountMismatch();
+        amountInSYOut = _mintSY(SY, tokenIn, receiver, amountInput, minSyOut, nativeValue);
     }
 
     /**
@@ -138,11 +142,16 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         payable
         nonReentrant
     {
+        // Entry-level value gate (native leg: msg.value == amountIn; ERC20 leg: msg.value == 0), hoisted
+        // above the registry reads so a multi-fault input surfaces the value error first.
+        uint256 nativeValue = reserveToken == NATIVE ? amountIn : 0;
+        if (msg.value != nativeValue) revert NativeAmountMismatch();
         address psm = _registeredPsm(uAsset, reserveToken);
         // Zero credited user would burn the launch into an unrecoverable sink; fail before any pull.
         if (genesisUser == address(0)) revert ZeroInput();
 
-        (uint256 amountOut, uint256 uAssetBalanceBefore) = _psmMintForRouter(psm, uAsset, reserveToken, amountIn);
+        (uint256 amountOut, uint256 uAssetBalanceBefore) =
+            _psmMintForRouter(psm, uAsset, reserveToken, amountIn, nativeValue);
         _genesisTail(uAsset, verseId, genesisUser, amountOut, uAssetBalanceBefore);
     }
 
@@ -156,9 +165,12 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address genesisUser,
         uint256 minUAssetMinted
     ) external payable nonReentrant {
+        // Entry-level value gate (native leg: msg.value == tokenAmount; ERC20 leg: msg.value == 0).
+        uint256 nativeValue = tokenIn == NATIVE ? tokenAmount : 0;
+        if (msg.value != nativeValue) revert NativeAmountMismatch();
         address SY = _trustedSYWithLauncherParity(SP);
         // (1) Convert the caller's token into SY held by the router (registry check ran before any funds moved).
-        uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut);
+        uint256 amountInSY = _mintSY(SY, tokenIn, address(this), tokenAmount, minSyOut, nativeValue);
         // (2) Thin forward into the SP genesis open.
         _forwardGenesisToSP(SP, SY, amountInSY, genesisUser, verseId, minUAssetMinted);
     }
@@ -168,6 +180,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         external
         nonReentrant
     {
+        // Entry-level value gate: this SY-denominated entry takes no native input, so any attached
+        // value is rejected (the entry is non-payable; the explicit check documents the shared rule).
+        _requireNoNativeValue();
         address SY = _trustedSYWithLauncherParity(SP);
         // (1) Pull the caller's SY into the router.
         _transferFrom(IERC20(SY), msg.sender, address(this), amountInSY);
@@ -183,6 +198,10 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         uint256 verseId,
         address genesisUser
     ) external payable nonReentrant returns (uint256 borrowedAmount) {
+        // Entry-level value gate (native leg: msg.value == amountIn; ERC20 leg: msg.value == 0), hoisted
+        // above the registry reads so a multi-fault input surfaces the value error first.
+        uint256 nativeValue = reserveToken == NATIVE ? amountIn : 0;
+        if (msg.value != nativeValue) revert NativeAmountMismatch();
         address psm = _registeredPsm(uAsset, reserveToken);
         // POLend gate: target configured and the verse market is bound to this uAsset family;
         // both re-reads fail closed before any pull, mirroring the launcher-parity style.
@@ -193,7 +212,8 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         // The interest ledger target must not be a burn sink; fail before any pull.
         if (genesisUser == address(0)) revert ZeroInput();
 
-        (uint256 amountOut, uint256 uAssetBalanceBefore) = _psmMintForRouter(psm, uAsset, reserveToken, amountIn);
+        (uint256 amountOut, uint256 uAssetBalanceBefore) =
+            _psmMintForRouter(psm, uAsset, reserveToken, amountIn, nativeValue);
         // (3) Pay the minted uAsset to POLend as interest; the borrowed debt is credited to genesisUser.
         _approveExact(uAsset, polend_, amountOut);
         borrowedAmount = IPOLendGenesis(polend_).leveragedGenesis(verseId, amountOut, genesisUser);
@@ -246,29 +266,45 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         UAssetMintable = IOutrunStakeManager(SP).previewStake(amountInSY);
     }
 
+    /// @notice Rejects any attached native value; entry-level gate shared by entries that take no
+    ///      native input.
+    /// @dev `msg.value` is not readable inside non-payable external functions, so `genesisBySY`
+    ///      routes the check through this internal helper. Its dispatcher already reverts any
+    ///      value-carrying call before the body runs; the explicit check keeps the shared value
+    ///      rule stated once at the entry, mirroring the other four entrypoints.
+    function _requireNoNativeValue() internal view {
+        if (msg.value != 0) revert NativeAmountMismatch();
+    }
+
     /**
      * @notice Mints Standardized Yield by depositing an input token into the SY contract.
      * @dev Pulls `tokenIn` from the caller and forwards it to `SY.deposit`. Supports both
-     * ERC20 and native tokens (NATIVE sentinel = address(0)).
+     * ERC20 and native tokens (NATIVE sentinel = address(0)). The msg.value rule (native leg:
+     * `msg.value == amountInput`; ERC20 leg: `msg.value == 0`) is enforced by the calling
+     * entrypoints, which pass the already-validated amount down as `nativeValue`.
      * @param SY Standardized yield contract that receives the deposit.
      * @param tokenIn Token to supply when minting SY (NATIVE for the chain's native currency).
      * @param receiver Recipient of the minted SY.
      * @param amountInput Amount of input token to deposit.
      * @param minSyOut Minimum acceptable SY output or the call reverts.
+     * @param nativeValue Native value forwarded to `SY.deposit` (caller-validated; `amountInput`
+     * on the native leg, `0` on an ERC20 leg).
      * @return amountInSYOut Amount of SY minted for `receiver`.
      */
-    function _mintSY(address SY, address tokenIn, address receiver, uint256 amountInput, uint256 minSyOut)
-        internal
-        returns (uint256 amountInSYOut)
-    {
+    function _mintSY(
+        address SY,
+        address tokenIn,
+        address receiver,
+        uint256 amountInput,
+        uint256 minSyOut,
+        uint256 nativeValue
+    ) internal returns (uint256 amountInSYOut) {
         _requireTrustedSY(SY);
 
-        _transferIn(tokenIn, msg.sender, amountInput);
-
-        uint256 amountInNative = tokenIn == NATIVE ? amountInput : 0;
+        if (tokenIn != NATIVE) _transferFrom(IERC20(tokenIn), msg.sender, address(this), amountInput);
         _approveExact(tokenIn, SY, amountInput);
         // SY passed the trusted-registry check above; native value only reaches registered SY implementations.
-        amountInSYOut = IStandardizedYield(SY).deposit{value: amountInNative}(receiver, tokenIn, amountInput, minSyOut);
+        amountInSYOut = IStandardizedYield(SY).deposit{value: nativeValue}(receiver, tokenIn, amountInput, minSyOut);
     }
 
     /**
@@ -276,25 +312,27 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      *      snapshot, reserve pull from the caller, exact PSM approval, and the face-value mint
      *      to the router.
      * @dev Single source for the sequence both PSM gates must keep identical (baseline-before-mint
-     *      placement, exact approval, value forwarding); the per-entry registry gates run in the
-     *      callers before this tail.
+     *      placement, exact approval, value forwarding); the per-entry value gate and registry
+     *      gates run in the callers before this tail.
      * @param psm Registered PSM handling the reserve-to-uAsset face-value mint.
      * @param uAsset Universal asset minted by the PSM.
      * @param reserveToken Reserve token pulled from the caller (`NATIVE` for the chain's native currency).
      * @param amountIn Reserve amount to swap in, in the reserve token's own decimals.
+     * @param nativeValue Native value forwarded to the PSM mint (caller-validated; `amountIn` on
+     *      the native leg, `0` on an ERC20 leg).
      * @return amountOut uAsset minted to the router by the PSM.
      * @return uAssetBalanceBefore Pre-mint snapshot of the router's uAsset balance (assertion baseline).
      */
-    function _psmMintForRouter(address psm, address uAsset, address reserveToken, uint256 amountIn)
+    function _psmMintForRouter(address psm, address uAsset, address reserveToken, uint256 amountIn, uint256 nativeValue)
         internal
         returns (uint256 amountOut, uint256 uAssetBalanceBefore)
     {
         uAssetBalanceBefore = IERC20(uAsset).balanceOf(address(this));
-        // Native leg: msg.value == amountIn; ERC20 leg: msg.value == 0.
-        _transferIn(reserveToken, msg.sender, amountIn);
-        _approveExact(reserveToken, psm, amountIn);
-        uint256 amountInNative = reserveToken == NATIVE ? amountIn : 0;
-        amountOut = IPSM(psm).mint{value: amountInNative}(address(this), amountIn);
+        if (reserveToken != NATIVE) {
+            _transferFrom(IERC20(reserveToken), msg.sender, address(this), amountIn);
+            _approveExact(reserveToken, psm, amountIn);
+        }
+        amountOut = IPSM(psm).mint{value: nativeValue}(address(this), amountIn);
     }
 
     /**

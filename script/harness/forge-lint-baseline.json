@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "generated_at": "2026-10-09T18:41:13Z",
-  "finding_count": 80,
+  "generated_at": "2026-10-23T06:00:15Z",
+  "finding_count": 78,
   "notes": "Snapshot of forge-lint findings accepted under this repo's verified conventions (formerly the foundry.toml exclude_lints list): naming-style rules (mixed-case variable/function, screaming-snake immutable, pascal-case struct, interface naming/file-naming), block-timestamp, reentrancy-events (CEI trailing emits), unused-return (multi-return oracle destructures), non-reentrant-not-first, literal-instead-of-constant, inline-assembly, low-level-calls, internal-function-used-once, unwrapped-modifier-logic — patterns that misfire on verified codebase conventions. Detectors run at severity high/med/low. Any NEW finding beyond this set fails the gate and the wrapped build. Former inline `// forge-lint: disable-next-line(...)` directives were removed and their sites absorbed here after per-site review (arbitrary-send-eth ×6: exact-value native deposits to trusted configured adapters or the caller's own recipient; unsafe-typecast ×5: bounds argued in adjacent comments; missing-events ×5: accounting aggregates announced by function-level events; plus divide-before-multiply = LayerZero dust-removal formula, sequencer-feed zero sentinel, zero-default loop/rate locals); the baseline is now the single suppression inventory. Regen intentionally re-snapshots: it is an explicit, git-reviewed acceptance decision. Regenerate: bash script/harness/forge-lint-baseline.sh regen",
   "findings": [
     {
       "key": "arbitrary-send-eth|src/libraries/TokenHelper.sol|f7c812b70dcc34f5"
     },
     {
-      "key": "arbitrary-send-eth|src/router/OutrunRouter.sol|1ca3cba9e611eec8"
+      "key": "arbitrary-send-eth|src/router/OutrunRouter.sol|3a27f806180f701a"
     },
     {
-      "key": "arbitrary-send-eth|src/router/OutrunRouter.sol|f06bd551fd2e03c8"
+      "key": "arbitrary-send-eth|src/router/OutrunRouter.sol|857f30df8b6d53ca"
     },
     {
       "key": "arbitrary-send-eth|src/yield/adapters/aster/OutrunAsBNBSYUpgradeable.sol|9693e0545e14ec7c"
@@ -203,9 +203,6 @@
       "key": "require-revert-in-loop|src/position/OutrunStakingPositionUpgradeable.sol|5b9f916d3edb4977"
     },
     {
-      "key": "uninitialized-local|src/assets/omnichain/OutrunRateLimiterUpgradeable.sol|d93e9bafa2c468c4"
-    },
-    {
       "key": "uninitialized-local|src/yield/adapters/sky/OutrunL2StakedUsdsSYUpgradeable.sol|37cbdebc172eb05f"
     },
     {
@@ -219,9 +216,6 @@
     },
     {
       "key": "unsafe-typecast|src/position/OutrunStakingPositionUpgradeable.sol|6837745bf7026ada"
-    },
-    {
-      "key": "unsafe-typecast|src/router/OutrunRouter.sol|6611227bda4f96ef"
     },
     {
       "key": "unsafe-typecast|src/yield/OutrunL2OracleBackedSYUpgradeable.sol|796268602774f9bc"
