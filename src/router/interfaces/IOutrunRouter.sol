@@ -38,7 +38,9 @@ interface IOutrunRouter {
      *      unless `source` is `Psm` (the reserve token) or `Stake` (the token converted into SY).
      * @param amount Input amount to fund the leg with.
      * @param sp Stake manager driving the stake-funded genesis leg; must be zero unless `source` is `Stake`.
-     * @param minSyOut Minimum acceptable SY output for the stake-funded conversion; zero disables the floor.
+     * @param minSyOut Minimum acceptable SY output for the stake-funded conversion; zero disables the
+     *      floor. Accepted but ignored when `token` is the SP's canonical SY (direct charge in SY
+     *      units; the only explicitly silent-ignored `FundInput` field value).
      * @param minUAssetMinted Minimum acceptable minted uAsset for the stake-funded genesis; zero disables the floor.
      */
     struct FundInput {
@@ -281,12 +283,17 @@ interface IOutrunRouter {
      *      (reverting `FundSourceNotAllowed`: the genesis leg rejects `Credit`, the preorder leg
      *      accepts only `UAsset` and `Psm`) and unused fields must be zero (reverting
      *      `FundFieldMustBeZero`); and `msg.value` must equal the legs' combined native need
-     *      (reverting `NativeAmountMismatch`; uAsset-funded legs take none). The genesis leg then
-     *      funds `IMemeverseLauncher.genesis` and the preorder leg funds
-     *      `IMemeverseLauncher.preorder`, each crediting `user` with the leg's full amount; every
-     *      leg must consume its uAsset in full or the whole call reverts (GenesisGateLib
-     *      full-consumption assertion). PSM-, stake-, and credit-funded branches land incrementally;
-     *      until then those sources revert `FundSourceNotAllowed` before any funds move.
+     *      (reverting `NativeAmountMismatch`; uAsset-funded legs take none). The uAsset- and
+     *      PSM-funded genesis legs and the preorder leg fund `IMemeverseLauncher.genesis` /
+     *      `IMemeverseLauncher.preorder`, each crediting `user` with the leg's full amount, and
+     *      every such leg must consume its uAsset in full or the whole call reverts (GenesisGateLib
+     *      full-consumption assertion). The stake-funded genesis leg goes through the
+     *      owner-registered SP (same gates as `genesisByToken`/`genesisBySY`): a `token` equal to
+     *      the SP's canonical SY is charged directly in SY units (its `minSyOut` is accepted but
+     *      ignored — `FundInput`'s only explicit silent-ignore exception, since no deposit
+     *      conversion runs), any other input token converts through `SY.deposit` under `minSyOut`,
+     *      and the SP performs the value-parity mint, the atomic launcher hand-off, and the
+     *      full-consumption assertion SP-side (the router never touches uAsset on that branch).
      * @param verseId Opaque launcher-assigned identifier for the target verse; the router resolves it
      *      to the verse's uAsset and forwards it unchanged.
      * @param genesisInput Funding instruction for the genesis leg.

@@ -1263,9 +1263,11 @@ contract OutrunRouterTestNativeValueGate is Test {
  * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
  *     gating and zero-field gating, both rejected before any funds move), the uAsset-funded legs
  *     of `genesisAndPreorder` (combination #1) and `leveragedGenesisAndPreorder` (combination #7),
- *     and the PSM-funded legs of all three runners (combinations #2, #4, #10) with the summed
+ *     the PSM-funded legs of all three runners (combinations #2, #4, #10) with the summed
  *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
- *     credited by the preorder leg).
+ *     credited by the preorder leg), and the stake-funded genesis legs of the normal family
+ *     (combinations #5, #6: the tokenIn deposit sub-path through SY.deposit with both slippage
+ *     floors, and the token == canonical-SY direct charge in SY units that skips the deposit).
  * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
  *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
  *     fixture (so every parent test re-runs in this context) and extends it only with the
@@ -1401,6 +1403,52 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "no residual between legs");
     }
 
+    /// @notice 组合 #6：生息资产（tokenIn 经 SY.deposit）创世 + PSM 预购；SP 侧开仓并直送 launcher。
+    /// @dev mock 平价事实：RouterMockSY 以 1:1 存入、真实 SP 以价值平价 1:1 铸 uAsset 交付同一 mock
+    ///      launcher、PSM fee 起始为零——launcher 收款可精确断言为 tokenInAmount + preorderReserve。
+    function test_CombinedStakeTokenInLegAndPsmPreorder() external {
+        uint256 tokenInAmount = 7e18;
+        uint256 preorderReserve = 2e18;
+        vm.startPrank(user);
+        router.genesisAndPreorder(
+            VERSE_ID,
+            _fundStakeWithMins(address(position), address(underlying), tokenInAmount, 1, 1),
+            _fundPsm(address(underlying), preorderReserve),
+            user
+        );
+        vm.stopPrank();
+        assertEq(
+            uAsset.balanceOf(address(launcher)),
+            tokenInAmount + preorderReserve,
+            "stake parity mint + fee-free PSM preorder both reached the launcher"
+        );
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(p, preorderReserve, "psm preorder exact");
+    }
+
+    /// @notice Review Focus 3：token == SP 的 canonical SY 时按 SY 单位直充，不经 deposit/minSyOut。
+    function test_CombinedStakeDirectSYLegSkipsDeposit() external {
+        uint256 syIn = 4e18;
+        uint256 preorderReserve = 1e18;
+        // mintShares backs user's shares 1:1 with underlying inside the SY, so "no deposit ran" is a
+        // delta assertion: the SY's underlying balance must be untouched by this call.
+        uint256 syUnderlyingBefore = underlying.balanceOf(address(sy));
+        vm.startPrank(user);
+        router.genesisAndPreorder(
+            VERSE_ID,
+            _fundStake(address(position), address(sy), syIn),
+            _fundPsm(address(underlying), preorderReserve),
+            user
+        );
+        vm.stopPrank();
+        // 直充路径不消耗 underlying：SP 收到的 SY 就是 syIn 本金，launcher 收款 = syIn + 预购 mint。
+        assertEq(sy.balanceOf(address(position)), syIn, "SY transferred to the SP without a deposit");
+        assertEq(underlying.balanceOf(address(sy)), syUnderlyingBefore, "no deposit consumed the underlying token");
+        assertEq(
+            uAsset.balanceOf(address(launcher)), syIn + preorderReserve, "parity stake + fee-free preorder delivered"
+        );
+    }
+
     /// @notice native 总量错配（少付）整笔拒绝。
     function test_RevertIf_CombinedNativeUnderfunded() external {
         vm.startPrank(user);
@@ -1461,6 +1509,15 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         returns (IOutrunRouter.FundInput memory f)
     {
         f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, 0, 0);
+    }
+
+    /// @dev `_fundStake` plus the two stake-only slippage floors (`minSyOut`/`minUAssetMinted`).
+    function _fundStakeWithMins(address sp, address tokenIn, uint256 amount, uint256 minSyOut, uint256 minUAssetMinted)
+        internal
+        pure
+        returns (IOutrunRouter.FundInput memory f)
+    {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, minSyOut, minUAssetMinted);
     }
 
     function _fundCredit(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {

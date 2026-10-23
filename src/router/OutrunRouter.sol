@@ -482,14 +482,19 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      * @notice Runs the genesis leg of the normal-family combined entrypoint.
      * @dev The uAsset-funded branch pulls the caller's uAsset; the PSM-funded branch mints through
      *      the registered PSM and reuses `_genesisTail` (its consumer is `launcher.genesis`, the
-     *      exact single-caller semantics that tail was factored for). The stake-funded branch lands
-     *      separately and fails closed with `FundSourceNotAllowed` until then.
+     *      exact single-caller semantics that tail was factored for). The stake-funded branch
+     *      mirrors the single-leg CDP-gate entries: it resolves the trusted SP and its canonical
+     *      SY with the launcher-parity gate, then either charges SY directly (token == canonical
+     *      SY; `amount` is in SY units and `minSyOut` is accepted but ignored — FundInput's only
+     *      explicit silent-ignore exception, since no deposit conversion runs) or converts through
+     *      `SY.deposit` under `minSyOut`, and thin-forwards into `SP.stakeForGenesis`, whose
+     *      uAsset-to-launcher atomic hand-off and full-consumption assertion are SP-side.
      * @param uAsset The verse's uAsset resolved by the preamble.
      * @param verseId Opaque launcher-assigned identifier for the target verse.
      * @param f Genesis-leg funding instruction (already validated by the preamble).
      * @param user User credited for the genesis action.
-     * @param nativeValueIn Native value forwarded to the PSM mint (preamble-validated; `f.amount`
-     *      when the leg's reserve token is NATIVE, `0` otherwise).
+     * @param nativeValueIn Native value forwarded to the PSM mint or SY deposit (preamble-validated;
+     *      `f.amount` when the leg's input token is NATIVE, `0` otherwise).
      */
     function _runGenesisLeg(address uAsset, uint256 verseId, FundInput calldata f, address user, uint256 nativeValueIn)
         internal
@@ -501,8 +506,17 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
                 _psmMintForRouter(_registeredPsm(uAsset, f.token), uAsset, f.token, f.amount, nativeValueIn);
             _genesisTail(uAsset, verseId, user, minted, baseline);
         } else {
-            // Stake-funded branch not implemented yet; fails closed.
-            revert FundSourceNotAllowed(f.source, false);
+            // Stake 腿：token == SP 的 canonical SY 时按 SY 单位直充（等价 genesisBySY），
+            // 否则经 SY.deposit（等价 genesisByToken）；SP 自带 uAsset→launcher 的原子交接与消费断言。
+            address SY = _trustedSYWithLauncherParity(f.sp);
+            uint256 amountInSY;
+            if (f.token == SY) {
+                _transferFrom(IERC20(SY), msg.sender, address(this), f.amount);
+                amountInSY = f.amount;
+            } else {
+                amountInSY = _mintSY(SY, f.token, address(this), f.amount, f.minSyOut, nativeValueIn);
+            }
+            _forwardGenesisToSP(f.sp, SY, amountInSY, user, verseId, f.minUAssetMinted);
         }
     }
 
