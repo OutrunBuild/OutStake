@@ -10,7 +10,7 @@ import {OutrunPSMUpgradeable} from "../../src/psm/OutrunPSMUpgradeable.sol";
 import {IPSM} from "../../src/psm/interfaces/IPSM.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
-import {MockGenesisLauncher} from "./mocks/LauncherMocks.sol";
+import {MockGenesisLauncher, MockPOLend} from "./mocks/LauncherMocks.sol";
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset} from "./mocks/RouterMocks.sol";
 
 /**
@@ -23,7 +23,10 @@ import {RouterMockSY, RouterMockERC20, RouterMockUAsset} from "./mocks/RouterMoc
  *     the OutrunRouterUpgradeable.t.sol suite; this file only sweeps randomized amounts. The combined
  *     entrypoint `genesisAndPreorder` is swept the same way: UAsset+UAsset legs must each credit the
  *     launcher in full with zero router residual, and the PSM preorder leg must book exactly its
- *     `quoteMint` output across reserve ranges.
+ *     `quoteMint` output across reserve ranges. The leveraged-family combined entrypoint
+ *     `leveragedGenesisAndPreorder` sweeps its minimal face (UAsset interest + UAsset preorder):
+ *     POLend books/escrows exactly the swept interest and the launcher credits exactly the swept
+ *     preorder, with zero router residual.
  */
 contract OutrunRouterFuzzTest is Test {
     RouterMockERC20 internal underlying;
@@ -156,6 +159,36 @@ contract OutrunRouterFuzzTest is Test {
         vm.stopPrank();
         (, uint256 p,) = launcher.preorderSnapshot();
         assertEq(p, IPSM(address(psm)).quoteMint(reserveIn), "preorder booked the quoteMint output");
+    }
+
+    /// @notice 杠杆族组合金额扫描（最小面：UAsset 利息腿 + UAsset 预购腿）：POLend 的利息记账与
+    ///         托管、launcher 的预购记账各自精确等于扫描额，router 零残留。
+    function testFuzz_CombinedLeveragedUAssetAndPreorderAmounts(uint96 interest, uint96 preorderAmount) external {
+        interest = uint96(bound(interest, 1, 1e24));
+        preorderAmount = uint96(bound(preorderAmount, 1, 1e24));
+        // Per-test POLend wiring (the fuzz fixture keeps `router.polend()` pristine, mirroring the
+        // combined suite's `_wirePolendFixture`): market bound to the family uAsset, no credit leg.
+        MockPOLend polendMock = new MockPOLend(address(uAsset), 1e17);
+        polendMock.setMarketUAsset(VERSE_ID, address(uAsset));
+        vm.prank(owner);
+        router.setPolend(address(polendMock));
+
+        uAsset.mint(user, uint256(interest) + preorderAmount);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundUAsset(interest), _fundUAsset(preorderAmount), user);
+        vm.stopPrank();
+
+        (, uint256 lastInterest, address lastInterestUser) = polendMock.interestSnapshot();
+        (, uint256 p, address preorderUser) = launcher.preorderSnapshot();
+        assertEq(lastInterest, interest, "polend interest credited");
+        assertEq(lastInterestUser, user, "interest user");
+        assertEq(polendMock.leveragedInterestPaid(VERSE_ID, user), interest, "interest ledger keyed by user");
+        assertEq(uAsset.balanceOf(address(polendMock)), interest, "interest escrowed in polend");
+        assertEq(p, preorderAmount, "preorder credited");
+        assertEq(preorderUser, user, "preorder user");
+        assertEq(uAsset.balanceOf(address(launcher)), preorderAmount, "launcher holds the preorder pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
     }
 
     // --------------------------------------------------------------------------

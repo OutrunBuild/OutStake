@@ -162,6 +162,50 @@ contract MockGenesisRevertingLauncher is IMemeverseLauncher {
 }
 
 /**
+ * @title MockPreorderRevertingLauncher
+ * @notice Mock genesis launcher whose `genesis` fully pulls and records while `preorder` always
+ *         reverts with a custom error.
+ * @dev Partial mock: models the combined-entry atomicity seam — `genesis` keeps the full mock
+ *      accounting (exact transferFrom pull plus the last-call record), then `preorder` reverts so
+ *      the caller's transaction-level rollback must undo the already-recorded genesis leg. The
+ *      `getUAssetByVerseId` binding read returns the wired uAsset. Does not model verse
+ *      bookkeeping, preorder accounting, or any other launcher side effect.
+ */
+contract MockPreorderRevertingLauncher is IMemeverseLauncher {
+    error PreorderLauncherReverted();
+
+    IERC20 internal immutable uAsset;
+    uint256 internal lastVerseId;
+    uint256 internal lastAmountInUAsset;
+    address internal lastUser;
+
+    constructor(address uAsset_) {
+        uAsset = IERC20(uAsset_);
+    }
+
+    function genesis(uint256 verseId, uint256 amountInUAsset, address user) external override {
+        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
+            revert MockGenesisLauncher.GenesisTransferFailed();
+        }
+        lastVerseId = verseId;
+        lastAmountInUAsset = amountInUAsset;
+        lastUser = user;
+    }
+
+    function preorder(uint256, uint256, address) external pure override {
+        revert PreorderLauncherReverted();
+    }
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(uAsset);
+    }
+
+    function snapshot() external view returns (uint256 verseId, uint256 amountInUAsset, address user) {
+        return (lastVerseId, lastAmountInUAsset, lastUser);
+    }
+}
+
+/**
  * @title MockPOLend
  * @notice Mock POLend leveraged-genesis market: quotes borrowed debt at a fixed rate and pulls
  *         the interest from the payer.

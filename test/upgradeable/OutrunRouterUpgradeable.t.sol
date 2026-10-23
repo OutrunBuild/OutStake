@@ -21,6 +21,7 @@ import {
     MockGenesisEmptyLauncher,
     MockGenesisTransferBackLauncher,
     MockGenesisRevertingLauncher,
+    MockPreorderRevertingLauncher,
     MockPOLend,
     MockCreditFactory
 } from "./mocks/LauncherMocks.sol";
@@ -1730,6 +1731,230 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         );
         router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
         vm.stopPrank();
+    }
+
+    // --------------------------------------------------------------------------
+    // Adjudicated fix wave: OS-1 registry gates / atomicity tripwire / zero fields /
+    // mixed native split / wrap-to-zero corner, OS-2 wrap=0 edge
+    // --------------------------------------------------------------------------
+
+    /// @notice OS-1a：polend 未接线时组合杠杆入口在任何资金移动前以 `PolendNotSet` 拒绝
+    ///         （族级门与单腿入口 `leveragedGenesisByPSM` 同源 `_polendMarketGate`）。
+    function test_RevertIf_CombinedLeveragedEntryPolendNotWired() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, 1e18);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(POLEND_NOT_SET_SELECTOR);
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundPsm(address(underlying), 1e18), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "gate must fire before any reserve pull");
+        assertEq(uAsset.balanceOf(user), 1e18, "gate must fire before any uAsset pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router uAsset unchanged");
+        assertEq(address(router).balance, 0, "router native unchanged");
+    }
+
+    /// @notice OS-1b 原子性绊线：创世腿（UAsset，完整入账+拉款）成功后预购腿 revert，整笔回滚——
+    ///         launcher 零持仓、创世记账归零、caller/router 余额零变动。兑现 spec
+    ///         `router-and-user-flows.md`「组合参与入口」节的原子性承诺（任一腿 revert 则整笔回滚，
+    ///         EVM 同交易回滚语义），并作为绊线防未来重构吞掉预购腿的 revert 面。
+    function test_CombinedGenesisLegRollsBackWhenPreorderReverts() external {
+        MockPreorderRevertingLauncher preorderReverting = new MockPreorderRevertingLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(preorderReverting));
+        uint256 genesisAmount = 10e18;
+        uint256 preorderAmount = 2e18;
+        uAsset.mint(user, genesisAmount + preorderAmount);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(MockPreorderRevertingLauncher.PreorderLauncherReverted.selector);
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(genesisAmount), _fundUAsset(preorderAmount), user);
+        vm.stopPrank();
+
+        // 创世腿曾完整执行（mock 拉款+记账）后仍整笔回滚：launcher 零持仓、记账归零。
+        assertEq(uAsset.balanceOf(address(preorderReverting)), 0, "launcher holds zero uAsset after rollback");
+        (uint256 lastVerseId, uint256 lastAmount, address lastUser) = preorderReverting.snapshot();
+        assertEq(lastVerseId, 0, "no genesis verse record survived the rollback");
+        assertEq(lastAmount, 0, "no genesis amount record survived the rollback");
+        assertEq(lastUser, address(0), "no genesis user record survived the rollback");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "caller uAsset unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(preorderReverting)), 0, "no allowance residual");
+    }
+
+    /// @notice OS-1c(a)：组合 Psm 创世腿对未注册 (uAsset, reserve) 配对，在拉取前以
+    ///         `UnregisteredPsm`（配对键负载）拒绝。
+    function test_RevertIf_CombinedPsmGenesisLegUnregisteredPair() external {
+        RouterMockERC20 strayReserve = new RouterMockERC20("Stray", "STR");
+        strayReserve.mint(user, 1e18);
+
+        vm.startPrank(user);
+        strayReserve.approve(address(router), 1e18);
+        vm.expectRevert(abi.encodeWithSelector(UNREGISTERED_PSM_SELECTOR, address(uAsset), address(strayReserve)));
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(address(strayReserve), 1e18), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(strayReserve.balanceOf(user), 1e18, "failed call must not pull the reserve");
+        assertEq(strayReserve.balanceOf(address(router)), 0, "failed call must not leave reserve on the router");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
+    }
+
+    /// @notice OS-1c(b)：组合 Psm 腿对注册后漂移的 PSM 绑定，在拉取前以
+    ///         `PsmBindingMismatch` / `PsmReserveMismatch` 拒绝（漂移 mock 构造参照父套件
+    ///         `test_RevertIf_GenesisByPSMOnPsmBindingDrift` 模式）。
+    function test_RevertIf_CombinedPsmLegOnPsmBindingDrift() external {
+        PairDriftPSM driftPsm = new PairDriftPSM(address(uAsset), address(underlying));
+        vm.prank(owner);
+        router.setPsmForUAsset(address(uAsset), address(underlying), address(driftPsm));
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        // uAsset 绑定漂移：注册后翻转到外族地址。
+        address driftedUAsset = address(0xDEAD);
+        driftPsm.setBoundUAsset(driftedUAsset);
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(PSM_BINDING_MISMATCH_SELECTOR, address(driftPsm), address(uAsset), driftedUAsset)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(address(underlying), 1e18), _fundUAsset(1e18), user);
+
+        // reserve 绑定漂移：uAsset 绑定复位后翻转 reserve。
+        driftPsm.setBoundUAsset(address(uAsset));
+        address driftedReserve = address(0xBEEF);
+        driftPsm.setBoundReserve(driftedReserve);
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PSM_RESERVE_MISMATCH_SELECTOR, address(driftPsm), address(underlying), driftedReserve
+            )
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(address(underlying), 1e18), _fundUAsset(1e18), user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "drift reverts must fire before any pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed calls must not mint uAsset to the router");
+    }
+
+    /// @notice OS-1c(c)：组合 Stake 创世腿对绑到不同 launcher 的 SP（fixture 参照外族 SP 部署
+    ///         模式），在任何 SY 移动前以 `GenesisLauncherMismatch` 拒绝。
+    function test_RevertIf_CombinedStakeLegOnLauncherMismatchSP() external {
+        MockGenesisLauncher otherLauncher = new MockGenesisLauncher(address(uAsset));
+        OutrunStakingPositionUpgradeable otherPosition = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                SPTestDefaults.spInitCall(owner, address(sy), address(uAsset), treasury)
+            )
+        );
+        vm.startPrank(owner);
+        router.setTrustedSP(address(otherPosition), address(sy));
+        otherPosition.setGenesisLauncher(address(otherLauncher));
+        vm.stopPrank();
+        uint256 userSYBefore = sy.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOutrunRouter.GenesisLauncherMismatch.selector, address(launcher), address(otherLauncher)
+            )
+        );
+        router.genesisAndPreorder(
+            VERSE_ID, _fundStake(address(otherPosition), address(sy), 1e18), _fundUAsset(1e18), user
+        );
+
+        assertEq(sy.balanceOf(user), userSYBefore, "parity mismatch must reject before any SY is pulled");
+        assertEq(sy.balanceOf(address(otherPosition)), 0, "SP must hold no SY from the rejected leg");
+        assertEq(sy.balanceOf(address(router)), 0, "router must hold no SY from the rejected leg");
+    }
+
+    /// @notice OS-1d：UAsset 创世腿带 `sp` → `FundFieldMustBeZero`（先于任何资金移动）。
+    function test_RevertIf_CombinedUAssetGenesisLegWithSp() external {
+        IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
+        bad.sp = address(position);
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.UAsset)
+        );
+        router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
+    }
+
+    /// @notice OS-1d：UAsset 创世腿带 `minSyOut` → `FundFieldMustBeZero`（先于任何资金移动）。
+    function test_RevertIf_CombinedUAssetGenesisLegWithMinSyOut() external {
+        IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
+        bad.minSyOut = 1;
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.UAsset)
+        );
+        router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
+    }
+
+    /// @notice OS-1d：预购腿 `source = Credit` → `FundSourceNotAllowed`（先于任何资金移动）。
+    function test_RevertIf_CombinedPreorderLegCreditSource() external {
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundSourceNotAllowed.selector, IOutrunRouter.FundSource.Credit, false)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), _fundCredit(1e18), user);
+    }
+
+    /// @notice OS-1e：单 native（创世腿）+ ERC20（预购腿）混合：`msg.value` 恰为创世腿额即过闸，
+    ///         native 只进创世腿的 PSM、ERC20 只归预购腿，两腿快照各自精确，router 零残留。
+    function test_CombinedNativeGenesisAndErc20PreorderMixedValueSplit() external {
+        uint256 genesisNativeIn = 2e18;
+        uint256 preorderReserve = 3e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        router.genesisAndPreorder{value: genesisNativeIn}(
+            VERSE_ID, _fundPsm(NATIVE, genesisNativeIn), _fundPsm(address(underlying), preorderReserve), user
+        );
+
+        assertEq(address(psmNative).balance, genesisNativeIn, "native reached only the genesis leg's PSM");
+        assertEq(
+            userUnderlyingBefore - underlying.balanceOf(user),
+            preorderReserve,
+            "ERC20 reserve paid only the preorder leg"
+        );
+        assertEq(underlying.balanceOf(address(psm)), preorderReserve, "preorder reserve held by the ERC20 PSM");
+        (, uint256 g, address genesisUser) = launcher.snapshot();
+        (, uint256 p, address preorderUser) = launcher.preorderSnapshot();
+        assertEq(g, genesisNativeIn, "genesis leg credited the fee-free native mint");
+        assertEq(genesisUser, user, "genesis user");
+        assertEq(p, preorderReserve, "preorder leg credited the fee-free ERC20 mint");
+        assertEq(preorderUser, user, "preorder user");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
+        assertEq(address(router).balance, 0, "no native residual on router");
+    }
+
+    /// @notice OS-1e 负向：混合两腿下 `msg.value = g + p`（为 ERC20 预购腿多付 native）→
+    ///         `NativeAmountMismatch`（混合下多付也拒），先于任何资金移动。
+    function test_RevertIf_CombinedNativeGenesisAndErc20PreorderOverpaid() external {
+        uint256 genesisNativeIn = 2e18;
+        uint256 preorderReserve = 3e18;
+
+        vm.prank(user);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.genesisAndPreorder{value: genesisNativeIn + preorderReserve}(
+            VERSE_ID, _fundPsm(NATIVE, genesisNativeIn), _fundPsm(address(underlying), preorderReserve), user
+        );
+
+        assertEq(address(psmNative).balance, 0, "failed call must not move native into the PSM");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
+    }
+
+    /// @notice OS-2 wrap=0 边角：两 native 腿之和恰回绕为 0（g=1、p=type(uint256).max）且
+    ///         `msg.value = 0` 时过入口值门，于首个 native 转发处（创世腿 PSM mint 的 CALL
+    ///         value，router 实际余额为 0）整笔回滚：空 revert、fail-closed、余额零变动。
+    function test_RevertIf_CombinedNativeLegSumWrapsToZero() external {
+        vm.prank(user);
+        vm.expectRevert();
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(NATIVE, 1), _fundPsm(NATIVE, type(uint256).max), user);
+
+        assertEq(address(router).balance, 0, "router native unchanged");
+        assertEq(address(psmNative).balance, 0, "PSM native unchanged");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset minted to the router");
     }
 
     // --------------------------------------------------------------------------
