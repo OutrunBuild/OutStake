@@ -12,9 +12,6 @@ build_info = true
 evm_version = "prague"
 extra_output = ["storageLayout"]
 dynamic_test_linking = false
-# Cross-repo selector-lock tests import the sibling Memeverse repo via the `memeverse/` remapping;
-# solc resolves Memeverse-internal relative imports only under this allow list.
-allow_paths = ["../Memeverse/src"]
 
 ignored_error_codes = [6335, 2424, 4591]
 ignored_warnings_from = ["lib/**"]
