@@ -120,9 +120,9 @@ contract RouterProxyIntegrationTest is PositionStackTestBase {
         // Same launcher receipt per path: the mock holds exactly two mints and the router never
         // held any uAsset (it only pulled and forwarded SY).
         assertEq(uAsset.balanceOf(address(genesisLauncher)), 2 * expectedMinted, "launcher consumed one mint per path");
-        (uint256 lastVerseId, uint128 lastAmount, address lastUser) = genesisLauncher.snapshot();
+        (uint256 lastVerseId, uint256 lastAmount, address lastUser) = genesisLauncher.snapshot();
         assertEq(lastVerseId, VERSE_ID, "verseId forwarded unchanged");
-        assertEq(lastAmount, uint128(expectedMinted), "launcher received uint128(minted)");
+        assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(lastUser, user, "genesis user credited");
         assertEq(uAsset.balanceOf(address(router)), 0, "router held no uAsset on path B");
         assertEq(uAsset.balanceOf(address(position)), 0, "SP balance conserved by the physical gate");
@@ -178,8 +178,8 @@ contract RouterProxyIntegrationTest is PositionStackTestBase {
         assertEq(syStaked, amountInSY, "SY collateral recorded");
         assertEq(principalDebt, expectedMinted, "principal debt equals the minted uAsset");
 
-        (, uint128 lastAmount,) = genesisLauncher.snapshot();
-        assertEq(lastAmount, uint128(expectedMinted), "launcher received the full mint");
+        (, uint256 lastAmount,) = genesisLauncher.snapshot();
+        assertEq(lastAmount, expectedMinted, "launcher received the full mint");
         assertEq(uAsset.balanceOf(address(genesisLauncher)), expectedMinted, "launcher holds the minted amount");
         assertEq(uAsset.balanceOf(address(position)), 0, "SP balance conserved by the physical gate");
         assertEq(uAsset.balanceOf(address(router)), 0, "router was never involved");

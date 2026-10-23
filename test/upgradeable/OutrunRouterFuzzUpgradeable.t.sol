@@ -118,8 +118,8 @@ contract OutrunRouterFuzzTest is Test {
         assertEq(underlying.balanceOf(address(psm)), amountIn, "PSM holds the taken reserve");
         assertEq(IPSM(address(psm)).netUAssetMinted(), amountIn, "PSM net minted ledger");
         assertEq(uAsset.balanceOf(address(launcher)), amountIn, "launcher holds the full minted uAsset");
-        (, uint128 lastAmount,) = launcher.snapshot();
-        assertEq(lastAmount, uint128(amountIn), "launcher received uint128(minted)");
+        (, uint256 lastAmount,) = launcher.snapshot();
+        assertEq(lastAmount, amountIn, "launcher received the minted amount");
         assertEq(uAsset.balanceOf(address(router)), 0, "router kept residual uAsset");
         assertEq(uAsset.allowance(address(router), address(launcher)), 0, "launcher allowance not cleared");
         assertEq(underlying.allowance(address(router), address(psm)), 0, "PSM reserve allowance not cleared");

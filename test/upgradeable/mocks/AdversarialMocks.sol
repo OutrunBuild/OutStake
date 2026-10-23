@@ -206,8 +206,9 @@ contract ReentrantPositionSY is MockSYWithRateControl {
  *        inside the genesis window, then consumes the full approved amount.
  * @dev Partial mock: models the launcher-side reentrancy surface only (one nested attempt per
  *      position entrypoint, recorded as a first-failure index, followed by the honest full pull so
- *      an outer genesis flow with all attempts blocked can complete). Does not model verse
- *      bookkeeping, partial pulls, or transfer-backs.
+ *      an outer genesis flow with all attempts blocked can complete). The preorder /
+ *      getUAssetByVerseId members are inert stubs satisfying the widened interface. Does not model
+ *      verse bookkeeping, partial pulls, or transfer-backs.
  */
 contract ReenteringGenesisLauncher is IMemeverseLauncher {
     error LauncherTransferFailed();
@@ -227,7 +228,7 @@ contract ReenteringGenesisLauncher is IMemeverseLauncher {
         uAsset = IERC20(uAsset_);
     }
 
-    function genesis(uint256, uint128 amountInUAsset, address) external override {
+    function genesis(uint256, uint256 amountInUAsset, address) external override {
         // The guard is the outermost modifier on every position entrypoint, so each nested call
         // must revert with the guard's custom error before any body logic runs; arguments only
         // need valid ABI shape, they are never evaluated.
@@ -255,6 +256,12 @@ contract ReenteringGenesisLauncher is IMemeverseLauncher {
             revert LauncherTransferFailed();
         }
     }
+
+    function preorder(uint256, uint256, address) external override {}
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(uAsset);
+    }
 }
 
 /**
@@ -262,7 +269,8 @@ contract ReenteringGenesisLauncher is IMemeverseLauncher {
  * @notice Mock genesis launcher that consumes the full approved amount and additionally transfers
  *        some of its own pre-funded uAsset into the SP inside the genesis window.
  * @dev Partial mock: models the full-pull-then-extra-inflow behavior that pushes the SP's uAsset
- *      balance above its pre-mint baseline (the post-assertion's balance dimension). Does not
+ *      balance above its pre-mint baseline (the post-assertion's balance dimension). The preorder /
+ *      getUAssetByVerseId members are inert stubs satisfying the widened interface. Does not
  *      model verse bookkeeping, partial pulls, or nested calls.
  */
 contract DonatingGenesisLauncher is IMemeverseLauncher {
@@ -276,12 +284,18 @@ contract DonatingGenesisLauncher is IMemeverseLauncher {
         donateAmount = donateAmount_;
     }
 
-    function genesis(uint256, uint128 amountInUAsset, address) external override {
+    function genesis(uint256, uint256 amountInUAsset, address) external override {
         if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
             revert LauncherTransferFailed();
         }
         if (!uAsset.transfer(msg.sender, donateAmount)) {
             revert LauncherTransferFailed();
         }
+    }
+
+    function preorder(uint256, uint256, address) external override {}
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(uAsset);
     }
 }

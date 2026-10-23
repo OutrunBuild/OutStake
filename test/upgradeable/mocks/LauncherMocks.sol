@@ -10,9 +10,10 @@ import {IPOLendGenesis} from "../../../src/router/interfaces/IPOLendGenesis.sol"
  * @title MockGenesisLauncher
  * @notice Mock genesis launcher shared by router and position tests: pulls the exact approved
  *         uAsset amount and records the genesis call.
- * @dev Full mock of the launcher seam both genesis consumers share (`IMemeverseLauncher.genesis`:
- *      verseId / uint128 amount / user plus the transferFrom pull of the exact approved amount).
- *      Models no launcher-side verse bookkeeping beyond the last-call record.
+ * @dev Full mock of the launcher seam both genesis consumers share (`IMemeverseLauncher`:
+ *      genesis / preorder with verseId / uint256 amount / user plus the transferFrom pull of the
+ *      exact approved amount, and the getUAssetByVerseId binding read). Models no launcher-side
+ *      verse bookkeeping beyond the last-call records.
  */
 contract MockGenesisLauncher is IMemeverseLauncher {
     error GenesisTransferFailed();
@@ -20,14 +21,17 @@ contract MockGenesisLauncher is IMemeverseLauncher {
     // IERC20-typed so the mock serves both mock-uAsset and real-uAsset fixtures.
     IERC20 internal immutable uAsset;
     uint256 internal lastVerseId;
-    uint128 internal lastAmountInUAsset;
+    uint256 internal lastAmountInUAsset;
     address internal lastUser;
+    uint256 internal lastPreorderVerseId;
+    uint256 internal lastPreorderAmount;
+    address internal lastPreorderUser;
 
     constructor(address uAsset_) {
         uAsset = IERC20(uAsset_);
     }
 
-    function genesis(uint256 verseId, uint128 amountInUAsset, address user) external override {
+    function genesis(uint256 verseId, uint256 amountInUAsset, address user) external override {
         if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
             revert GenesisTransferFailed();
         }
@@ -36,8 +40,25 @@ contract MockGenesisLauncher is IMemeverseLauncher {
         lastUser = user;
     }
 
-    function snapshot() external view returns (uint256 verseId, uint128 amountInUAsset, address user) {
+    function preorder(uint256 verseId, uint256 amountInUAsset, address user) external override {
+        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
+            revert GenesisTransferFailed();
+        }
+        lastPreorderVerseId = verseId;
+        lastPreorderAmount = amountInUAsset;
+        lastPreorderUser = user;
+    }
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(uAsset);
+    }
+
+    function snapshot() external view returns (uint256 verseId, uint256 amountInUAsset, address user) {
         return (lastVerseId, lastAmountInUAsset, lastUser);
+    }
+
+    function preorderSnapshot() external view returns (uint256 verseId, uint256 amountInUAsset, address user) {
+        return (lastPreorderVerseId, lastPreorderAmount, lastPreorderUser);
     }
 }
 
@@ -45,8 +66,9 @@ contract MockGenesisLauncher is IMemeverseLauncher {
  * @title MockGenesisPartialLauncher
  * @notice Mock genesis launcher that consumes only half of the approved uAsset.
  * @dev Partial mock: models a launcher that pulls exactly half of `amountInUAsset` (transferFrom)
- *      so the caller's full-consumption post-condition must fire. Does not model the call record,
- *      full pulls, or any other genesis side effect.
+ *      so the caller's full-consumption post-condition must fire. The preorder / getUAssetByVerseId
+ *      members are inert stubs satisfying the widened interface; tests never exercise them here.
+ *      Does not model the call record, full pulls, or any other genesis side effect.
  */
 contract MockGenesisPartialLauncher is IMemeverseLauncher {
     IERC20 internal immutable uAsset;
@@ -55,10 +77,16 @@ contract MockGenesisPartialLauncher is IMemeverseLauncher {
         uAsset = IERC20(uAsset_);
     }
 
-    function genesis(uint256, uint128 amountInUAsset, address) external override {
+    function genesis(uint256, uint256 amountInUAsset, address) external override {
         if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset / 2)) {
             revert MockGenesisLauncher.GenesisTransferFailed();
         }
+    }
+
+    function preorder(uint256, uint256, address) external override {}
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(uAsset);
     }
 }
 
@@ -66,18 +94,26 @@ contract MockGenesisPartialLauncher is IMemeverseLauncher {
  * @title MockGenesisEmptyLauncher
  * @notice Mock genesis launcher that consumes none of the approved uAsset.
  * @dev Partial mock: models a launcher that leaves the approved uAsset untouched (no transferFrom).
+ *      The preorder / getUAssetByVerseId members are inert stubs satisfying the widened interface.
  *      Does not model the call record or any other genesis side effect.
  */
 contract MockGenesisEmptyLauncher is IMemeverseLauncher {
-    function genesis(uint256, uint128, address) external override {}
+    function genesis(uint256, uint256, address) external override {}
+
+    function preorder(uint256, uint256, address) external override {}
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(0);
+    }
 }
 
 /**
  * @title MockGenesisTransferBackLauncher
  * @notice Mock genesis launcher that pulls the full approved uAsset and transfers part back.
  * @dev Partial mock: models the full-pull-then-return behavior (transferFrom of the full amount
- *      followed by a transfer of one tenth back to the caller). Does not model the call record or
- *      any other genesis side effect.
+ *      followed by a transfer of one tenth back to the caller). The preorder / getUAssetByVerseId
+ *      members are inert stubs satisfying the widened interface; tests never exercise them here.
+ *      Does not model the call record or any other genesis side effect.
  */
 contract MockGenesisTransferBackLauncher is IMemeverseLauncher {
     IERC20 internal immutable uAsset;
@@ -86,7 +122,7 @@ contract MockGenesisTransferBackLauncher is IMemeverseLauncher {
         uAsset = IERC20(uAsset_);
     }
 
-    function genesis(uint256, uint128 amountInUAsset, address) external override {
+    function genesis(uint256, uint256 amountInUAsset, address) external override {
         if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
             revert MockGenesisLauncher.GenesisTransferFailed();
         }
@@ -94,19 +130,34 @@ contract MockGenesisTransferBackLauncher is IMemeverseLauncher {
             revert MockGenesisLauncher.GenesisTransferFailed();
         }
     }
+
+    function preorder(uint256, uint256, address) external override {}
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(uAsset);
+    }
 }
 
 /**
  * @title MockGenesisRevertingLauncher
  * @notice Mock genesis launcher whose genesis always reverts with a custom error.
  * @dev Partial mock: models a launcher-side failure only (genesis reverts before any uAsset
- *      movement). Does not model the call record, pulls, or any other genesis side effect.
+ *      movement). The preorder / getUAssetByVerseId members are inert stubs satisfying the widened
+ *      interface. Does not model the call record, pulls, or any other genesis side effect.
  */
 contract MockGenesisRevertingLauncher is IMemeverseLauncher {
     error GenesisLauncherReverted();
 
-    function genesis(uint256, uint128, address) external pure override {
+    function genesis(uint256, uint256, address) external pure override {
         revert GenesisLauncherReverted();
+    }
+
+    function preorder(uint256, uint256, address) external pure override {
+        revert GenesisLauncherReverted();
+    }
+
+    function getUAssetByVerseId(uint256) external view override returns (address) {
+        return address(0);
     }
 }
 
@@ -114,10 +165,11 @@ contract MockGenesisRevertingLauncher is IMemeverseLauncher {
  * @title MockPOLend
  * @notice Mock POLend leveraged-genesis market: quotes borrowed debt at a fixed rate and pulls
  *         the interest from the payer.
- * @dev Partial mock: models only the POLend seams the router's leveraged-genesis entry depends
+ * @dev Partial mock: models only the POLend seams the router's leveraged-genesis entries depend
  *      on — the marketUAsset binding read, the exact interest pull via transferFrom, the
- *      user-keyed interest ledger, and the borrowedAmount quote at a fixed rate. Does not model
- *      market states, debt caps, launcher reads, credit paths, or settlement.
+ *      user-keyed interest ledger, the borrowedAmount quote at a fixed rate, and the credit-funded
+ *      leg's cached-token pull. Does not model market states, debt caps, launcher reads, or
+ *      settlement.
  */
 contract MockPOLend is IPOLendGenesis {
     using Math for uint256;
@@ -133,6 +185,12 @@ contract MockPOLend is IPOLendGenesis {
     address public lastPayer;
     address public lastUser;
 
+    address internal creditFactory_;
+    address internal creditToken_;
+    uint256 internal lastCreditVerseId;
+    uint256 internal lastCreditAmount;
+    address internal lastCreditUser;
+
     constructor(address uAsset_, uint256 interestRate_) {
         uAsset = uAsset_;
         interestRate = interestRate_;
@@ -146,6 +204,15 @@ contract MockPOLend is IPOLendGenesis {
         pullHalf = true;
     }
 
+    function setCreditWiring(address factory_, address cachedCreditToken_) external {
+        creditFactory_ = factory_;
+        creditToken_ = cachedCreditToken_;
+    }
+
+    function creditFactory() external view returns (address) {
+        return creditFactory_;
+    }
+
     function leveragedGenesis(uint256 verseId, uint256 interestAmount, address user)
         external
         returns (uint256 borrowedAmount)
@@ -155,5 +222,39 @@ contract MockPOLend is IPOLendGenesis {
         leveragedInterestPaid[verseId][user] += interestAmount;
         (lastPayer, lastUser) = (msg.sender, user);
         IERC20(uAsset).transferFrom(msg.sender, address(this), pullHalf ? interestAmount / 2 : interestAmount);
+    }
+
+    function leveragedGenesisWithCredit(uint256 verseId, uint256 creditAmount, address user)
+        external
+        returns (uint256 borrowedAmount)
+    {
+        // 热路径按缓存 token 拉取，模拟真实 POLend 的 market.creditToken 缓存语义。
+        IERC20(creditToken_).transferFrom(msg.sender, address(this), creditAmount);
+        lastCreditVerseId = verseId;
+        lastCreditAmount = creditAmount;
+        lastCreditUser = user;
+        borrowedAmount = creditAmount;
+    }
+
+    function creditSnapshot() external view returns (uint256, uint256, address) {
+        return (lastCreditVerseId, lastCreditAmount, lastCreditUser);
+    }
+}
+
+/**
+ * @title MockCreditFactory
+ * @notice Mock GenesisCreditFactory returning one fixed credit token for every uAsset family.
+ * @dev Minimal stand-in for the router's credit-token resolution leg (`creditOf`); no CREATE3
+ *      derivation is modeled.
+ */
+contract MockCreditFactory {
+    address internal credit;
+
+    constructor(address c) {
+        credit = c;
+    }
+
+    function creditOf(address) external view returns (address) {
+        return credit;
     }
 }

@@ -324,7 +324,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         // Shared launcher-domain bound (GenesisGateLib): reject an oversized mint before granting any allowance.
         GenesisGateLib.requireLauncherAmount(mintedUAsset);
         _approveExact(uAsset, launcher, mintedUAsset);
-        IMemeverseLauncher(launcher).genesis(verseId, uint128(mintedUAsset), genesisUser);
+        IMemeverseLauncher(launcher).genesis(verseId, mintedUAsset, genesisUser);
         GenesisGateLib.assertFullConsumption(uAsset, launcher, uAssetBalanceBefore);
     }
 

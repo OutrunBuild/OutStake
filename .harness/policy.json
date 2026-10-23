@@ -189,7 +189,8 @@
         "test/upgradeable/OutrunRouterFuzzUpgradeable.t.sol",
         "test/upgradeable/RouterProxyIntegration.t.sol",
         "test/upgradeable/RouterReentrancyGuardUpgradeable.t.sol",
-        "test/upgradeable/RouterEndToEndConservationUpgradeable.t.sol"
+        "test/upgradeable/RouterEndToEndConservationUpgradeable.t.sol",
+        "test/upgradeable/OutrunRouterCrossRepoSelectors.t.sol"
       ],
       "rules": [
         {

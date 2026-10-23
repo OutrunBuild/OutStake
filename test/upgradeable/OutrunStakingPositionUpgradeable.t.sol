@@ -383,9 +383,9 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         assertEq(uAsset.allowance(address(position), address(genesisLauncher)), 0, "launcher allowance fully consumed");
         (, uint256 amountInMintedAfter) = uAsset.mintingStatusTable(address(position));
         assertEq(amountInMintedAfter - amountInMintedBefore, expectedMinted, "minter ledger records the genesis mint");
-        (uint256 lastVerseId, uint128 lastAmount, address lastUser) = genesisLauncher.snapshot();
+        (uint256 lastVerseId, uint256 lastAmount, address lastUser) = genesisLauncher.snapshot();
         assertEq(lastVerseId, VERSE_ID, "verseId forwarded unchanged");
-        assertEq(lastAmount, uint128(expectedMinted), "launcher received uint128(minted)");
+        assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(lastUser, user, "genesis user credited");
         assertEq(uAsset.balanceOf(address(genesisLauncher)), expectedMinted, "launcher holds exactly the minted amount");
     }
@@ -498,7 +498,7 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
 
         (,, uint256 principalDebt,,) = position.positions(positionId);
         assertEq(principalDebt, MAX_UINT128, "principal debt equals exactly the uint128 cap");
-        (, uint128 lastAmount,) = genesisLauncher.snapshot();
+        (, uint256 lastAmount,) = genesisLauncher.snapshot();
         assertEq(lastAmount, type(uint128).max, "launcher received exactly the uint128 cap");
     }
 

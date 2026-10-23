@@ -440,9 +440,9 @@ contract OutrunRouterTest is Test {
         assertEq(underlying.balanceOf(user), userUnderlyingBefore - amountIn, "caller did not pay the full reserve");
         assertEq(underlying.balanceOf(address(psm)), amountIn, "PSM holds the taken reserve");
         assertEq(IPSM(address(psm)).netUAssetMinted(), expectedOut, "PSM net minted ledger");
-        (uint256 lastVerseId, uint128 lastAmount, address lastUser) = launcher.snapshot();
+        (uint256 lastVerseId, uint256 lastAmount, address lastUser) = launcher.snapshot();
         assertEq(lastVerseId, VERSE_ID, "verse id forwarded");
-        assertEq(lastAmount, uint128(expectedOut), "launcher received uint128(minted)");
+        assertEq(lastAmount, expectedOut, "launcher received the minted amount");
         assertEq(lastUser, user, "genesis user credited");
         assertEq(uAsset.balanceOf(address(launcher)), expectedOut, "launcher holds the minted uAsset");
         _assertGenesisLeftNoResidual(address(underlying));
@@ -460,8 +460,8 @@ contract OutrunRouterTest is Test {
 
         assertEq(address(psmNative).balance, amountIn, "native reserve stayed in the PSM");
         assertEq(uAsset.balanceOf(address(launcher)), amountIn, "launcher holds the minted uAsset");
-        (, uint128 lastAmount,) = launcher.snapshot();
-        assertEq(lastAmount, uint128(amountIn), "launcher received uint128(minted)");
+        (, uint256 lastAmount,) = launcher.snapshot();
+        assertEq(lastAmount, amountIn, "launcher received the minted amount");
         _assertGenesisLeftNoResidual(NATIVE);
     }
 
@@ -510,7 +510,7 @@ contract OutrunRouterTest is Test {
         vm.prank(user);
         router.genesisByPSM(address(uAsset), address(underlying), MAX_UINT128, VERSE_ID, user);
 
-        (, uint128 lastAmount,) = launcher.snapshot();
+        (, uint256 lastAmount,) = launcher.snapshot();
         assertEq(lastAmount, type(uint128).max, "launcher received exactly the uint128 cap");
         assertEq(uAsset.balanceOf(address(launcher)), MAX_UINT128, "launcher holds the full cap amount");
     }
@@ -688,9 +688,9 @@ contract OutrunRouterTest is Test {
         assertEq(uAsset.allowance(address(position), address(launcher)), 0, "SP launcher allowance cleared");
         assertEq(sy.balanceOf(user), userSYBefore - amountInSY, "caller paid the staked SY");
         assertEq(sy.balanceOf(address(position)), amountInSY, "SP holds the staked SY");
-        // Borrowed == consumed: principal debt == uint128 forwarded amount == launcher holding, wei-exact.
-        (, uint128 lastAmount,) = launcher.snapshot();
-        assertEq(lastAmount, uint128(expectedMinted), "launcher received uint128(minted)");
+        // Borrowed == consumed: principal debt == forwarded amount == launcher holding, wei-exact.
+        (, uint256 lastAmount,) = launcher.snapshot();
+        assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(uAsset.balanceOf(address(launcher)), expectedMinted, "launcher holds exactly the minted amount");
         assertEq(expectedMinted, principalDebt, "borrowed amount must equal the genesis consumption");
         _assertGenesisLeftNoResidual(address(sy));
@@ -745,7 +745,7 @@ contract OutrunRouterTest is Test {
 
         (,, uint256 principalDebt,,) = position.positions(1);
         assertEq(principalDebt, MAX_UINT128, "principal debt equals exactly the uint128 cap");
-        (, uint128 lastAmount,) = launcher.snapshot();
+        (, uint256 lastAmount,) = launcher.snapshot();
         assertEq(lastAmount, type(uint128).max, "launcher received exactly the uint128 cap");
     }
 
@@ -892,9 +892,9 @@ contract OutrunRouterTest is Test {
         assertEq(uAsset.allowance(address(position), address(launcher)), 0, "SP launcher allowance cleared");
         assertEq(underlying.balanceOf(user), userUnderlyingBefore - tokenAmount, "caller paid the input token");
         assertEq(sy.balanceOf(address(position)), tokenAmount, "SP holds the staked SY");
-        // Borrowed == consumed: principal debt == uint128 forwarded amount == launcher holding, wei-exact.
-        (, uint128 lastAmount,) = launcher.snapshot();
-        assertEq(lastAmount, uint128(expectedMinted), "launcher received uint128(minted)");
+        // Borrowed == consumed: principal debt == forwarded amount == launcher holding, wei-exact.
+        (, uint256 lastAmount,) = launcher.snapshot();
+        assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(uAsset.balanceOf(address(launcher)), expectedMinted, "launcher holds exactly the minted amount");
         assertEq(expectedMinted, principalDebt, "borrowed amount must equal the genesis consumption");
         _assertGenesisLeftNoResidual(address(underlying));
@@ -921,8 +921,8 @@ contract OutrunRouterTest is Test {
         (, uint256 syStaked, uint256 principalDebt,,) = position.positions(1);
         assertEq(syStaked, tokenAmount, "SY collateral recorded");
         // Borrowed == consumed, wei-exact on the native leg too.
-        (, uint128 lastAmount,) = launcher.snapshot();
-        assertEq(lastAmount, uint128(expectedMinted), "launcher received uint128(minted)");
+        (, uint256 lastAmount,) = launcher.snapshot();
+        assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(uAsset.balanceOf(address(launcher)), expectedMinted, "launcher holds exactly the minted amount");
         assertEq(
             principalDebt, uAsset.balanceOf(address(launcher)), "borrowed amount must equal the genesis consumption"
@@ -1088,7 +1088,7 @@ contract OutrunRouterTest is Test {
 
         (,, uint256 principalDebt,,) = position.positions(1);
         assertEq(principalDebt, MAX_UINT128, "principal debt equals exactly the uint128 cap");
-        (, uint128 lastAmount,) = launcher.snapshot();
+        (, uint256 lastAmount,) = launcher.snapshot();
         assertEq(lastAmount, type(uint128).max, "launcher received exactly the uint128 cap");
     }
 

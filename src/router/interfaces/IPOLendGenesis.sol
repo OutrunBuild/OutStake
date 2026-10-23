@@ -19,4 +19,13 @@ interface IPOLendGenesis {
     /// @param verseId Launcher-side verse identifier.
     /// @return uAsset Address of the market's bound uAsset.
     function marketUAsset(uint256 verseId) external view returns (address);
+
+    /// @notice Same accounting as `leveragedGenesis`, but interest is paid in GenesisCredit pulled
+    ///      from the caller (the router); the position is credited to `user`.
+    function leveragedGenesisWithCredit(uint256 verseId, uint256 creditAmount, address user)
+        external
+        returns (uint256 borrowedAmount);
+
+    /// @notice Returns the GenesisCreditFactory address this POLend resolves credit tokens through.
+    function creditFactory() external view returns (address);
 }

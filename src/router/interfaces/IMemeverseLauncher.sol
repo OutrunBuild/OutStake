@@ -21,5 +21,25 @@ interface IMemeverseLauncher {
      * @param amountInUAsset Amount of uAsset committed to genesis.
      * @param user User credited for the genesis action.
      */
-    function genesis(uint256 verseId, uint128 amountInUAsset, address user) external;
+    function genesis(uint256 verseId, uint256 amountInUAsset, address user) external;
+
+    /**
+     * @notice Deposits uAsset into the launcher's preorder pool for `user`.
+     * @dev The caller transfers uAsset to itself and approves this launcher the exact amount in the
+     *      same transaction, then invokes this function; the caller asserts full consumption after
+     *      the call. Any validity rules (stage, capacity) are launcher-side; callers treat `verseId`
+     *      as opaque and forward it unchanged.
+     * @param verseId Opaque launcher-assigned identifier for the target verse.
+     * @param amountInUAsset Amount of uAsset committed to preorder.
+     * @param user User credited for the preorder participation.
+     */
+    function preorder(uint256 verseId, uint256 amountInUAsset, address user) external;
+
+    /**
+     * @notice Returns the uAsset a verse is bound to; reverts for an unknown verseId on the real
+     *      launcher. Callers use it to fail closed on an invalid verse before any funds move.
+     * @param verseId Launcher-assigned identifier for the target verse.
+     * @return uAsset Address of the verse's genesis fund token.
+     */
+    function getUAssetByVerseId(uint256 verseId) external view returns (address);
 }
