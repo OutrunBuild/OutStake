@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IOutrunRouter} from "./interfaces/IOutrunRouter.sol";
 import {IMemeverseLauncher} from "./interfaces/IMemeverseLauncher.sol";
 import {IPOLendGenesis} from "./interfaces/IPOLendGenesis.sol";
+import {IGenesisCreditFactory} from "./interfaces/IGenesisCreditFactory.sol";
 import {IPSM} from "../psm/interfaces/IPSM.sol";
 import {IStandardizedYield} from "../yield/interfaces/IStandardizedYield.sol";
 import {IERC20, TokenHelper, NativeAmountMismatch} from "../libraries/TokenHelper.sol";
@@ -526,8 +527,14 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      *      under the strict full-consumption post-condition, mirroring `leveragedGenesisByPSM`'s
      *      tail. The PSM-funded branch mints through the registered PSM and keeps that same
      *      explicit tail (it does not reuse `_genesisTail`, whose consumer is hardcoded to
-     *      `launcher.genesis`). The credit-funded branch lands separately and fails closed with
-     *      `FundSourceNotAllowed` until then.
+     *      `launcher.genesis`). The credit-funded branch resolves the family's credit token
+     *      through the POLend-registered factory (`IGenesisCreditFactory(...).creditOf(uAsset)`,
+     *      the deterministic per-uAsset derivation in production); a zero resolution reverts
+     *      `NoCreditForUAsset` before any pull, then the pull / exact-approve /
+     *      `leveragedGenesisWithCredit` / full-consumption sequence runs with the same discipline
+     *      as the uAsset branch. The router approves the factory-resolved token while POLend's
+     *      hot path pulls its own cached market token, so a factory/cache divergence surfaces as
+     *      POLend's own transfer failure (fail-closed) instead of leaving a residual.
      * @param uAsset The verse's uAsset resolved by the preamble.
      * @param verseId POLend market identifier the interest is booked against.
      * @param f Genesis-leg funding instruction (already validated by the preamble).
@@ -559,8 +566,15 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             IPOLendGenesis(polend_).leveragedGenesis(verseId, minted, user);
             GenesisGateLib.assertFullConsumption(uAsset, polend_, baseline);
         } else {
-            // Credit-funded branch not implemented yet; fails closed.
-            revert FundSourceNotAllowed(f.source, true);
+            // Credit 腿：credit 代币从 POLend 的 factory 确定性解析（CREATE3 by uAsset），
+            // 精确 approve + 全额消费断言与 uAsset 腿同一纪律。
+            address credit = IGenesisCreditFactory(IPOLendGenesis(polend_).creditFactory()).creditOf(uAsset);
+            if (credit == address(0)) revert NoCreditForUAsset(uAsset);
+            uint256 baseline = IERC20(credit).balanceOf(address(this));
+            _transferFrom(IERC20(credit), msg.sender, address(this), f.amount);
+            _approveExact(credit, polend_, f.amount);
+            IPOLendGenesis(polend_).leveragedGenesisWithCredit(verseId, f.amount, user);
+            GenesisGateLib.assertFullConsumption(credit, polend_, baseline);
         }
     }
 

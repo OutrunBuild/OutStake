@@ -146,7 +146,9 @@ interface IOutrunRouter {
      */
     error FundFieldMustBeZero(FundSource source);
 
-    /// @notice Thrown when no GenesisCredit token is registered for the uAsset family.
+    /// @notice Thrown by `leveragedGenesisAndPreorder`'s credit-funded genesis leg when no
+    ///      GenesisCredit token is registered for the uAsset family; fails closed before any funds
+    ///      move.
     error NoCreditForUAsset(address uAsset);
 
     /**
@@ -311,16 +313,20 @@ interface IOutrunRouter {
      * @notice Atomically runs a leveraged-genesis interest leg and a preorder leg for `user` against
      *      one verse, each leg funded by its own `FundInput`.
      * @dev Caller-funded path. Same shared preamble as `genesisAndPreorder` with the leveraged family
-     *      matrix (the genesis leg rejects `Stake`; the preorder leg accepts only `UAsset` and `Psm`),
-     *      then the POLend family gate runs source-independently before any funds move: a zero
-     *      `polend` reverts `PolendNotSet` and `IPOLendGenesis(polend).marketUAsset(verseId)` must
-     *      equal the launcher-resolved uAsset (an unregistered verse reads address(0) and reverts
-     *      `PolendMarketUAssetMismatch`), mirroring `leveragedGenesisByPSM`. The interest leg then
-     *      funds `IPOLendGenesis.leveragedGenesis` (crediting the borrowed debt to `user`) and the
-     *      preorder leg funds `IMemeverseLauncher.preorder`; every leg must consume its uAsset in
-     *      full or the whole call reverts (GenesisGateLib full-consumption assertion). PSM- and
-     *      credit-funded branches land incrementally; until then those sources revert
-     *      `FundSourceNotAllowed` before any funds move.
+     *      matrix (the genesis leg accepts `UAsset`, `Psm`, and `Credit` and rejects `Stake`; the
+     *      preorder leg accepts only `UAsset` and `Psm`), then the POLend family gate runs
+     *      source-independently before any funds move: a zero `polend` reverts `PolendNotSet` and
+     *      `IPOLendGenesis(polend).marketUAsset(verseId)` must equal the launcher-resolved uAsset
+     *      (an unregistered verse reads address(0) and reverts `PolendMarketUAssetMismatch`),
+     *      mirroring `leveragedGenesisByPSM`. The interest leg books its source into POLend — the
+     *      uAsset-funded branch pulls the caller's uAsset, the PSM-funded branch mints through the
+     *      registered PSM, and the credit-funded branch resolves the family's credit token through
+     *      `IGenesisCreditFactory(IPOLendGenesis(polend).creditFactory()).creditOf(uAsset)` (a zero
+     *      resolution reverts `NoCreditForUAsset` before any funds move) and pays it via
+     *      `leveragedGenesisWithCredit` — each branch approving exactly its amount to `polend` and
+     *      crediting the borrowed debt to `user`; the preorder leg funds
+     *      `IMemeverseLauncher.preorder`. Every leg must consume its token in full or the whole
+     *      call reverts (GenesisGateLib full-consumption assertion).
      * @param verseId POLend market identifier the interest is booked against; the router resolves it
      *      to the verse's uAsset and forwards it unchanged.
      * @param genesisInput Funding instruction for the leveraged-genesis interest leg.

@@ -21,7 +21,8 @@ import {
     MockGenesisEmptyLauncher,
     MockGenesisTransferBackLauncher,
     MockGenesisRevertingLauncher,
-    MockPOLend
+    MockPOLend,
+    MockCreditFactory
 } from "./mocks/LauncherMocks.sol";
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset} from "./mocks/RouterMocks.sol";
 
@@ -1265,32 +1266,48 @@ contract OutrunRouterTestNativeValueGate is Test {
  *     of `genesisAndPreorder` (combination #1) and `leveragedGenesisAndPreorder` (combination #7),
  *     the PSM-funded legs of all three runners (combinations #2, #4, #10) with the summed
  *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
- *     credited by the preorder leg), and the stake-funded genesis legs of the normal family
+ *     credited by the preorder leg), the stake-funded genesis legs of the normal family
  *     (combinations #5, #6: the tokenIn deposit sub-path through SY.deposit with both slippage
- *     floors, and the token == canonical-SY direct charge in SY units that skips the deposit).
+ *     floors, and the token == canonical-SY direct charge in SY units that skips the deposit),
+ *     and the credit-funded leveraged interest legs (combinations #11, #12: factory-resolved
+ *     credit pull escrowed by POLend, the cached-token divergence fail-closed, and the
+ *     unresolved-factory rejection).
  * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
  *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
  *     fixture (so every parent test re-runs in this context) and extends it only with the
  *     test-owned uAsset minting cap. The POLend market is wired per-test via
  *     `_wirePolendFixture` instead of in setUp: inherited parent tests assert a pristine
- *     `router.polend() == address(0)` start.
+ *     `router.polend() == address(0)` start. The credit token and its factory are setUp-scoped
+ *     (inert to the parent tests); only the POLend-side wiring rides `_wirePolendFixture`.
  */
 contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
     MockPOLend internal polend;
+    RouterMockERC20 internal credit;
+    MockCreditFactory internal creditFactory;
 
     function setUp() public virtual override {
         super.setUp();
         // This contract owns the mock uAsset: open a minting cap so tests can mint user-side uAsset
         // (mirrors the parent fixture's cap grant to the position).
         uAsset.setMintingCap(address(this), type(uint128).max);
+        // Credit fixture: the family credit token resolved by the mock factory and escrowed by
+        // POLend. RouterMockERC20 exposes an open faucet mint, so the user-side pile is minted
+        // directly here (individual tests may rewire the factory or the cached token).
+        credit = new RouterMockERC20("Mock Genesis Credit", "mGC");
+        creditFactory = new MockCreditFactory(address(credit));
+        credit.mint(user, 1e24);
+        vm.prank(user);
+        credit.approve(address(router), type(uint256).max);
     }
 
     /// @dev Wires the leveraged-family fixture: a POLend market bound to the family uAsset, serving
-    ///      the verse. Per-test (not setUp) so inherited parent tests keep their pristine
-    ///      `router.polend() == address(0)` assumption.
+    ///      the verse, with its credit resolution pointed at the setUp-scoped factory and its hot
+    ///      path pulling the cached credit token. Per-test (not setUp) so inherited parent tests
+    ///      keep their pristine `router.polend() == address(0)` assumption.
     function _wirePolendFixture() internal {
         polend = new MockPOLend(address(uAsset), 1e17);
         polend.setMarketUAsset(VERSE_ID, address(uAsset));
+        polend.setCreditWiring(address(creditFactory), address(credit));
         vm.prank(owner);
         router.setPolend(address(polend));
     }
@@ -1447,6 +1464,42 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(
             uAsset.balanceOf(address(launcher)), syIn + preorderReserve, "parity stake + fee-free preorder delivered"
         );
+    }
+
+    /// @notice 组合 #11：Credit 利息腿 + UAsset 预购；credit 全额进入 POLend。
+    function test_CombinedCreditInterestAndUAssetPreorder() external {
+        _wirePolendFixture();
+        uint256 creditIn = 6e18;
+        uAsset.mint(user, 100e18);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(creditIn), _fundUAsset(1e18), user);
+        vm.stopPrank();
+        (, uint256 lastCreditAmount,) = polend.creditSnapshot();
+        assertEq(lastCreditAmount, creditIn, "polend received the credit interest");
+        assertEq(credit.balanceOf(address(polend)), creditIn, "credit escrowed in polend");
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(p, 1e18, "preorder credited");
+    }
+
+    /// @notice Review Focus 5：factory 换绑后 POLend 缓存 token 与 router 解析不一致 → POLend 内
+    ///         safeTransferFrom（router 对缓存 token 零 allowance）整笔回滚。
+    function test_CombinedCreditLegCachedTokenDivergenceReverts() external {
+        _wirePolendFixture();
+        RouterMockERC20 divergent = new RouterMockERC20("Divergent Credit", "dGC");
+        polend.setCreditWiring(address(creditFactory), address(divergent));
+        vm.prank(user);
+        vm.expectRevert();
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);
+    }
+
+    /// @notice 该 uAsset 无 credit 合约：解析为零即拒，先于任何拉取。
+    function test_RevertIf_CombinedCreditUnresolved() external {
+        _wirePolendFixture();
+        polend.setCreditWiring(address(new MockCreditFactory(address(0))), address(credit));
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunRouter.NoCreditForUAsset.selector, address(uAsset)));
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);
     }
 
     /// @notice native 总量错配（少付）整笔拒绝。
