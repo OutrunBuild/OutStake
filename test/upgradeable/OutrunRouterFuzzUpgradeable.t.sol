@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import {Test} from "forge-std/Test.sol";
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
+import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {OutrunPSMUpgradeable} from "../../src/psm/OutrunPSMUpgradeable.sol";
 import {IPSM} from "../../src/psm/interfaces/IPSM.sol";
@@ -19,7 +20,10 @@ import {RouterMockSY, RouterMockERC20, RouterMockUAsset} from "./mocks/RouterMoc
  *     launcher consumes the full mint), and the PSM-gate genesis path (`genesisByPSM`)
  *     deterministically forwards the fee-adjusted face-value mint in full.
  *     Deterministic edges, registry reverts, native-leg value contracts, and pause behavior live in
- *     the OutrunRouterUpgradeable.t.sol suite; this file only sweeps randomized amounts.
+ *     the OutrunRouterUpgradeable.t.sol suite; this file only sweeps randomized amounts. The combined
+ *     entrypoint `genesisAndPreorder` is swept the same way: UAsset+UAsset legs must each credit the
+ *     launcher in full with zero router residual, and the PSM preorder leg must book exactly its
+ *     `quoteMint` output across reserve ranges.
  */
 contract OutrunRouterFuzzTest is Test {
     RouterMockERC20 internal underlying;
@@ -71,6 +75,9 @@ contract OutrunRouterFuzzTest is Test {
         router.setPsmForUAsset(address(uAsset), address(underlying), address(psm));
 
         uAsset.setMintingCap(address(position), type(uint128).max);
+        // Combined-entrypoint fuzzers fund the UAsset legs user-side: the mock's `mint` is gated on
+        // the caller's own cap entry, so this test contract (the mock's owner) needs an open face.
+        uAsset.setMintingCap(address(this), type(uint128).max);
         // Path B (CDP gate) is a thin forward into `SP.stakeForGenesis`: wire the same
         // full-consumption mock launcher as the SP's genesis target so parity holds.
         vm.prank(owner);
@@ -123,5 +130,43 @@ contract OutrunRouterFuzzTest is Test {
         assertEq(uAsset.balanceOf(address(router)), 0, "router kept residual uAsset");
         assertEq(uAsset.allowance(address(router), address(launcher)), 0, "launcher allowance not cleared");
         assertEq(underlying.allowance(address(router), address(psm)), 0, "PSM reserve allowance not cleared");
+    }
+
+    /// @notice UAsset+UAsset 组合金额扫描：双腿各自足额入账、零残留。
+    function testFuzz_CombinedUAssetGenesisAndPreorderAmounts(uint96 genesisAmount, uint96 preorderAmount) external {
+        genesisAmount = uint96(bound(genesisAmount, 1, 1e24));
+        preorderAmount = uint96(bound(preorderAmount, 1, 1e24));
+        uAsset.mint(user, uint256(genesisAmount) + preorderAmount);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(genesisAmount), _fundUAsset(preorderAmount), user);
+        vm.stopPrank();
+        assertEq(uAsset.balanceOf(address(launcher)), uint256(genesisAmount) + preorderAmount, "both legs credited");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
+    }
+
+    /// @notice PSM 预购腿 fee 数学扫描：预购额恒等于 quoteMint。
+    function testFuzz_CombinedPsmPreorderFeeMath(uint96 reserveIn) external {
+        // Upper bound stays at the caller's 1e24 underlying fixture balance.
+        reserveIn = uint96(bound(reserveIn, 1, 1e24));
+        uAsset.mint(user, 1e24);
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), _fundPsm(address(underlying), reserveIn), user);
+        vm.stopPrank();
+        (, uint256 p,) = launcher.preorderSnapshot();
+        assertEq(p, IPSM(address(psm)).quoteMint(reserveIn), "preorder booked the quoteMint output");
+    }
+
+    // --------------------------------------------------------------------------
+    // FundInput helpers
+    // --------------------------------------------------------------------------
+
+    function _fundUAsset(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.UAsset, address(0), amount, address(0), 0, 0);
+    }
+
+    function _fundPsm(address reserve, uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Psm, reserve, amount, address(0), 0, 0);
     }
 }
