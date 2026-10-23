@@ -1,12 +1,12 @@
 # OutStake Router And User Flows
 
-> 状态：现行行为规格，已落地（genesis 双路径三入口：路径 A 维持 router 侧 PSM 门 `genesisByPSM` 与 `psmForUAsset` registry；路径 B（CDP 门）为薄转发便利层——`genesisByToken`（token 计价正门）/ `genesisBySY` 转发至 SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（v1 唯一铸造入口、面值/价值平价铸出），全额消费断言为 SP 侧原生）。自由质押路径（`stakeFromToken`/`stakeFromSY`）随 v1 genesis-only 决策删除（pre-deployment ABI break 免费，禁用 flag 方案否决——不留死代码）。另有双门之外的杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`（reserve 经 PSM 面值铸 uAsset 后全额作为利息交 Memeverse 侧 POLend 杠杆创世），独立成节见「杠杆创世门」。position 侧语义真源为 `docs/spec/position/accounting.md`，PSM 侧为 `docs/spec/psm/peg-stability-module.md`。
+> 状态：现行行为规格，已落地（genesis 双路径三入口：路径 A 维持 router 侧 PSM 门 `genesisByPSM` 与 `psmForUAsset` registry；路径 B（CDP 门）为薄转发便利层——`genesisByToken`（token 计价正门）/ `genesisBySY` 转发至 SP 原生物理门 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（v1 唯一铸造入口、面值/价值平价铸出），全额消费断言为 SP 侧原生）。自由质押路径（`stakeFromToken`/`stakeFromSY`）随 v1 genesis-only 决策删除（pre-deployment ABI break 免费，禁用 flag 方案否决——不留死代码）。另有双门之外的杠杆创世门 `OutrunRouter.sol::leveragedGenesisByPSM`（reserve 经 PSM 面值铸 uAsset 后全额作为利息交 Memeverse 侧 POLend 杠杆创世），独立成节见「杠杆创世门」；双组合参与入口 `OutrunRouter.sol::genesisAndPreorder`（普通族）/ `OutrunRouter.sol::leveragedGenesisAndPreorder`（杠杆族）以单笔原子调用完成创世腿+预购腿（见「组合参与入口（创世+预购）」节）。position 侧语义真源为 `docs/spec/position/accounting.md`，PSM 侧为 `docs/spec/psm/peg-stability-module.md`。
 
 > 现状：单实例单储备已落地（三实例 + (uAsset, reserveToken) 配对绑定），详见下文各节。
 
 ## 1. 文档目的
 
-本文档整理 `OutrunRouter` 与 `OutrunStakingPositionUpgradeable`、`OutrunPSMUpgradeable` 的用户流程：token / native 与 `SY` 的双向兑换、genesis 双路径（PSM 门 / CDP 门）、双门之外的杠杆创世门（`OutrunRouter.sol::leveragedGenesisByPSM`，见「杠杆创世门」节）与 preview 语义。本文只记录本地代码和现有测试能直接证明的行为（目标态部分以各模块 spec 为准），并记录 router 与 proxy-backed products 的边界；涉及 mixed-decimals 双段换算与 rounding 的条目均为既定行为，按实现语义直接描述。
+本文档整理 `OutrunRouter` 与 `OutrunStakingPositionUpgradeable`、`OutrunPSMUpgradeable` 的用户流程：token / native 与 `SY` 的双向兑换、genesis 双路径（PSM 门 / CDP 门）、双门之外的杠杆创世门（`OutrunRouter.sol::leveragedGenesisByPSM`，见「杠杆创世门」节）、组合参与入口（创世+预购双入口，见「组合参与入口（创世+预购）」节）与 preview 语义。本文只记录本地代码和现有测试能直接证明的行为（目标态部分以各模块 spec 为准），并记录 router 与 proxy-backed products 的边界；涉及 mixed-decimals 双段换算与 rounding 的条目均为既定行为，按实现语义直接描述。
 
 ## 1.1 Upgradeable readiness
 
@@ -118,7 +118,7 @@ genesis 是把新供给的 `uAsset` 原子地交给 `IMemeverseLauncher.genesis`
 | 3 | `genesisUser != address(0)` | `IOutrunRouter.sol::ZeroInput()` | router 入口前置（`_genesisTail` 直透外部 launcher，零地址回退取决于外部实现，故入口前置） |
 | 4 | reserve 拉款口径：NATIVE 腿 `msg.value == amountIn`，ERC20 腿 `msg.value == 0` | `NativeAmountMismatch()` | `TokenHelper.sol::_transferIn` |
 | 5 | PSM 侧入口校验（透传，不改写） | `ZeroInput()`（零额或铸出额 floor 为 0）/ `StockCapExceeded` / `NotReserveMinter`（uAsset owner 撤销该实例储备 minter 登记） / uAsset 暂停时 reserveMint 的 `EnforcedPause` | `OutrunPSMUpgradeable.sol::mint` |
-| 6 | `amountOut > type(uint128).max` | `InvalidParam()` | router（launcher 参数域为 uint128） |
+| 6 | `amountOut > type(uint128).max` | `InvalidParam()` | router（launcher ABI 参数为 uint256，SP/router 侧仍以 uint128 数值域自守卫（`InvalidParam`）） |
 | 7 | genesis 后置断言（§7.3） | `GenesisUAssetNotConsumed(residualBalance, residualAllowance)` | router |
 
 资金流逐步：
@@ -226,6 +226,43 @@ SP 侧语义（完整规格见 `docs/spec/position/accounting.md` §3.1 与 `doc
 - 错误面补充：`polend` 非零但无代码（EOA 误配）时 `marketUAsset(verseId)` 的 staticcall 以底层调用/解码错误回退、非具名错误（对齐 §1.2.1 复读条款惯例），不做 code-size 检查（allowlisting 为 owner 治理职责）。
 - 重入隔离：入口挂 `nonReentrant`（transient guard，§1.2），覆盖 `_transferIn` 拉款回调、PSM mint 与 `polend.leveragedGenesis` 外部调用窗口；POLend 入口自带 `whenNotPaused` 与自身 guard，与 router 侧 guard 相互独立（transient slot 按合约实例隔离，同 §7.3）。任一环节失败整笔回滚（含 PSM 侧净铸出台账与储备转移），router 无跨交易状态、失败后无需清理。
 
+### 组合参与入口（创世+预购）：`genesisAndPreorder` / `leveragedGenesisAndPreorder`
+
+双入口把「参与（杠杆）创世」与「参与预购」收敛为单笔原子调用：`OutrunRouter.sol::genesisAndPreorder(verseId, genesisInput, preorderInput, user)`（普通族，`payable nonReentrant`）与 `OutrunRouter.sol::leveragedGenesisAndPreorder(verseId, genesisInput, preorderInput, user)`（杠杆族，`payable nonReentrant`）。单腿参与继续使用现有单腿入口。
+
+**API 与强制零字段**：两腿各以单一 `FundInput` 结构体描述（Pendle router `TokenInput` 式角色命名，不为两个流程位置各造一套结构体），子集约束运行时校验——`FundSource source`（枚举 {UAsset, Psm, Stake, Credit}）、`address token`（Psm 腿为 reserve、Stake 腿为 tokenIn，其余必须 `address(0)`）、`uint256 amount`（UAsset 来源为 uAsset 单位、Credit 来源为 credit 单位）、`address sp`（Stake 专用，其余必须 `address(0)`）、`uint256 minSyOut` 与 `uint256 minUAssetMinted`（Stake 专用，其余必须 0）。不适用字段强制零、不静默忽略——违规回退 `IOutrunRouter.sol::FundFieldMustBeZero(FundSource source)`，前端编码错误 fail-closed。
+
+**族矩阵**（违规回退 `IOutrunRouter.sol::FundSourceNotAllowed(FundSource source, bool leveragedFamily)`）：
+
+| 腿 | 普通族（`genesisAndPreorder`） | 杠杆族（`leveragedGenesisAndPreorder`） |
+| --- | --- | --- |
+| 创世腿 | {UAsset, Psm, Stake} | {UAsset, Psm, Credit} |
+| 预购腿 | {UAsset, Psm} | {UAsset, Psm} |
+
+Credit 仅存在于杠杆族、Stake 仅存在于普通族、预购腿无 Stake/Credit；两腿金额均须 > 0、`user != address(0)`。
+
+**执行序固定创世腿→预购腿**：普通创世计入 `totalNormalFunds`、杠杆创世计入 `getTotalLeveragedDebt`，两者都是预购容量基数（`previewPreorderCapacity`）；先创世后预购保证本交易自身的创世贡献即时扩大本交易的预购容量，消除两笔独立交易之间预购容量被他人抢占的竞态。任一腿 revert 则整笔回滚（原子性，EVM 同交易回滚语义）。
+
+**入口级前置（先于任何资金移动）**：
+
+1. `uAsset = IMemeverseLauncher(memeverseLauncher).getUAssetByVerseId(verseId)`，零值 revert——无效 verse fail-closed。
+2. 两腿 source 合法性（族矩阵）+ 强制零字段 + 金额/`user` 非零校验。
+3. native 总量检查：`msg.value == Σ(来源 ∈ {Psm, Stake} 且 token == NATIVE 的腿的 amount)`，回退 `NativeAmountMismatch()`——双腿可同 native reserve；随后原语以显式 native 参数转发给 `IPSM.mint{value}` / `IStandardizedYield.deposit{value}`，不再逐腿读取 `msg.value`（单腿入口的 `msg.value` 检查等价上移见 §7.6 native 条）。
+4. （仅杠杆族）polend 族级门，与创世腿资金来源无关、先于任何资金移动：`polend != address(0)`（`PolendNotSet()`）+ `IPOLendGenesis(polend).marketUAsset(verseId) == uAsset` 复读（`PolendMarketUAssetMismatch`），与 `OutrunRouter.sol::leveragedGenesisByPSM` 的门序一致（「杠杆创世门」节表第 3-4 行）。
+
+**各来源资金路径与校验门**（全部复用现有内部门，无新增信任面——无新 registry、无新 owner setter、无新 router 事件）：
+
+- UAsset 腿（两族创世腿 / 预购腿）：`GenesisGateLib.requireLauncherAmount(amount)`（uint128 数值上界，approve 前置）→ 从 `msg.sender` 拉取 uAsset（基线为拉取前 router 余额）→ 精确 approve 后按腿调用——普通族创世腿 `IMemeverseLauncher.genesis(verseId, amount, user)`、预购腿 `IMemeverseLauncher.preorder(verseId, amount, user)`、杠杆族创世腿 `IPOLendGenesis.leveragedGenesis(verseId, amount, user)` → `GenesisGateLib.assertFullConsumption` 收尾。
+- Psm 腿（两族创世腿 / 预购腿）：`OutrunRouter.sol::_registeredPsm(uAsset, token)` 配对查表 + uAsset/reserve 双绑定复读（§1.2.1）→ mint 到 router（基线为 mint 前 uAsset 余额）→ 同 UAsset 腿尾段（消费目标按腿而定）。实际预购额 = 扣 `tin` 后 mint 出的 uAsset 数量——`IPSM.quoteMint` 纯函数确定性、与执行恒等，无滑点参数（`tin` 为 owner 可调，前端展示用 `quoteMint`，执行以 mint 结果为准）。
+- Stake 腿（仅普通族创世腿）：`OutrunRouter.sol::_trustedSYWithLauncherParity(sp)` 注册表门（trustedSYForSP + `SP.SY()` 复读 + launcher 对齐，§7.2 表第 1-2 行）；`token == SP 的 canonical SY` 时按 SY 单位直充（等价 `genesisBySY`，不经 `SY.deposit` / `minSyOut`），否则经 `SY.deposit` 换 SY（等价 `genesisByToken` 头部，`minSyOut` 下限生效）；随后 `OutrunRouter.sol::_forwardGenesisToSP` 薄转发 `SP.stakeForGenesis`（`minUAssetMinted` 两级下限保留，同 §7.2.1）——SP 侧自带「铸 uAsset → approve launcher → genesis → 全额消费断言」，router 不经手 uAsset（SP 腿沿用 SP 侧断言）。
+- Credit 腿（仅杠杆族创世腿）：`credit = IGenesisCreditFactory(IPOLendGenesis(polend).creditFactory()).creditOf(uAsset)` 确定性解析，零值回退 `IOutrunRouter.sol::NoCreditForUAsset(uAsset)`（该 uAsset 无 credit 合约）；基线为 router credit 余额，拉取后精确 approve polend → `IPOLendGenesis.leveragedGenesisWithCredit(verseId, amount, user)`，`GenesisGateLib.assertFullConsumption(credit, polend, baseline)` 收尾（该库断言对任意 ERC20 通用，直接复用）；18-dec 校验由 POLend 冷路径自带，router 不重复。credit 换绑时序：factory 换绑后 POLend 市场缓存的 `creditToken` 与 router 解析结果不一致时，POLend 热路径按缓存 token `safeTransferFrom`（router 对该 token 零 allowance）在 POLend 内整笔回滚（fail-closed），router 侧消费断言仅作残留兜底。
+
+**错误面**：复用 `ZeroInput`、`InvalidParam`、`UntrustedRouterTarget`、`UnregisteredPsm`、`PsmBindingMismatch`、`PsmReserveMismatch`、`GenesisLauncherMismatch`、`PolendNotSet`、`PolendMarketUAssetMismatch`、`NativeAmountMismatch`；新增 `IOutrunRouter.sol::FundSourceNotAllowed(FundSource, bool)`（族矩阵违规）、`IOutrunRouter.sol::FundFieldMustBeZero(FundSource)`（强制零字段违规）、`IOutrunRouter.sol::NoCreditForUAsset(address)`（credit 缺失，与 POLend 同名错误语义对齐）。
+
+**滑点边界**：PSM 腿与预购腿无下限参数（PSM 1:1 面值、`quoteMint` 纯函数确定性，同 §7.1 立场）；Stake 腿保留 `minSyOut` + `minUAssetMinted` 两级下限（与 `genesisByToken` 一致，零值均为无保护透传，§8）。
+
+**事件面**：router 不发新增事件——底层 `IPSM.sol::SwapMintForUAsset`、`IOutrunStakeManager.sol::Stake`/`StakeForGenesis`、launcher 侧 `Genesis`/`Preorder`、Memeverse 侧 `LeveragedGenesis`（含 `leveragedGenesisWithCredit` 变体）事件族已完整覆盖索引需求，与现有入口风格一致。
+
 ### 7.3 共享语义：严格消费后置断言（分侧）、uint128 边界、失败回滚
 
 - **后置断言分侧（单一来源 `GenesisGateLib`）**：路径 A 与路径 B 均通过 `GenesisGateLib.sol::assertFullConsumption` 触发同一错误 `GenesisGateLib.GenesisUAssetNotConsumed(residualBalance, residualAllowance)`（等号严格双向，任何方向的偏离都整笔回退）；路径 A 基线为本次交易 PSM mint 之前的 router 快照（`IERC20(uAsset).balanceOf(address(this))` 与 `allowance(address(this), launcher)`），路径 B 基线为 SP 自身铸出前余额（`SP` 对 `genesisLauncher` 的 allowance）。断言基线均为本次交易铸出前快照，因此第三方预先转入的 `uAsset` dust 不进入断言域（router 侧仍可经 `OutrunRouter.sol::sweep` 回收），而 launcher 部分消费或转回仍会整笔回退。两门断言语义同构：授权给 launcher 的精确额度只覆盖本次铸出量、从不覆盖预存余额；在"铸出为唯一保证流入、流出受精确 allowance 上界约束"的不变式下，可达的偏离只会超出基线，余额差值不会下溢。
@@ -250,7 +287,7 @@ SP 侧语义（完整规格见 `docs/spec/position/accounting.md` §3.1 与 `doc
 
 ### 7.6 错误面与下游透传边界
 
-- `NativeAmountMismatch()` 由 `OutrunRouter.sol::_mintSY` 与路径 A / 杠杆创世门共享的 reserve 拉款（经 `OutrunRouter.sol::_psmMintForRouter`）先校验 registry 后委托 `TokenHelper.sol::_transferIn` 完成 router-side 的 native/ERC20 金额检查：native sentinel 要求 `msg.value == amount`，ERC20 输入要求 `msg.value == 0`。该检查先于 transfer、approve 与下游调用；下游 `SYBaseUpgradeable.sol::deposit` 与 `OutrunPSMUpgradeable.sol::mint` 仍有独立的 token / `msg.value` 校验。
+- `NativeAmountMismatch()` 由 `OutrunRouter.sol::_mintSY` 与路径 A / 杠杆创世门共享的 reserve 拉款（经 `OutrunRouter.sol::_psmMintForRouter`）先校验 registry 后委托 `TokenHelper.sol::_transferIn` 完成 router-side 的 native/ERC20 金额检查：native sentinel 要求 `msg.value == amount`，ERC20 输入要求 `msg.value == 0`。组合参与入口落地后原语参数化——`OutrunRouter.sol::_mintSY` / `OutrunRouter.sol::_psmMintForRouter` 增加显式 native 参数转发、不再逐腿读取 `msg.value`，四个单腿入口（`mintSYFromToken` / `genesisByPSM` / `genesisByToken` / `leveragedGenesisByPSM`）改为在入口处做等价 `msg.value` 检查后传参——行为等价：校验条件与失败错误不变，仅检查位置上移到入口（多故障输入的 revert 优先级随检查上移而变化）；组合入口自身的 native 总量校验见「组合参与入口（创世+预购）」节。该检查先于 transfer、approve 与下游调用；下游 `SYBaseUpgradeable.sol::deposit` 与 `OutrunPSMUpgradeable.sol::mint` 仍有独立的 token / `msg.value` 校验。
 - `InvalidParam()` 的 router-side 触发点：`OutrunRouter.sol::_approveExact` 收到非 native token 的 `type(uint256).max`（拒绝无限 allowance），适用于全部五处精确 approve 位点——路径 A 的 reserve approve 与 launcher uAsset approve、token→SY 换换头部（`OutrunRouter.sol::_mintSY`）与 SY→SP 薄转发尾部（`OutrunRouter.sol::_forwardGenesisToSP`）的精确 approve，以及杠杆创世门对 `polend` 的 uAsset approve（杠杆门另与路径 A 共享 reserve approve 位点）；以及路径 A genesis 尾部在铸出量 `amountOut > type(uint128).max` 时回退——发生在 launcher approve 与 `genesis(...)` 调用之前。路径 B 的 uint128 守卫随尾部移至 SP 侧（`OutrunStakingPositionUpgradeable.sol::stakeForGenesis` 对 `mintedUAsset` 检查，`InvalidParam()` 同名透传）；杠杆创世门无 uint128 域守卫（见「杠杆创世门」节）。
 - `memeverseLauncher` 配置为普通存储写入，无 router 侧具名错误；零地址语义见 §7.4。
 - `InsufficientUAssetMinted(uint256 mintedUAsset, uint256 minMinted)` 为单一声明错误：仅由 `IOutrunStakeManager.sol` 声明，唯一触发点在 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis`（实际 `mintedUAsset < minUAssetMinted` 时回退）；router 侧无同名声明、无自有下限检查，路径 B 双入口（`genesisBySY`/`genesisByToken`）经薄转发原样透传，router 不捕获、不改写 revert data。router 侧 `InvalidParam()` 声明仍独立存在（触发点见上条）。路径 A 无此参数（确定性数学无滑点面，§7.1）。
