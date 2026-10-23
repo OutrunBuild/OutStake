@@ -285,9 +285,11 @@ interface IOutrunRouter {
      *      (reverting `FundSourceNotAllowed`: the genesis leg rejects `Credit`, the preorder leg
      *      accepts only `UAsset` and `Psm`) and unused fields must be zero (reverting
      *      `FundFieldMustBeZero`); and `msg.value` must equal the legs' combined native need
-     *      (reverting `NativeAmountMismatch`; uAsset-funded legs take none; the sum is computed
-     *      unchecked so an adversarial oversize native pair wraps and still fails the equality
-     *      gate with the named error instead of an arithmetic panic). The uAsset- and
+     *      (uAsset-funded legs take none; the sum is computed unchecked, so a wrapped sum that
+     *      differs from `msg.value` reverts `NativeAmountMismatch` at the entry gate, while the
+     *      exact wrap-to-zero pair — the two native legs summing to zero — with `msg.value == 0`
+     *      passes the gate and reverts the whole call empty at the first native forwarding
+     *      (PSM mint / SY deposit CALL value), still fail-closed with no fund movement). The uAsset- and
      *      PSM-funded genesis legs and the preorder leg fund `IMemeverseLauncher.genesis` /
      *      `IMemeverseLauncher.preorder`, each crediting `user` with the leg's full amount, and
      *      every such leg must consume its uAsset in full or the whole call reverts (GenesisGateLib

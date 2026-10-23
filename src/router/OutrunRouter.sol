@@ -206,10 +206,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         address psm = _registeredPsm(uAsset, reserveToken);
         // POLend gate: target configured and the verse market is bound to this uAsset family;
         // both re-reads fail closed before any pull, mirroring the launcher-parity style.
-        address polend_ = polend;
-        if (polend_ == address(0)) revert PolendNotSet();
-        address marketUAsset = IPOLendGenesis(polend_).marketUAsset(verseId);
-        if (marketUAsset != uAsset) revert PolendMarketUAssetMismatch(verseId, uAsset, marketUAsset);
+        address polend_ = _polendMarketGate(verseId, uAsset);
         // The interest ledger target must not be a burn sink; fail before any pull.
         if (genesisUser == address(0)) revert ZeroInput();
 
@@ -246,10 +243,7 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             _combinedPreamble(verseId, genesisInput, preorderInput, user, true);
         // POLend family gate: source-independent and fail-closed before any funds move; the market
         // binding re-read shares the existing leveraged entry's discipline.
-        address polend_ = polend;
-        if (polend_ == address(0)) revert PolendNotSet();
-        address boundUAsset = IPOLendGenesis(polend_).marketUAsset(verseId);
-        if (boundUAsset != uAsset) revert PolendMarketUAssetMismatch(verseId, uAsset, boundUAsset);
+        address polend_ = _polendMarketGate(verseId, uAsset);
         _runLeveragedGenesisLeg(uAsset, verseId, genesisInput, user, polend_, genesisNative);
         _runPreorderLeg(uAsset, verseId, preorderInput, user, preorderNative);
     }
@@ -397,8 +391,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
      *      surface before any registry read or pull can move funds. An invalid verse fails closed
      *      through the launcher binding read (the real launcher reverts on an unknown verseId; a
      *      zero read covers the minimal-interface floor). The native sum is computed unchecked:
-     *      an adversarial oversize pair wraps instead of panicking and still fails the equality
-     *      gate, so both overflow and plain mismatch revert `NativeAmountMismatch` pre-funds.
+     *      a wrapped sum that differs from `msg.value` reverts `NativeAmountMismatch` at the entry
+     *      gate, while the exact-wrap corner — the two legs' native values summing to zero with
+     *      `msg.value == 0` — passes the gate and reverts the whole call empty at the first native
+     *      forwarding (the CALL value of the PSM mint / SY deposit), still fail-closed with no
+     *      fund movement.
      * @param verseId Opaque launcher-assigned identifier for the target verse.
      * @param genesisInput Funding instruction for the genesis leg.
      * @param preorderInput Funding instruction for the preorder leg.
@@ -427,9 +424,11 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         _validateFundInput(preorderInput, true, leveragedFamily);
         genesisNative = _legNativeValue(genesisInput);
         preorderNative = _legNativeValue(preorderInput);
-        // Adversarial-domain input: the sum runs unchecked so an oversize native pair wraps and fails
-        // the equality gate with the named error instead of an arithmetic panic; both paths revert
-        // pre-funds.
+        // Adversarial-domain input: the sum runs unchecked so an oversize native pair wraps instead
+        // of panicking. A wrapped sum != msg.value fails the equality gate with the named error
+        // pre-funds; the exact wrap-to-zero pair with msg.value == 0 passes the gate and reverts
+        // the whole call empty at the first native forwarding (the PSM mint / SY deposit CALL
+        // value) — fail-closed either way, with no fund movement.
         uint256 expectedNative;
         unchecked {
             expectedNative = genesisNative + preorderNative;
@@ -718,6 +717,25 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
         psm = psmForUAsset[uAsset][reserveToken];
         if (psm == address(0)) revert UnregisteredPsm(uAsset, reserveToken);
         _requirePsmBindings(psm, uAsset, reserveToken);
+    }
+
+    /**
+     * @notice Resolves the configured POLend target and re-reads its verse-market uAsset binding.
+     * @dev Single source for the POLend family gate both leveraged-genesis entries share
+     *      (`leveragedGenesisByPSM` and the combined `leveragedGenesisAndPreorder`), so the
+     *      zero-target check, the `marketUAsset(verseId)` binding re-read, their order, and their
+     *      errors cannot drift between sites. Both re-reads fail closed before any pull, mirroring
+     *      the SP-parity and PSM-binding gate style.
+     * @param verseId POLend market identifier the binding is re-read against.
+     * @param uAsset Family uAsset the market must be bound to (the entry parameter on
+     *      `leveragedGenesisByPSM`, the launcher-resolved uAsset on the combined entry).
+     * @return polend_ Configured POLend target, nonzero with its market binding matching `uAsset`.
+     */
+    function _polendMarketGate(uint256 verseId, address uAsset) internal view returns (address polend_) {
+        polend_ = polend;
+        if (polend_ == address(0)) revert PolendNotSet();
+        address marketUAsset = IPOLendGenesis(polend_).marketUAsset(verseId);
+        if (marketUAsset != uAsset) revert PolendMarketUAssetMismatch(verseId, uAsset, marketUAsset);
     }
 
     function _requireTrustedSY(address SY) internal view {
