@@ -24,7 +24,7 @@
 - `OutrunRouter.sol::setTrustedSP(SP, SY)` 由 owner 登记 SP 的 canonical SY 配对；非零 `SY` 必须已在白名单中，且必须等于 `SP.SY()`。
 - `SY == address(0)` 是 NATIVE sentinel，不能作为 trusted SY；`SP == address(0)` 也不能登记。配置成功后可通过 `OutrunRouter.sol::trustedSY`、`OutrunRouter.sol::trustedSYForSP` 读取当前值，并核对 `IOutrunRouter.sol::TrustedSYUpdated` / `IOutrunRouter.sol::TrustedSPUpdated` 事件。
 - 仅登记白名单 SY 的入口 `mintSYFromToken(...)`、`redeemSyToToken(...)` 可继续执行；所有从 SP 派生 SY 的 preview 与路径 B genesis 入口都要求已登记且匹配的 SP -> SY 配对。路径 A genesis（PSM 门）与杠杆创世门均不触 SY/SP，走 §1.2.1 的 PSM registry。
-- 校验在任何用户资产转移或精确 approve 前执行；未登记目标回退 `UntrustedRouterTarget(address)`，SP 与登记 SY 不匹配回退 `RouterTargetMismatch(address,address,address)`。
+- 校验在任何用户资产转移或精确 approve 前执行；未登记目标回退 `UntrustedRouterTarget(address)`，SP 与登记 SY 不匹配回退 `RouterTargetMismatch(address,address,address)`（组合参与入口 Stake 腿另以同错误承载 SP uAsset 家族失配——载荷为 (SP, verse uAsset, SP uAsset)，见「组合参与入口（创世+预购）」节）。
 - 每次 SP 路径都会重新读取 `SP.SY()` 与登记值比较；即使 pair 曾经登记成功，canonical SY 发生漂移也会在拉取或 approve 前回退。
 - `OutrunRouter.sol::setTrustedSP(SP, address(0))` 用于撤销配对；`OutrunRouter.sol::setTrustedSY(SY, false)` 只撤销 SY 信任，不会自动清零已有的 SP mapping，但后续调用会因 SY 不再 trusted 而失败，因此应显式撤销 pair 并核对 getter / event。
 - 撤销 SY 或配对只影响后续 router 入口，已完成的 position、uAsset debt 和 SY share state 不受影响。
@@ -247,17 +247,18 @@ Credit 仅存在于杠杆族、Stake 仅存在于普通族、预购腿无 Stake/
 
 **入口级前置（先于任何资金移动）**：
 
-1. `uAsset = IMemeverseLauncher(memeverseLauncher).getUAssetByVerseId(verseId)`，零值 revert——无效 verse fail-closed。
-2. 两腿 source 合法性（族矩阵）+ 强制零字段 + 金额/`user` 非零校验。
-3. native 总量检查：`msg.value == Σ(来源 ∈ {Psm, Stake} 且 token == NATIVE 的腿的 amount)`，回退 `NativeAmountMismatch()`——双腿可同 native reserve；随后原语以显式 native 参数转发给 `IPSM.mint{value}` / `IStandardizedYield.deposit{value}`，不再逐腿读取 `msg.value`（单腿入口的 `msg.value` 检查等价上移见 §7.6 native 条）。
-4. （仅杠杆族）polend 族级门，与创世腿资金来源无关、先于任何资金移动：`polend != address(0)`（`PolendNotSet()`）+ `IPOLendGenesis(polend).marketUAsset(verseId) == uAsset` 复读（`PolendMarketUAssetMismatch`），与 `OutrunRouter.sol::leveragedGenesisByPSM` 的门序一致（「杠杆创世门」节表第 3-4 行）。
+1. 金额/`user` 非零校验：`user != address(0)` 且两腿 `amount > 0`，违规回退 `ZeroInput()`——先于 uAsset 解析与一切资金移动。
+2. `uAsset = IMemeverseLauncher(memeverseLauncher).getUAssetByVerseId(verseId)`，零值 revert——无效 verse fail-closed。
+3. 两腿 source 合法性（族矩阵）+ 强制零字段校验。
+4. native 总量检查：`msg.value == Σ(来源 ∈ {Psm, Stake} 且 token == NATIVE 的腿的 amount)`，回退 `NativeAmountMismatch()`——双腿可同 native reserve；随后原语以显式 native 参数转发给 `IPSM.mint{value}` / `IStandardizedYield.deposit{value}`，不再逐腿读取 `msg.value`（单腿入口的 `msg.value` 检查等价上移见 §7.6 native 条）。
+5. （仅杠杆族）polend 族级门，与创世腿资金来源无关、先于任何资金移动：`polend != address(0)`（`PolendNotSet()`）+ `IPOLendGenesis(polend).marketUAsset(verseId) == uAsset` 复读（`PolendMarketUAssetMismatch`），与 `OutrunRouter.sol::leveragedGenesisByPSM` 的门序一致（「杠杆创世门」节表第 3-4 行）。
 
 **各来源资金路径与校验门**（全部复用现有内部门，无新增信任面——无新 registry、无新 owner setter、无新 router 事件）：
 
 - UAsset 腿（两族创世腿 / 预购腿）：`GenesisGateLib.requireLauncherAmount(amount)`（uint128 数值上界，approve 前置）→ 从 `msg.sender` 拉取 uAsset（基线为拉取前 router 余额）→ 精确 approve 后按腿调用——普通族创世腿 `IMemeverseLauncher.genesis(verseId, amount, user)`、预购腿 `IMemeverseLauncher.preorder(verseId, amount, user)`、杠杆族创世腿 `IPOLendGenesis.leveragedGenesis(verseId, amount, user)` → `GenesisGateLib.assertFullConsumption` 收尾。
 - Psm 腿（两族创世腿 / 预购腿）：`OutrunRouter.sol::_registeredPsm(uAsset, token)` 配对查表 + uAsset/reserve 双绑定复读（§1.2.1）→ mint 到 router（基线为 mint 前 uAsset 余额）→ 同 UAsset 腿尾段（消费目标按腿而定）。实际预购额 = 扣 `tin` 后 mint 出的 uAsset 数量——`IPSM.quoteMint` 纯函数确定性、与执行恒等，无滑点参数（`tin` 为 owner 可调，前端展示用 `quoteMint`，执行以 mint 结果为准）。
-- Stake 腿（仅普通族创世腿）：`OutrunRouter.sol::_trustedSYWithLauncherParity(sp)` 注册表门（trustedSYForSP + `SP.SY()` 复读 + launcher 对齐，§7.2 表第 1-2 行）；`token == SP 的 canonical SY` 时按 SY 单位直充（等价 `genesisBySY`，不经 `SY.deposit` / `minSyOut`——直充子路径 `minSyOut` 允许非零但被忽略，为 FundInput 唯一明示的静默忽略例外：量语义按 SY 单位已确定，无 deposit 换算），否则经 `SY.deposit` 换 SY（等价 `genesisByToken` 头部，`minSyOut` 下限生效）；随后 `OutrunRouter.sol::_forwardGenesisToSP` 薄转发 `SP.stakeForGenesis`（`minUAssetMinted` 两级下限保留，同 §7.2.1）——SP 侧自带「铸 uAsset → approve launcher → genesis → 全额消费断言」，router 不经手 uAsset（SP 腿沿用 SP 侧断言）。
-- Credit 腿（仅杠杆族创世腿）：`credit = IGenesisCreditFactory(IPOLendGenesis(polend).creditFactory()).creditOf(uAsset)` 确定性解析，零值回退 `IOutrunRouter.sol::NoCreditForUAsset(uAsset)`（该 uAsset 无 credit 合约）；基线为 router credit 余额，拉取后精确 approve polend → `IPOLendGenesis.leveragedGenesisWithCredit(verseId, amount, user)`，`GenesisGateLib.assertFullConsumption(credit, polend, baseline)` 收尾（该库断言对任意 ERC20 通用，直接复用）；18-dec 校验由 POLend 冷路径自带，router 不重复。credit 换绑时序：factory 换绑后 POLend 市场缓存的 `creditToken` 与 router 解析结果不一致时，POLend 热路径按缓存 token `safeTransferFrom`（router 对该 token 零 allowance）在 POLend 内整笔回滚（fail-closed），router 侧消费断言仅作残留兜底。
+- Stake 腿（仅普通族创世腿）：`OutrunRouter.sol::_trustedSYWithLauncherParity(sp)` 注册表门（trustedSYForSP + `SP.SY()` 复读 + launcher 对齐，§7.2 表第 1-2 行）；Stake 腿在 SY 解析后、任何拉取前绑定 SP 的 uAsset 家族与入口解析的 verse uAsset 一致（`IOutrunStakeManager(f.sp).uAsset() == uAsset`，失配 revert `RouterTargetMismatch`——错误形参沿 SP/SY 命名，此处载荷为 (SP, verse uAsset, SP uAsset)）；`token == SP 的 canonical SY` 时按 SY 单位直充（等价 `genesisBySY`，不经 `SY.deposit` / `minSyOut`——直充子路径 `minSyOut` 允许非零但被忽略，为 FundInput 唯一明示的静默忽略例外：量语义按 SY 单位已确定，无 deposit 换算），否则经 `SY.deposit` 换 SY（等价 `genesisByToken` 头部，`minSyOut` 下限生效）；随后 `OutrunRouter.sol::_forwardGenesisToSP` 薄转发 `SP.stakeForGenesis`（`minUAssetMinted` 两级下限保留，同 §7.2.1）——SP 侧自带「铸 uAsset → approve launcher → genesis → 全额消费断言」，router 不经手 uAsset（SP 腿沿用 SP 侧断言）。
+- Credit 腿（仅杠杆族创世腿）：`credit = IGenesisCreditFactory(IPOLendGenesis(polend).creditFactory()).creditOf(uAsset)` 确定性解析，零值回退 `IOutrunRouter.sol::NoCreditForUAsset(uAsset)`（该 uAsset 无 credit 合约）；基线为 router credit 余额，拉取后精确 approve polend → `IPOLendGenesis.leveragedGenesisWithCredit(verseId, amount, user)`，`GenesisGateLib.assertFullConsumption(credit, polend, baseline)` 收尾（该库断言对任意 ERC20 通用，直接复用）；18-dec 校验由 POLend 冷路径自带，router 不重复。credit 换绑时序：factory 换绑后 POLend 市场缓存的 `creditToken` 与 router 解析结果不一致时，POLend 热路径按缓存 token `safeTransferFrom`（router 对该 token 零 allowance）在 POLend 内整笔回滚（fail-closed），router 侧消费断言仅作残留兜底。POLend 的 `creditFactory()` 返回零地址或无代码地址时，`creditOf` 解析以底层解码错误整笔回滚（fail-closed）——与 §1.2.1 无代码 target 复读条款的既有惯例一致。
 
 **错误面**：复用 `ZeroInput`、`InvalidParam`、`UntrustedRouterTarget`、`UnregisteredPsm`、`PsmBindingMismatch`、`PsmReserveMismatch`、`GenesisLauncherMismatch`、`PolendNotSet`、`PolendMarketUAssetMismatch`、`NativeAmountMismatch`；新增 `IOutrunRouter.sol::FundSourceNotAllowed(FundSource, bool)`（族矩阵违规）、`IOutrunRouter.sol::FundFieldMustBeZero(FundSource)`（强制零字段违规）、`IOutrunRouter.sol::NoCreditForUAsset(address)`（credit 缺失，与 POLend 同名错误语义对齐）。
 
