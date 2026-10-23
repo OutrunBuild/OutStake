@@ -62,11 +62,11 @@ v1 implementation 仍为 proxy-backed uAsset、SY adapter 与 staking position�
 `OutrunStakingPositionUpgradeable.sol::stakeForGenesis(amountInSY, positionOwner, verseId, minUAssetMinted)`（`nonReentrant` + `whenNotPaused`，返回 `positionId`）是 v1 唯一的铸造入口：铸出的 uAsset 在同一交易内全额交 SP 侧 `genesisLauncher`。全原子执行序：
 
 - (a) 前置校验：`genesisLauncher == address(0)` → `GenesisLauncherNotSet()`；`amountInSY` / `positionOwner` 为零 → `ZeroInput()`；`amountInSY < minStake()` → `MinStakeInsufficient`。
-- (b) 铸出量数学：两段 down 面值换算（§3），铸出为 0 → `DustRoundedToZero()`；随后两项 genesis 专属守卫：`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted(mintedUAsset, minMinted)`（SP 本地声明）；`mintedUAsset > type(uint128).max` → `InvalidParam()`（与 router 路径 A（`genesisByPSM`）的同名守卫同构——launcher ABI 参数为 uint256，SP/router 侧仍以 uint128 数值域自守卫（`InvalidParam`））。
+- (b) 铸出量数学：两段 down 面值换算（§3），铸出为 0 → `DustRoundedToZero()`；随后两项 genesis 专属守卫：`mintedUAsset < minUAssetMinted` → `InsufficientUAssetMinted(mintedUAsset, minMinted)`（SP 本地声明）；`mintedUAsset > type(uint128).max` → `InvalidParam()`（与 router 路径 A（`genesisByPSM`）的同名守卫同构——launcher ABI 参数将改为 uint256 并补 preorder/getUAssetByVerseId（随组合参与入口实现任务对齐 Memeverse 真实签名；当前接口仍为 uint128）；SP/router 侧 uint128 数值域自守卫不变）。
 - (c) 开仓：SY 转入 position 合约 → SP `rate` 结算到当前时刻并快照 `lastRate`（新仓不承接开仓前利息，首次结算利息按开仓时刻起算，§4.4）→ 写入五字段 `Position`（无锁定系数）；`principalDebt = mintedUAsset`。
 - (d) uAsset 铸给 `address(this)`（SP 自身），绝不经过 owner、router 或任何第三方，SP 的 uAsset minter 台账正常入账——`uAsset.mint` 使 SP minter 的 `amountInMinted += mintedUAsset`，无 PSM 式豁免（§10.2 第一行显式覆盖 genesis 铸出）。
 - (e) 对 `genesisLauncher` 精确 approve 恰好 `mintedUAsset`。
-- (f) 调用 `IMemeverseLauncher.genesis(verseId, mintedUAsset, positionOwner)`（接口真源 `src/router/interfaces/IMemeverseLauncher.sol` 的 ABI 参数为 uint256——接口文件本轮对齐 Memeverse 真实签名，launcher 侧零改动）；`verseId` 原样转发、SP 不校验。
+- (f) 调用 `IMemeverseLauncher.genesis(verseId, uint128(mintedUAsset), positionOwner)`（接口真源 `src/router/interfaces/IMemeverseLauncher.sol`；launcher ABI 参数将改为 uint256 并补 preorder/getUAssetByVerseId——随组合参与入口实现任务对齐 Memeverse 真实签名，当前接口仍为 uint128，launcher 侧零改动；SP/router 侧 uint128 数值域自守卫不变）；`verseId` 原样转发、SP 不校验。
 - (g) 后置断言：`genesis` 返回后 SP 的 uAsset 余额必须回到铸出前基线，且对 `genesisLauncher` 的 allowance 必须为 0，否则 `GenesisUAssetNotConsumed(residualBalance, residualAllowance)` 整笔回滚——部分消费、转回或任何残余都使仓位与铸出一并消失。
 - (h) 事件：`Stake(positionId, positionOwner, amountInSY, mintedUAsset)` 加 `StakeForGenesis(positionId, positionOwner, verseId, mintedUAsset)`（§11.2）。
 
@@ -264,7 +264,7 @@ uAsset 供给侧三行对账（`uAsset` 三条供给路径：CDP（position 层�
 | `DecimalsMismatch(uint8 cachedCanonical, uint8 currentCanonical, uint8 cachedUAsset, uint8 currentUAsset)` | `OutrunStakingPositionUpgradeable.sol::_authorizeUpgrade` 在 `SY.assetInfo().assetDecimals` 或 `uAsset.decimals()` 实时值与 `initialize` 缓存值漂移时。 | 缓存与实时两组 decimals。 | UUPS 升级守卫，发生在任何存储布局迁移前；漂移须重部署 SY+position 解决。 |
 | `DutyCap(uint256 newDuty)` | `::initialize` 的 `duty_ > DUTY_CAP` 及 `::setDuty` 的 `newDuty > DUTY_CAP`（上限 `DUTY_CAP = 1000000004431822129783699001`，年化 15% 等效每秒率）。 | 新值。 | setter 本地校验，无状态变化。 |
 | `InsufficientUAssetMinted(uint256 mintedUAsset, uint256 minMinted)` | `::stakeForGenesis` 的 `mintedUAsset < minUAssetMinted`（SP 本地声明）。 | `mintedUAsset`：实际铸出量；`minMinted`：调用者下限。 | 铸出量计算后、仓位写入与 mint 之前；整笔回滚。零值 `minUAssetMinted` 为无保护透传。 |
-| `InvalidParam()` | `::stakeForGenesis` 的 `mintedUAsset > type(uint128).max`（与 router 路径 A（`genesisByPSM`）的同名守卫同构——launcher ABI 参数为 uint256，SP/router 侧仍以 uint128 数值域自守卫（`InvalidParam`））。 | 无 | 铸出量计算后、对 launcher 的 approve 与 `genesis` 调用之前。 |
+| `InvalidParam()` | `::stakeForGenesis` 的 `mintedUAsset > type(uint128).max`（与 router 路径 A（`genesisByPSM`）的同名守卫同构——launcher ABI 参数将改为 uint256 并补 preorder/getUAssetByVerseId（随组合参与入口实现任务对齐 Memeverse 真实签名；当前接口仍为 uint128）；SP/router 侧 uint128 数值域自守卫不变）。 | 无 | 铸出量计算后、对 launcher 的 approve 与 `genesis` 调用之前。 |
 | `GenesisLauncherNotSet()` | `::stakeForGenesis` 的 `genesisLauncher == address(0)`（部署默认态或 owner 置零＝入口禁用，kill switch）。 | 无 | 前置守卫，先于一切资金移动与写入。 |
 | `GenesisGateLib.GenesisUAssetNotConsumed(uint256 residualBalance, uint256 residualAllowance)` | `::stakeForGenesis` 后置断言（`GenesisGateLib.sol::assertFullConsumption`）：`IMemeverseLauncher.genesis` 返回后 SP 的 uAsset 余额 != 铸出前基线，或对 `genesisLauncher` 的 allowance 非零（任一成立即触发）。 | `residualBalance`：余额相对铸出前基线的残余；`residualAllowance`：对 launcher 的残余授权。 | 部分消费、转回或任何残余 → 整笔回滚（仓位与铸出一并消失，§3.1）；launcher 自身 revert 属依赖边界原样透传。 |
 
