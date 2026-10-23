@@ -228,7 +228,7 @@ SP 侧语义（完整规格见 `docs/spec/position/accounting.md` §3.1 与 `doc
 
 ### 组合参与入口（创世+预购）：`genesisAndPreorder` / `leveragedGenesisAndPreorder`
 
-> 状态：现行行为规格，已落地（`IMemeverseLauncher` uint256 ABI 对齐与 `preorder`/`getUAssetByVerseId`、`IGenesisCreditFactory` 接口、native 原语参数化均已随组合参与入口落地；跨仓 selector 一致性由 `test/upgradeable/OutrunRouterCrossRepoSelectors.t.sol` 锁定）。
+> 状态：现行行为规格，已落地（`IMemeverseLauncher` uint256 ABI 对齐与 `preorder`/`getUAssetByVerseId`、`IGenesisCreditFactory` 接口、native 原语参数化均已随组合参与入口落地）。
 
 双入口把「参与（杠杆）创世」与「参与预购」收敛为单笔原子调用：`OutrunRouter.sol::genesisAndPreorder(verseId, genesisInput, preorderInput, user)`（普通族，`payable nonReentrant`）与 `OutrunRouter.sol::leveragedGenesisAndPreorder(verseId, genesisInput, preorderInput, user)`（杠杆族，`payable nonReentrant`）。单腿参与继续使用现有单腿入口。
 
