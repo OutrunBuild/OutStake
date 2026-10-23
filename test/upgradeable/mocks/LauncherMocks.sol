@@ -283,7 +283,7 @@ contract MockPOLend is IPOLendGenesis {
         external
         returns (uint256 borrowedAmount)
     {
-        // 热路径按缓存 token 拉取，模拟真实 POLend 的 market.creditToken 缓存语义。
+        // The hot path pulls the cached token, mirroring real POLend's market.creditToken cache semantics.
         IERC20(creditToken_).transferFrom(msg.sender, address(this), creditAmount);
         lastCreditVerseId = verseId;
         lastCreditAmount = creditAmount;

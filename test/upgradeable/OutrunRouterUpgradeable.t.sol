@@ -1254,7 +1254,7 @@ contract OutrunRouterTestNativeValueGate is Test {
     ///         before the PSM registry gate for a multi-fault input.
     function test_RevertIf_GenesisByPSMNativeValueCheckPrecedesRegistryGate() external {
         vm.prank(user);
-        // 未注册的 (uAsset, reserve) 且 msg.value 错误：期望 native 错误而非 UnregisteredPsm。
+        // Unregistered (uAsset, reserve) and wrong msg.value: expect the native error, not UnregisteredPsm.
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
         router.genesisByPSM{value: 1}(address(uAsset), address(0xBEEF), 10e18, VERSE_ID, user);
     }
@@ -1263,18 +1263,17 @@ contract OutrunRouterTestNativeValueGate is Test {
 /**
  * @title OutrunRouterCombinedEntryTest
  * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
- *     gating and zero-field gating, both rejected before any funds move), the full 12-combo
- *     end-to-end matrix (#1-#6 normal family: {UAsset, Psm, Stake} genesis x {UAsset, Psm}
- *     preorder; #7-#12 leveraged family: {UAsset, Psm, Credit} genesis x {UAsset, Psm} preorder)
- *     with the summed native accounting (msg.value == sum of per-leg native requirements,
- *     fee-adjusted mint output credited by the preorder leg, and oversize native sums reverting
- *     the named value-gate error instead of an arithmetic panic), the stake-funded genesis
- *     sub-paths (the tokenIn deposit through SY.deposit with both slippage floors and the
- *     token == canonical-SY direct charge in SY units that skips the deposit), the stake-leg
- *     verse-SP uAsset family binding (a foreign-family SP reverts RouterTargetMismatch before
- *     any pull), and the credit-funded leveraged interest legs (combinations #11, #12:
- *     factory-resolved credit pull escrowed by POLend, the cached-token divergence fail-closed,
- *     and the unresolved-factory rejection).
+ *     gating and zero-field gating, both rejected before any funds move), the full end-to-end
+ *     leg-pair matrix (normal family: {UAsset, Psm, Stake} genesis x {UAsset, Psm} preorder;
+ *     leveraged family: {UAsset, Psm, Credit} genesis x {UAsset, Psm} preorder) with the summed
+ *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
+ *     credited by the preorder leg, and oversize native sums reverting the named value-gate
+ *     error instead of an arithmetic panic), the stake-funded genesis sub-paths (the tokenIn
+ *     deposit through SY.deposit with both slippage floors and the token == canonical-SY direct
+ *     charge in SY units that skips the deposit), the stake-leg verse-SP uAsset family binding
+ *     (a foreign-family SP reverts RouterTargetMismatch before any pull), and the credit-funded
+ *     leveraged interest legs (factory-resolved credit pull escrowed by POLend, the cached-token
+ *     divergence fail-closed, and the unresolved-factory rejection).
  * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
  *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
  *     fixture (so every parent test re-runs in this context) and extends it only with the
@@ -1315,7 +1314,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.setPolend(address(polend));
     }
 
-    /// @notice 组合 #1：UAsset 创世 + UAsset 预购，一笔原子完成，两条腿各记名 user。
+    /// @notice Normal family: uAsset genesis + uAsset preorder, one atomic call, each leg crediting `user`.
     function test_CombinedUAssetGenesisAndUAssetPreorder() external {
         uint256 genesisAmount = 10e18;
         uint256 preorderAmount = 2e18;
@@ -1356,7 +1355,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.allowance(address(router), address(launcher)), 0, "no allowance residual");
     }
 
-    /// @notice 组合 #7：杠杆族 UAsset 利息腿 + UAsset 预购。
+    /// @notice Leveraged family: uAsset interest leg + uAsset preorder leg.
     function test_CombinedLeveragedUAssetAndUAssetPreorder() external {
         _wirePolendFixture();
         uint256 interest = 3e18;
@@ -1374,7 +1373,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(lastPreorderBase, preorderAmount, "preorder credited");
     }
 
-    /// @notice 组合 #8：杠杆族 UAsset 利息腿 + PSM 预购（ERC20 reserve）；利息入 POLend，预购 mint 入 launcher。
+    /// @notice Leveraged family: uAsset interest leg + PSM preorder (ERC20 reserve); the interest is
+    ///         escrowed by POLend and the preorder mint reaches the launcher.
     function test_CombinedLeveragedUAssetAndPsmPreorder() external {
         _wirePolendFixture();
         uint256 interest = 3e18;
@@ -1397,7 +1397,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(underlying.balanceOf(user), userUnderlyingBefore - preorderReserve, "caller paid the preorder reserve");
     }
 
-    /// @notice 组合 #9：杠杆族 PSM 利息腿 + UAsset 预购；零费 mint 全额付息，预购按 uAsset 拉取。
+    /// @notice Leveraged family: PSM interest leg + uAsset preorder; the fee-free mint pays the
+    ///         interest in full and the preorder pulls uAsset.
     function test_CombinedLeveragedPsmAndUAssetPreorder() external {
         _wirePolendFixture();
         uint256 interestReserve = 4e18;
@@ -1420,7 +1421,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(underlying.balanceOf(user), userUnderlyingBefore - interestReserve, "caller paid the interest reserve");
     }
 
-    /// @notice 组合 #2：UAsset 创世 + PSM 预购；预购额是扣 tin 后的 mint 输出，不是 reserve 输入量。
+    /// @notice Normal family: uAsset genesis + PSM preorder; the preorder base is the fee-adjusted
+    ///         mint output, not the reserve input amount.
     function test_CombinedUAssetGenesisAndPsmPreorderFeeAdjustedPreorderAmount() external {
         vm.prank(owner);
         psm.setFees(1e16, 0); // 1% mint fee
@@ -1440,7 +1442,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(lastGenesisAmount, genesisAmount, "genesis leg exact");
     }
 
-    /// @notice 组合 #3：Psm 创世（ERC20 reserve，零费）+ UAsset 预购；两条腿的 launcher 记录各自精确。
+    /// @notice Normal family: PSM genesis (ERC20 reserve, fee-free) + uAsset preorder; the launcher's
+    ///         records are exact for each leg.
     function test_CombinedPsmGenesisAndUAssetPreorderErc20() external {
         uint256 genesisReserve = 5e18;
         uint256 preorderAmount = 3e18;
@@ -1466,7 +1469,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
     }
 
-    /// @notice 组合 #10 native：杠杆 PSM 腿 + PSM 预购腿同用 native reserve，msg.value = 两腿之和。
+    /// @notice Leveraged family, native: the PSM interest leg and PSM preorder leg share the
+    ///         native reserve; msg.value is the sum of both legs.
     function test_CombinedPsmGenesisAndPsmPreorderNativeSum() external {
         _wirePolendFixture();
         uint256 interestReserve = 2e18;
@@ -1481,7 +1485,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(lastPreorderBase, preorderReserve, "native PSM preorder fee-free exact");
     }
 
-    /// @notice 组合 #4：双腿同 ERC20 reserve，两次 mint 各自独立完成消费断言。
+    /// @notice Normal family: both legs share one ERC20 reserve; each mint independently completes
+    ///         its full-consumption assertion.
     function test_CombinedPsmGenesisAndPsmPreorderErc20() external {
         vm.startPrank(user);
         router.genesisAndPreorder(
@@ -1495,8 +1500,9 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "no residual between legs");
     }
 
-    /// @notice 组合 #5：Stake 创世（tokenIn 经 SY.deposit 的 deposit 子路径）+ UAsset 预购。
-    /// @dev 同 #6 的 mock 平价事实：launcher 收款 = tokenInAmount + 预购 uAsset，仓位按价值平价开立。
+    /// @notice Normal family: stake genesis (tokenIn through the SY.deposit sub-path) + uAsset preorder.
+    /// @dev Same mock parity facts as `test_CombinedStakeTokenInLegAndPsmPreorder`: the launcher
+    ///      receives tokenInAmount + preorder uAsset, and the position opens at value parity.
     function test_CombinedStakeTokenInLegAndUAssetPreorder() external {
         uint256 tokenInAmount = 7e18;
         uint256 preorderAmount = 2e18;
@@ -1525,9 +1531,11 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(user), 0, "caller's preorder uAsset fully consumed");
     }
 
-    /// @notice 组合 #6：生息资产（tokenIn 经 SY.deposit）创世 + PSM 预购；SP 侧开仓并直送 launcher。
-    /// @dev mock 平价事实：RouterMockSY 以 1:1 存入、真实 SP 以价值平价 1:1 铸 uAsset 交付同一 mock
-    ///      launcher、PSM fee 起始为零——launcher 收款可精确断言为 tokenInAmount + preorderReserve。
+    /// @notice Normal family: yield-bearing tokenIn genesis (through SY.deposit) + PSM preorder; the
+    ///         SP opens the position and delivers straight to the launcher.
+    /// @dev Mock parity facts: RouterMockSY deposits 1:1, the real SP mints uAsset 1:1 at value
+    ///      parity to the same mock launcher, and the PSM fee starts at zero — so the launcher's
+    ///      intake is exactly assertable as tokenInAmount + preorderReserve.
     function test_CombinedStakeTokenInLegAndPsmPreorder() external {
         uint256 tokenInAmount = 7e18;
         uint256 preorderReserve = 2e18;
@@ -1548,7 +1556,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(p, preorderReserve, "psm preorder exact");
     }
 
-    /// @notice Review Focus 3：token == SP 的 canonical SY 时按 SY 单位直充，不经 deposit/minSyOut。
+    /// @notice When the leg's token is the SP's canonical SY it is charged directly in SY units,
+    ///         bypassing deposit/minSyOut.
     function test_CombinedStakeDirectSYLegSkipsDeposit() external {
         uint256 syIn = 4e18;
         uint256 preorderReserve = 1e18;
@@ -1563,7 +1572,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
             user
         );
         vm.stopPrank();
-        // 直充路径不消耗 underlying：SP 收到的 SY 就是 syIn 本金，launcher 收款 = syIn + 预购 mint。
+        // The direct-charge path consumes no underlying: the SP receives the syIn principal itself,
+        // and the launcher intake is syIn + the preorder mint.
         assertEq(sy.balanceOf(address(position)), syIn, "SY transferred to the SP without a deposit");
         assertEq(underlying.balanceOf(address(sy)), syUnderlyingBefore, "no deposit consumed the underlying token");
         assertEq(
@@ -1571,11 +1581,13 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         );
     }
 
-    /// @notice SR-001：Stake 腿家族绑定——SP 绑定外族 uAsset 时，必须先于任何拉取以
-    ///         RouterTargetMismatch（verse↔SP 家族三方负载）拒绝。
-    /// @dev 外族 SP 按 setUp 模式部署（同一 trusted SY 对 + launcher parity + 开放 mint cap），
-    ///      使 uAsset 家族成为唯一分歧：修复前调用会先拉 SY 并在 launcher 的外族 transferFrom
-    ///      处以无关错误回滚，修复后在拉取前精确命中家族错误。
+    /// @notice Stake-leg family binding: when the SP is bound to a foreign-family uAsset, the call
+    ///         must be rejected with RouterTargetMismatch (the verse↔SP family three-party payload)
+    ///         before any pull.
+    /// @dev The foreign SP is deployed like the setUp fixture (same trusted-SY pair, launcher
+    ///      parity, open mint cap) so the uAsset family is the only divergence: before the fix the
+    ///      call pulled the SY first and reverted with an unrelated error at the launcher's
+    ///      foreign-family transferFrom; after the fix it hits the family error exactly, pre-pull.
     function test_RevertIf_CombinedStakeLegOnForeignFamilySP() external {
         RouterMockUAsset foreignUAsset = new RouterMockUAsset();
         OutrunStakingPositionUpgradeable foreignPosition = OutrunStakingPositionUpgradeable(
@@ -1606,7 +1618,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(sy.balanceOf(address(router)), 0, "router must hold no SY from the rejected leg");
     }
 
-    /// @notice 组合 #11：Credit 利息腿 + UAsset 预购；credit 全额进入 POLend。
+    /// @notice Leveraged family: credit interest leg + uAsset preorder; the credit reaches POLend in full.
     function test_CombinedCreditInterestAndUAssetPreorder() external {
         _wirePolendFixture();
         uint256 creditIn = 6e18;
@@ -1622,7 +1634,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(p, 1e18, "preorder credited");
     }
 
-    /// @notice 组合 #12：Credit 利息腿 + PSM 预购；credit 全额进入 POLend，预购走 PSM mint。
+    /// @notice Leveraged family: credit interest leg + PSM preorder; the credit reaches POLend in
+    ///         full and the preorder runs through the PSM mint.
     function test_CombinedCreditInterestAndPsmPreorder() external {
         _wirePolendFixture();
         uint256 creditIn = 6e18;
@@ -1643,8 +1656,9 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(underlying.balanceOf(user), userUnderlyingBefore - preorderReserve, "caller paid the preorder reserve");
     }
 
-    /// @notice Review Focus 5：factory 换绑后 POLend 缓存 token 与 router 解析不一致 → POLend 内
-    ///         safeTransferFrom（router 对缓存 token 零 allowance）整笔回滚。
+    /// @notice Cached-token divergence: after the factory is rewired, POLend's cached token no
+    ///         longer matches the router's resolution, and POLend's own safeTransferFrom (the
+    ///         router has zero allowance on the cached token) reverts the whole call.
     function test_CombinedCreditLegCachedTokenDivergenceReverts() external {
         _wirePolendFixture();
         RouterMockERC20 divergent = new RouterMockERC20("Divergent Credit", "dGC");
@@ -1654,7 +1668,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);
     }
 
-    /// @notice 该 uAsset 无 credit 合约：解析为零即拒，先于任何拉取。
+    /// @notice No credit contract for this uAsset: a zero resolution is rejected before any pull.
     function test_RevertIf_CombinedCreditUnresolved() external {
         _wirePolendFixture();
         polend.setCreditWiring(address(new MockCreditFactory(address(0))), address(credit));
@@ -1663,7 +1677,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);
     }
 
-    /// @notice native 总量错配（少付）整笔拒绝。
+    /// @notice A native total mismatch (underpaid msg.value) rejects the whole call.
     function test_RevertIf_CombinedNativeUnderfunded() external {
         vm.startPrank(user);
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
@@ -1671,11 +1685,13 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         vm.stopPrank();
     }
 
-    /// @notice LR-003：两条 native 腿之和溢出 uint256（对抗域输入）：求和回绕后不等于 msg.value，
-    ///         按命名错误 NativeAmountMismatch 拒绝而非算术 Panic(0x11)，且先于任何资金移动。
+    /// @notice The two native legs' sum overflows uint256 (adversarial-domain input): the wrapped sum
+    ///         no longer equals msg.value, so the named NativeAmountMismatch error rejects the call
+    ///         instead of an arithmetic Panic(0x11), before any funds move.
     function test_RevertIf_CombinedNativeLegSumOverflowsUint256() external {
         vm.prank(user);
-        // type(uint256).max + 2 回绕为 1，与零 msg.value 不等：值门以命名错误生效。
+        // type(uint256).max + 2 wraps to 1, which differs from the zero msg.value: the value gate
+        // fires with the named error.
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
         router.genesisAndPreorder(VERSE_ID, _fundPsm(NATIVE, type(uint256).max), _fundPsm(NATIVE, 2), user);
 
@@ -1683,10 +1699,12 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
     }
 
-    /// @notice RR-001：`genesisBySY` 的零值规则由非 payable dispatcher 结构性强制——带值调用在
-    ///         函数体（及任何注册表读取）之前回滚。bare `vm.expectRevert()` 探针（经低级调用绕过
-    ///         Solidity 对非 payable 入口的类型层禁带值）锚定该回滚面，对不可达的显式
-    ///         `_requireNoNativeValue` 检查的移除保持行为等价。
+    /// @notice `genesisBySY`'s zero-value rule is enforced structurally by the non-payable
+    ///         dispatcher: a value-carrying call reverts before the function body (and any registry
+    ///         read). A bare `vm.expectRevert()` probe (via a low-level call that bypasses
+    ///         Solidity's type-level ban on value to non-payable entrypoints) anchors that revert
+    ///         surface, keeping the removal of the unreachable explicit `_requireNoNativeValue`
+    ///         check behavior-equivalent.
     function test_RevertIf_GenesisBySYCallCarriesValue() external {
         vm.prank(user);
         vm.expectRevert();
@@ -1699,7 +1717,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(sy.balanceOf(address(router)), 0, "value-carrying call must not pull SY");
     }
 
-    /// @notice 族矩阵：普通族 Credit / 杠杆族 Stake / 预购腿 Stake|Credit 全部在资金移动前拒绝。
+    /// @notice Family matrix: Credit on the normal family, Stake on the leveraged family, and
+    ///         Stake|Credit on the preorder leg are all rejected before any funds move.
     function test_RevertIf_CombinedFamilyMatrixViolations() external {
         vm.startPrank(user);
         vm.expectRevert(
@@ -1719,7 +1738,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         vm.stopPrank();
     }
 
-    /// @notice 强制零字段：UAsset 来源带 token/sp/min 违规即拒。
+    /// @notice Mandatory zero fields: a UAsset source carrying token/sp/min violations is rejected.
     function test_RevertIf_CombinedZeroFieldViolations() external {
         vm.startPrank(user);
         IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
@@ -1734,12 +1753,13 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
     }
 
     // --------------------------------------------------------------------------
-    // Adjudicated fix wave: OS-1 registry gates / atomicity tripwire / zero fields /
-    // mixed native split / wrap-to-zero corner, OS-2 wrap=0 edge
+    // Registry gates / atomicity tripwire / zero fields / mixed native split /
+    // wrap-to-zero edge
     // --------------------------------------------------------------------------
 
-    /// @notice OS-1a：polend 未接线时组合杠杆入口在任何资金移动前以 `PolendNotSet` 拒绝
-    ///         （族级门与单腿入口 `leveragedGenesisByPSM` 同源 `_polendMarketGate`）。
+    /// @notice The combined leveraged entrypoint rejects with `PolendNotSet` before any funds move
+    ///         when POLend is not wired (the family-level gate shares `_polendMarketGate` with the
+    ///         single-leg entrypoint `leveragedGenesisByPSM`).
     function test_RevertIf_CombinedLeveragedEntryPolendNotWired() external {
         uint256 userUnderlyingBefore = underlying.balanceOf(user);
         uAsset.mint(user, 1e18);
@@ -1756,10 +1776,12 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(address(router).balance, 0, "router native unchanged");
     }
 
-    /// @notice OS-1b 原子性绊线：创世腿（UAsset，完整入账+拉款）成功后预购腿 revert，整笔回滚——
-    ///         launcher 零持仓、创世记账归零、caller/router 余额零变动。兑现 spec
-    ///         `router-and-user-flows.md`「组合参与入口」节的原子性承诺（任一腿 revert 则整笔回滚，
-    ///         EVM 同交易回滚语义），并作为绊线防未来重构吞掉预购腿的 revert 面。
+    /// @notice Atomicity tripwire: the genesis leg (UAsset, full booking + pull) succeeds, the
+    ///         preorder leg reverts, and the whole call rolls back — zero launcher holdings,
+    ///         zeroed genesis records, unchanged caller/router balances. This pins the combined
+    ///         entrypoint's atomicity promise (any leg reverting rolls back the entire call, per
+    ///         EVM same-transaction revert semantics) and trips if a future refactor swallows the
+    ///         preorder leg's revert surface.
     function test_CombinedGenesisLegRollsBackWhenPreorderReverts() external {
         MockPreorderRevertingLauncher preorderReverting = new MockPreorderRevertingLauncher(address(uAsset));
         vm.prank(owner);
@@ -1775,7 +1797,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.genesisAndPreorder(VERSE_ID, _fundUAsset(genesisAmount), _fundUAsset(preorderAmount), user);
         vm.stopPrank();
 
-        // 创世腿曾完整执行（mock 拉款+记账）后仍整笔回滚：launcher 零持仓、记账归零。
+        // The genesis leg fully executed first (mock pull + booking) yet the call still rolled back:
+        // zero launcher holdings, zeroed records.
         assertEq(uAsset.balanceOf(address(preorderReverting)), 0, "launcher holds zero uAsset after rollback");
         (uint256 lastVerseId, uint256 lastAmount, address lastUser) = preorderReverting.snapshot();
         assertEq(lastVerseId, 0, "no genesis verse record survived the rollback");
@@ -1786,8 +1809,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.allowance(address(router), address(preorderReverting)), 0, "no allowance residual");
     }
 
-    /// @notice OS-1c(a)：组合 Psm 创世腿对未注册 (uAsset, reserve) 配对，在拉取前以
-    ///         `UnregisteredPsm`（配对键负载）拒绝。
+    /// @notice A combined PSM genesis leg on an unregistered (uAsset, reserve) pair is rejected
+    ///         with `UnregisteredPsm` (pair-key payload) before any pull.
     function test_RevertIf_CombinedPsmGenesisLegUnregisteredPair() external {
         RouterMockERC20 strayReserve = new RouterMockERC20("Stray", "STR");
         strayReserve.mint(user, 1e18);
@@ -1803,16 +1826,16 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
     }
 
-    /// @notice OS-1c(b)：组合 Psm 腿对注册后漂移的 PSM 绑定，在拉取前以
-    ///         `PsmBindingMismatch` / `PsmReserveMismatch` 拒绝（漂移 mock 构造参照父套件
-    ///         `test_RevertIf_GenesisByPSMOnPsmBindingDrift` 模式）。
+    /// @notice A combined PSM leg on a post-registration drifted PSM binding is rejected with
+    ///         `PsmBindingMismatch` / `PsmReserveMismatch` before any pull (the drift mock follows
+    ///         the parent suite's `test_RevertIf_GenesisByPSMOnPsmBindingDrift` pattern).
     function test_RevertIf_CombinedPsmLegOnPsmBindingDrift() external {
         PairDriftPSM driftPsm = new PairDriftPSM(address(uAsset), address(underlying));
         vm.prank(owner);
         router.setPsmForUAsset(address(uAsset), address(underlying), address(driftPsm));
         uint256 userUnderlyingBefore = underlying.balanceOf(user);
 
-        // uAsset 绑定漂移：注册后翻转到外族地址。
+        // uAsset binding drift: flipped to a foreign-family address after registration.
         address driftedUAsset = address(0xDEAD);
         driftPsm.setBoundUAsset(driftedUAsset);
         vm.prank(user);
@@ -1821,7 +1844,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         );
         router.genesisAndPreorder(VERSE_ID, _fundPsm(address(underlying), 1e18), _fundUAsset(1e18), user);
 
-        // reserve 绑定漂移：uAsset 绑定复位后翻转 reserve。
+        // Reserve binding drift: uAsset binding restored, then the reserve flipped.
         driftPsm.setBoundUAsset(address(uAsset));
         address driftedReserve = address(0xBEEF);
         driftPsm.setBoundReserve(driftedReserve);
@@ -1837,8 +1860,9 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "failed calls must not mint uAsset to the router");
     }
 
-    /// @notice OS-1c(c)：组合 Stake 创世腿对绑到不同 launcher 的 SP（fixture 参照外族 SP 部署
-    ///         模式），在任何 SY 移动前以 `GenesisLauncherMismatch` 拒绝。
+    /// @notice A combined stake genesis leg on an SP bound to a different launcher (fixture
+    ///         following the foreign-family SP deployment pattern) is rejected with
+    ///         `GenesisLauncherMismatch` before any SY moves.
     function test_RevertIf_CombinedStakeLegOnLauncherMismatchSP() external {
         MockGenesisLauncher otherLauncher = new MockGenesisLauncher(address(uAsset));
         OutrunStakingPositionUpgradeable otherPosition = OutrunStakingPositionUpgradeable(
@@ -1868,7 +1892,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(sy.balanceOf(address(router)), 0, "router must hold no SY from the rejected leg");
     }
 
-    /// @notice OS-1d：UAsset 创世腿带 `sp` → `FundFieldMustBeZero`（先于任何资金移动）。
+    /// @notice A UAsset genesis leg carrying `sp` reverts with `FundFieldMustBeZero`.
     function test_RevertIf_CombinedUAssetGenesisLegWithSp() external {
         IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
         bad.sp = address(position);
@@ -1879,7 +1903,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
     }
 
-    /// @notice OS-1d：UAsset 创世腿带 `minSyOut` → `FundFieldMustBeZero`（先于任何资金移动）。
+    /// @notice A UAsset genesis leg carrying `minSyOut` reverts with `FundFieldMustBeZero`.
     function test_RevertIf_CombinedUAssetGenesisLegWithMinSyOut() external {
         IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
         bad.minSyOut = 1;
@@ -1890,7 +1914,7 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
     }
 
-    /// @notice OS-1d：预购腿 `source = Credit` → `FundSourceNotAllowed`（先于任何资金移动）。
+    /// @notice A preorder leg with `source = Credit` reverts with `FundSourceNotAllowed`.
     function test_RevertIf_CombinedPreorderLegCreditSource() external {
         vm.prank(user);
         vm.expectRevert(
@@ -1899,8 +1923,10 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), _fundCredit(1e18), user);
     }
 
-    /// @notice OS-1e：单 native（创世腿）+ ERC20（预购腿）混合：`msg.value` 恰为创世腿额即过闸，
-    ///         native 只进创世腿的 PSM、ERC20 只归预购腿，两腿快照各自精确，router 零残留。
+    /// @notice Mixed legs, native (genesis) + ERC20 (preorder): `msg.value` exactly matching the
+    ///         genesis leg passes the value gate; the native reaches only the genesis leg's PSM
+    ///         and the ERC20 only the preorder leg, each leg's snapshots exact, zero router
+    ///         residual.
     function test_CombinedNativeGenesisAndErc20PreorderMixedValueSplit() external {
         uint256 genesisNativeIn = 2e18;
         uint256 preorderReserve = 3e18;
@@ -1928,8 +1954,9 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(address(router).balance, 0, "no native residual on router");
     }
 
-    /// @notice OS-1e 负向：混合两腿下 `msg.value = g + p`（为 ERC20 预购腿多付 native）→
-    ///         `NativeAmountMismatch`（混合下多付也拒），先于任何资金移动。
+    /// @notice Mixed legs, overpaid: with the same leg pair, `msg.value = g + p` (overpaying
+    ///         native for the ERC20 preorder leg) reverts with `NativeAmountMismatch` —
+    ///         overpayment is rejected in the mixed case too, before any funds move.
     function test_RevertIf_CombinedNativeGenesisAndErc20PreorderOverpaid() external {
         uint256 genesisNativeIn = 2e18;
         uint256 preorderReserve = 3e18;
@@ -1944,9 +1971,11 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
     }
 
-    /// @notice OS-2 wrap=0 边角：两 native 腿之和恰回绕为 0（g=1、p=type(uint256).max）且
-    ///         `msg.value = 0` 时过入口值门，于首个 native 转发处（创世腿 PSM mint 的 CALL
-    ///         value，router 实际余额为 0）整笔回滚：空 revert、fail-closed、余额零变动。
+    /// @notice Wrap-to-zero edge: two native legs whose sum wraps to exactly 0 (g=1,
+    ///         p=type(uint256).max) with `msg.value = 0` pass the entrypoint value gate, and the
+    ///         whole call reverts at the first native forwarding (the genesis leg's PSM mint CALL
+    ///         value, with the router's actual balance 0): empty revert, fail-closed, balances
+    ///         unchanged.
     function test_RevertIf_CombinedNativeLegSumWrapsToZero() external {
         vm.prank(user);
         vm.expectRevert();

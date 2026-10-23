@@ -135,7 +135,7 @@ contract OutrunRouterFuzzTest is Test {
         assertEq(underlying.allowance(address(router), address(psm)), 0, "PSM reserve allowance not cleared");
     }
 
-    /// @notice UAsset+UAsset 组合金额扫描：双腿各自足额入账、零残留。
+    /// @notice Combined UAsset+UAsset amount sweep: each leg books its full amount, zero router residual.
     function testFuzz_CombinedUAssetGenesisAndPreorderAmounts(uint96 genesisAmount, uint96 preorderAmount) external {
         genesisAmount = uint96(bound(genesisAmount, 1, 1e24));
         preorderAmount = uint96(bound(preorderAmount, 1, 1e24));
@@ -148,7 +148,7 @@ contract OutrunRouterFuzzTest is Test {
         assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
     }
 
-    /// @notice PSM 预购腿 fee 数学扫描：预购额恒等于 quoteMint。
+    /// @notice Combined PSM preorder fee-math sweep: the booked preorder amount always equals quoteMint.
     function testFuzz_CombinedPsmPreorderFeeMath(uint96 reserveIn) external {
         // Upper bound stays at the caller's 1e24 underlying fixture balance.
         reserveIn = uint96(bound(reserveIn, 1, 1e24));
@@ -161,8 +161,9 @@ contract OutrunRouterFuzzTest is Test {
         assertEq(p, IPSM(address(psm)).quoteMint(reserveIn), "preorder booked the quoteMint output");
     }
 
-    /// @notice 杠杆族组合金额扫描（最小面：UAsset 利息腿 + UAsset 预购腿）：POLend 的利息记账与
-    ///         托管、launcher 的预购记账各自精确等于扫描额，router 零残留。
+    /// @notice Leveraged-family combined amount sweep (minimal surface: uAsset interest leg +
+    ///         uAsset preorder leg): POLend's interest ledger and escrow and the launcher's preorder
+    ///         ledger each book exactly the swept amount, with zero router residual.
     function testFuzz_CombinedLeveragedUAssetAndPreorderAmounts(uint96 interest, uint96 preorderAmount) external {
         interest = uint96(bound(interest, 1, 1e24));
         preorderAmount = uint96(bound(preorderAmount, 1, 1e24));

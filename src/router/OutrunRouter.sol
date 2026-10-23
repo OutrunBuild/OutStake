@@ -508,8 +508,10 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
                 _psmMintForRouter(_registeredPsm(uAsset, f.token), uAsset, f.token, f.amount, nativeValueIn);
             _genesisTail(uAsset, verseId, user, minted, baseline);
         } else {
-            // Stake 腿：token == SP 的 canonical SY 时按 SY 单位直充（等价 genesisBySY），
-            // 否则经 SY.deposit（等价 genesisByToken）；SP 自带 uAsset→launcher 的原子交接与消费断言。
+            // Stake leg: when the leg's token is the SP's canonical SY it is charged directly in
+            // SY units (equivalent to `genesisBySY`), otherwise it converts through `SY.deposit`
+            // (equivalent to `genesisByToken`); the SP performs the uAsset→launcher atomic
+            // hand-off and full-consumption assertion itself.
             address SY = _trustedSYWithLauncherParity(f.sp);
             // Verse↔SP uAsset family binding: the SP must mint the verse's own uAsset family, checked
             // before any pull or deposit. The payload reuses `RouterTargetMismatch` (SY-flavored param
@@ -572,8 +574,9 @@ contract OutrunRouter is IOutrunRouter, TokenHelper, Ownable {
             IPOLendGenesis(polend_).leveragedGenesis(verseId, minted, user);
             GenesisGateLib.assertFullConsumption(uAsset, polend_, baseline);
         } else {
-            // Credit 腿：credit 代币从 POLend 的 factory 确定性解析（CREATE3 by uAsset），
-            // 精确 approve + 全额消费断言与 uAsset 腿同一纪律。
+            // Credit leg: the credit token resolves deterministically from POLend's factory
+            // (CREATE3 keyed by uAsset); the exact-approve and full-consumption assertion follow
+            // the same discipline as the uAsset leg.
             address credit = IGenesisCreditFactory(IPOLendGenesis(polend_).creditFactory()).creditOf(uAsset);
             if (credit == address(0)) revert NoCreditForUAsset(uAsset);
             uint256 baseline = IERC20(credit).balanceOf(address(this));
