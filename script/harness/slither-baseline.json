@@ -374,6 +374,33 @@
       "key": "unused-return|src/router/OutrunRouter.sol|OutrunRouter._forwardGenesisToSP(address,address,uint256,address,uint256,uint256) ignores return value by IOutrunStakeManager(SP).stakeForGenesis(amountInSY,genesisUser,verseId,minUAssetMinted)"
     },
     {
+      "id": "1bd0c7a78bca459214af87216a57c0c35bb5071150790bcaf3bc60e6d39a6322",
+      "check": "unused-return",
+      "impact": "Medium",
+      "confidence": "Medium",
+      "location": "src/router/OutrunRouter.sol#L580-L614",
+      "summary": "OutrunRouter._runLeveragedGenesisLeg(address,uint256,IOutrunRouter.FundInput,address,address,uint256) ignores return value by IPOLendGenesis(polend_).leveragedGenesis(verseId,f.amount,user)",
+      "key": "unused-return|src/router/OutrunRouter.sol|OutrunRouter._runLeveragedGenesisLeg(address,uint256,IOutrunRouter.FundInput,address,address,uint256) ignores return value by IPOLendGenesis(polend_).leveragedGenesis(verseId,f.amount,user)"
+    },
+    {
+      "id": "928bfe70488d5dd0be743f1b2fbe287ba537c7bd185b033cea98667284465f54",
+      "check": "unused-return",
+      "impact": "Medium",
+      "confidence": "Medium",
+      "location": "src/router/OutrunRouter.sol#L580-L614",
+      "summary": "OutrunRouter._runLeveragedGenesisLeg(address,uint256,IOutrunRouter.FundInput,address,address,uint256) ignores return value by IPOLendGenesis(polend_).leveragedGenesis(verseId,minted,user)",
+      "key": "unused-return|src/router/OutrunRouter.sol|OutrunRouter._runLeveragedGenesisLeg(address,uint256,IOutrunRouter.FundInput,address,address,uint256) ignores return value by IPOLendGenesis(polend_).leveragedGenesis(verseId,minted,user)"
+    },
+    {
+      "id": "2ee23c18ffedaf64d5eec46013aef76ca184efc00df6b028f01a10ed11d3238c",
+      "check": "unused-return",
+      "impact": "Medium",
+      "confidence": "Medium",
+      "location": "src/router/OutrunRouter.sol#L580-L614",
+      "summary": "OutrunRouter._runLeveragedGenesisLeg(address,uint256,IOutrunRouter.FundInput,address,address,uint256) ignores return value by IPOLendGenesis(polend_).leveragedGenesisWithCredit(verseId,f.amount,user)",
+      "key": "unused-return|src/router/OutrunRouter.sol|OutrunRouter._runLeveragedGenesisLeg(address,uint256,IOutrunRouter.FundInput,address,address,uint256) ignores return value by IPOLendGenesis(polend_).leveragedGenesisWithCredit(verseId,f.amount,user)"
+    },
+    {
       "id": "ebabe07e0a840c70faffdf981c2f727067f17200a0f61c638cd0eb595f883a64",
       "check": "unused-state",
       "impact": "Informational",
