@@ -4,6 +4,7 @@ pragma solidity ^0.8.35;
 import {UAssetHelper} from "./helpers/UAssetHelper.sol";
 
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
 import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAaveV3SYUpgradeable.sol";
@@ -19,6 +20,7 @@ import {SYBaseUpgradeable} from "../../src/yield/SYBaseUpgradeable.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {OutrunUniversalAssetsUpgradeable} from "../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
+import {AaveAdapterLib} from "../../src/libraries/AaveAdapterLib.sol";
 import {MockGenesisLauncher} from "./mocks/LauncherMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
@@ -32,13 +34,18 @@ import {
     MockWeETH,
     MockStETH,
     MockWstETH,
+    RevertingWstETH,
     MockVault,
+    VirtualOffsetVault,
     MockPSM3,
     MockListaStakeManager,
     MockYieldProxy,
     MockAsBnbMinter,
+    StubAsBnbMinter,
+    ZeroStakeManagerYieldProxy,
     MockDepositAdapter
 } from "./mocks/SYAdapterMocks.sol";
+import {RevertingRateProvider, ZeroRateProvider, ZeroProviderPSM3} from "./mocks/RateProviderMocks.sol";
 
 contract SYAdaptersUpgradeableTest is UAssetHelper {
     address internal owner = address(0xA11CE);
@@ -79,6 +86,38 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         );
     }
 
+    function testWstETHInitializerRevertsWhenStETHIsZero() external {
+        OutrunWstETHSYUpgradeable impl = new OutrunWstETHSYUpgradeable();
+        MockWstETH wstETH = new MockWstETH(address(new MockStETH()));
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl), abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(0), address(wstETH)))
+        );
+    }
+
+    function testWstEthNativeDepositRevertsWhenStakeFailsAndKeepsValueIntact() external {
+        MockStETH stETH = new MockStETH();
+        RevertingWstETH wstETH = new RevertingWstETH(address(stETH));
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWstETHSYUpgradeable()),
+            abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+        );
+
+        // The failing wstETH receive() must roll the whole deposit back atomically: the caller's
+        // ETH is refunded, nothing stays on the SY, and no shares are minted.
+        vm.deal(user, AMOUNT);
+        vm.startPrank(user);
+        vm.expectRevert(OutrunWstETHSYUpgradeable.WstETHStakeFailed.selector);
+        _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+        vm.stopPrank();
+
+        assertEq(user.balance, AMOUNT, "failed stake must refund the deposited ETH");
+        assertEq(sy.balance, 0, "failed stake must leave no ETH on the SY");
+        assertEq(_asSY(sy).balanceOf(user), 0, "failed stake must mint no shares");
+        assertEq(wstETH.balanceOf(sy), 0);
+    }
+
     function testListaInitializerRevertsWhenStakeManagerRateBelowParity() external {
         OutrunSlisBNBSYUpgradeable impl = new OutrunSlisBNBSYUpgradeable();
         MockListaStakeManager stakeManager = new MockListaStakeManager();
@@ -89,6 +128,194 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
             address(impl),
             abi.encodeCall(OutrunSlisBNBSYUpgradeable.initialize, (owner, address(token), address(stakeManager)))
         );
+    }
+
+    function testEthenaInitializerRevertsWhenUsdeIsZero() external {
+        OutrunStakedUSDeSYUpgradeable impl = new OutrunStakedUSDeSYUpgradeable();
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl), abi.encodeCall(OutrunStakedUSDeSYUpgradeable.initialize, (owner, address(0), address(token)))
+        );
+    }
+
+    function testSkyInitializerRevertsWhenUsdsIsZero() external {
+        OutrunStakedUsdsSYUpgradeable impl = new OutrunStakedUsdsSYUpgradeable();
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl), abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(0), address(token)))
+        );
+    }
+
+    function testSkyL2InitializerRevertsOnZeroStablecoinOrPsmLegs() external {
+        OutrunL2StakedUsdsSYUpgradeable impl = new OutrunL2StakedUsdsSYUpgradeable();
+        MockToken usdc = new MockToken("USDC", "USDC", 6);
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockPSM3 psm = new MockPSM3();
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(0), address(usds), address(token), address(psm))
+            )
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usdc), address(0), address(token), address(psm))
+            )
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usdc), address(usds), address(token), address(0))
+            )
+        );
+    }
+
+    function testListaInitializerRevertsOnZeroAddressLegs() external {
+        OutrunSlisBNBSYUpgradeable impl = new OutrunSlisBNBSYUpgradeable();
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(OutrunSlisBNBSYUpgradeable.initialize, (owner, address(0), address(stakeManager)))
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl), abi.encodeCall(OutrunSlisBNBSYUpgradeable.initialize, (owner, address(token), address(0)))
+        );
+    }
+
+    function testWeETHInitializerRevertsOnZeroAddressLegs() external {
+        OutrunWeETHSYUpgradeable impl = new OutrunWeETHSYUpgradeable();
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        MockDepositAdapter depositAdapter = new MockDepositAdapter();
+        MockLiquidityPool pool = new MockLiquidityPool();
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(0), address(weETH), address(depositAdapter), address(pool))
+            )
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize, (owner, address(eETH), address(weETH), address(0), address(pool))
+            )
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(depositAdapter), address(0))
+            )
+        );
+    }
+
+    function testAsterInitializerRevertsOnZeroAddressLegs() external {
+        OutrunAsBNBSYUpgradeable impl = new OutrunAsBNBSYUpgradeable();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(new MockListaStakeManager()));
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        StubAsBnbMinter minter = new StubAsBnbMinter(address(token), address(slis), address(yieldProxy), false);
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(0), address(slis), address(minter)))
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(0), address(minter)))
+        );
+
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(0)))
+        );
+    }
+
+    function testAsterInitializerRevertsOnEachMinterWiringMismatch() external {
+        address mismatch = makeAddr("mismatch");
+        OutrunAsBNBSYUpgradeable impl = new OutrunAsBNBSYUpgradeable();
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        {
+            // The minter reports an asBNB token other than the adapter's yield-bearing token.
+            MockYieldProxy yieldProxy = new MockYieldProxy(address(new MockListaStakeManager()));
+            StubAsBnbMinter minter = new StubAsBnbMinter(mismatch, address(slis), address(yieldProxy), false);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    OutrunAsBNBSYUpgradeable.InvalidAsBnbMinterAsBnb.selector, address(token), mismatch
+                )
+            );
+            ProxyTestHelper.deploy(
+                address(impl),
+                abi.encodeCall(
+                    OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter))
+                )
+            );
+        }
+        {
+            // The minter accepts a token-side asset other than the configured slisBNB.
+            MockYieldProxy yieldProxy = new MockYieldProxy(address(new MockListaStakeManager()));
+            StubAsBnbMinter minter = new StubAsBnbMinter(address(token), mismatch, address(yieldProxy), false);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    OutrunAsBNBSYUpgradeable.InvalidAsBnbMinterToken.selector, address(slis), mismatch
+                )
+            );
+            ProxyTestHelper.deploy(
+                address(impl),
+                abi.encodeCall(
+                    OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter))
+                )
+            );
+        }
+        {
+            // The minter reports no yield proxy, so no stake manager can be resolved.
+            StubAsBnbMinter minter = new StubAsBnbMinter(address(token), address(slis), address(0), false);
+            vm.expectRevert(OutrunAsBNBSYUpgradeable.InvalidYieldProxy.selector);
+            ProxyTestHelper.deploy(
+                address(impl),
+                abi.encodeCall(
+                    OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter))
+                )
+            );
+        }
+        {
+            // The yield proxy reports no stake manager, so the exchange-rate leg cannot be wired.
+            StubAsBnbMinter minter =
+                new StubAsBnbMinter(address(token), address(slis), address(new ZeroStakeManagerYieldProxy()), false);
+            vm.expectRevert(OutrunAsBNBSYUpgradeable.InvalidStakeManager.selector);
+            ProxyTestHelper.deploy(
+                address(impl),
+                abi.encodeCall(
+                    OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter))
+                )
+            );
+        }
     }
 
     function testAaveATokenRoundtripMatchesPreviewAndExchangeRate() external {
@@ -163,6 +390,72 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         vm.expectRevert(OutrunAaveV3SYUpgradeable.AaveZeroShares.selector);
         _asSY(sy).deposit(user, address(aToken), 1, 0);
         vm.stopPrank();
+    }
+
+    function testAaveExchangeRateTruncatesRayIndexToWad() external {
+        // 1.5e27 plus a sub-1e9 remainder: the RAY->WAD step is a floor division, so the 123
+        // ray-units must be dropped and the quoted rate is exactly 1.5e18.
+        uint256 index = 1_500_000_000_000_000_000_000_000_123;
+        (address sy,,) = _deployAave(index);
+
+        assertEq(_asSY(sy).exchangeRate(), 1.5e18);
+    }
+
+    function testAaveExchangeRateRevertsWhenLiquidityIndexIsZero() external {
+        MockToken underlying = new MockToken("Underlying", "UND", 18);
+        MockAToken aToken = new MockAToken(address(underlying));
+        MockAavePool pool = new MockAavePool();
+        pool.setReserve(address(underlying), aToken, 0);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAaveV3SYUpgradeable()),
+            abi.encodeCall(
+                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(pool), owner)
+            )
+        );
+
+        // A zero liquidity index means an uninitialized or broken reserve: the quote must fail
+        // closed with the library's named error instead of silently returning a zero rate.
+        vm.expectRevert(AaveAdapterLib.ZeroIndex.selector);
+        _asSY(sy).exchangeRate();
+
+        // Same wiring restored to a healthy index quotes normally, so the guard is the only delta.
+        pool.setReserve(address(underlying), aToken, 1e27);
+        assertEq(_asSY(sy).exchangeRate(), 1e18);
+    }
+
+    function testAaveUnderlyingRedeemTracksLiquidityIndexGrowth() external {
+        MockToken underlying = new MockToken("Underlying", "UND", 18);
+        MockAToken aToken = new MockAToken(address(underlying));
+        MockAavePool pool = new MockAavePool();
+        pool.setReserve(address(underlying), aToken, 1e27);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAaveV3SYUpgradeable()),
+            abi.encodeCall(
+                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(pool), owner)
+            )
+        );
+
+        underlying.mint(user, AMOUNT);
+        vm.startPrank(user);
+        underlying.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(underlying), AMOUNT, 0);
+        vm.stopPrank();
+        assertEq(shares, AMOUNT, "identity index must credit the deposit 1:1 in scaled shares");
+
+        // Index growth between deposit and redeem: the redemption must convert the scaled shares
+        // at the new index, paying out more than was deposited.
+        vm.warp(block.timestamp + 30 days);
+        uint256 newIndex = 1.5e27;
+        pool.setReserve(address(underlying), aToken, newIndex);
+        // Model the accrued yield: the pool must hold the larger amount it pays out on withdraw.
+        underlying.mint(address(pool), AMOUNT / 2);
+
+        vm.prank(user);
+        uint256 out = _asSY(sy).redeem(user, shares, address(underlying), 0, false);
+
+        assertGt(out, AMOUNT, "index growth must increase the redeem output above the deposit");
+        assertEq(out, AaveAdapterLib.calcSharesToAssetDown(shares, newIndex));
+        assertEq(underlying.balanceOf(user), AMOUNT * 3 / 2);
     }
 
     function testAdapterMatrixTokensPreviewExchangeRateAndInvalidTokenReverts() external {
@@ -445,6 +738,83 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         assertEq(wstETH.balanceOf(sy), 2);
     }
 
+    // Yield-bearing-token redemption legs that bypass every conversion venue: each adapter's
+    // tokenOut == yieldBearingToken branch is a direct 1:1 transfer of the resident backing.
+    function testWstEthRedeemToWstEthTransfersDirectlyOneToOne() external {
+        MockStETH stETH = new MockStETH();
+        MockWstETH wstETH = new MockWstETH(address(stETH));
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWstETHSYUpgradeable()),
+            abi.encodeCall(OutrunWstETHSYUpgradeable.initialize, (owner, address(stETH), address(wstETH)))
+        );
+
+        wstETH.mint(user, AMOUNT);
+        vm.startPrank(user);
+        wstETH.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(wstETH), AMOUNT, 0);
+        uint256 out = _asSY(sy).redeem(user, shares, address(wstETH), 0, false);
+        vm.stopPrank();
+
+        assertEq(shares, AMOUNT);
+        assertEq(out, shares, "wstETH redemption must return the shares 1:1");
+        assertEq(wstETH.balanceOf(user), AMOUNT);
+        assertEq(wstETH.balanceOf(sy), 0);
+    }
+
+    function testSkySusdsRedeemToSusdsTransfersDirectlyOneToOne() external {
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockVault sUSDS = new MockVault(address(usds));
+        sUSDS.setAssetsPerShare(1.25e18);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUsdsSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+        );
+
+        uint256 expectedShares = AMOUNT * 1e18 / 1.25e18;
+        usds.mint(user, AMOUNT);
+        vm.startPrank(user);
+        usds.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(usds), AMOUNT, 0);
+        // Redeeming to sUSDS bypasses the vault: 1 SY returns exactly 1 resident sUSDS share.
+        uint256 out = _asSY(sy).redeem(user, shares, address(sUSDS), 0, false);
+        vm.stopPrank();
+
+        assertEq(shares, expectedShares);
+        assertEq(out, shares, "sUSDS redemption must return the shares 1:1");
+        assertEq(sUSDS.balanceOf(user), expectedShares);
+        assertEq(sUSDS.balanceOf(sy), 0);
+    }
+
+    function testWeEthRedeemToWeEthTransfersDirectlyOneToOne() external {
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        MockLiquidityPool pool = new MockLiquidityPool();
+        uint256 rate = 1.25e18;
+        weETH.setShareRate(rate);
+        pool.setShareRate(rate);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(new MockDepositAdapter()), address(pool))
+            )
+        );
+
+        uint256 expectedShares = AMOUNT * 1e18 / rate;
+        eETH.mint(user, AMOUNT);
+        vm.startPrank(user);
+        eETH.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(eETH), AMOUNT, 0);
+        // Redeeming to weETH bypasses the unwrap: 1 SY returns exactly 1 resident weETH share.
+        uint256 out = _asSY(sy).redeem(user, shares, address(weETH), 0, false);
+        vm.stopPrank();
+
+        assertEq(shares, expectedShares);
+        assertEq(out, shares, "weETH redemption must return the shares 1:1");
+        assertEq(weETH.balanceOf(user), expectedShares);
+        assertEq(weETH.balanceOf(sy), 0);
+    }
+
     function testVaultBackedAdaptersUseDepositRedeemAndExchangeRate() external {
         // Non-identity vault/PSM rates so deposit preview and execution are no longer tautological.
         // Each vault family runs in its own helper frame (coverage compiles with --ir-minimum, no
@@ -687,6 +1057,100 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         assertEq(sUSDS.balanceOf(sy), 2);
     }
 
+    function testSkyL2InitializerRevertsWhenPsm3BindsZeroRateProvider() external {
+        OutrunL2StakedUsdsSYUpgradeable impl = new OutrunL2StakedUsdsSYUpgradeable();
+        MockToken usdc = new MockToken("USDC", "USDC", 6);
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        ZeroProviderPSM3 psm = new ZeroProviderPSM3();
+        // A PSM3 whose rateProvider seam reports the zero address cannot price sUSDS, so the
+        // initializer must fail closed at deployment instead of binding a dead pricing source.
+        vm.expectRevert(OutrunL2StakedUsdsSYUpgradeable.RateProviderCallFailed.selector);
+        ProxyTestHelper.deploy(
+            address(impl),
+            abi.encodeCall(
+                OutrunL2StakedUsdsSYUpgradeable.initialize,
+                (owner, address(usdc), address(usds), address(token), address(psm))
+            )
+        );
+    }
+
+    function testSkyL2ExchangeRateFailsClosedWhenRateProviderCallReverts() external {
+        (address sy,,,) = _deploySkyL2UsdsPsm(1e18);
+        RevertingRateProvider provider = new RevertingRateProvider();
+        vm.prank(owner);
+        OutrunL2StakedUsdsSYUpgradeable(payable(sy)).setRateProvider(address(provider));
+
+        // A reverting SSR provider is classified as a failed rate read, not propagated raw.
+        vm.expectRevert(OutrunL2StakedUsdsSYUpgradeable.RateProviderCallFailed.selector);
+        _asSY(sy).exchangeRate();
+    }
+
+    function testSkyL2ExchangeRateFailsClosedWhenRateProviderReturnsZero() external {
+        (address sy,,,) = _deploySkyL2UsdsPsm(1e18);
+        ZeroRateProvider provider = new ZeroRateProvider();
+        vm.prank(owner);
+        OutrunL2StakedUsdsSYUpgradeable(payable(sy)).setRateProvider(address(provider));
+
+        // A zero SSR rate carries no pricing information and is treated as a failed provider call.
+        vm.expectRevert(OutrunL2StakedUsdsSYUpgradeable.RateProviderCallFailed.selector);
+        _asSY(sy).exchangeRate();
+    }
+
+    function testSkyL2SetRateProviderRevertsOnZeroAddressAndForNonOwner() external {
+        (address sy,,,) = _deploySkyL2UsdsPsm(1e18);
+        OutrunL2StakedUsdsSYUpgradeable skyL2 = OutrunL2StakedUsdsSYUpgradeable(payable(sy));
+
+        vm.prank(owner);
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        skyL2.setRateProvider(address(0));
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
+        skyL2.setRateProvider(address(0xBAD));
+    }
+
+    function testSkyL2SetMaxDeviationBpsRevertsOnInvalidBoundAndForNonOwner() external {
+        (address sy,,,) = _deploySkyL2UsdsPsm(1e18);
+        OutrunL2StakedUsdsSYUpgradeable skyL2 = OutrunL2StakedUsdsSYUpgradeable(payable(sy));
+
+        // Zero would disable the deviation guard entirely.
+        vm.prank(owner);
+        vm.expectRevert(OutrunL2StakedUsdsSYUpgradeable.InvalidMaxDeviationBps.selector);
+        skyL2.setMaxDeviationBps(0);
+
+        // Above 10000 bps the guard would allow more than a 100% deviation.
+        vm.prank(owner);
+        vm.expectRevert(OutrunL2StakedUsdsSYUpgradeable.InvalidMaxDeviationBps.selector);
+        skyL2.setMaxDeviationBps(10001);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
+        skyL2.setMaxDeviationBps(500);
+    }
+
+    function testSkyL2SusdsDirectDepositAndRedeemAreOneToOneAndSyncBacking() external {
+        (address sy,, MockToken sUSDS,) = _deploySkyL2UsdsPsm(1e18);
+
+        // Direct sUSDS deposits skip the PSM entirely: 1 sUSDS mints 1 SY and the resident
+        // backing rises in lockstep with the outstanding supply.
+        sUSDS.mint(user, AMOUNT);
+        vm.startPrank(user);
+        sUSDS.approve(sy, AMOUNT);
+        uint256 shares = _asSY(sy).deposit(user, address(sUSDS), AMOUNT, 0);
+        assertEq(shares, AMOUNT);
+        assertEq(sUSDS.balanceOf(sy), AMOUNT, "direct deposit must hold the sUSDS backing");
+        assertEq(_asSY(sy).totalSupply(), AMOUNT);
+
+        // Direct sUSDS redemptions release that backing 1:1 without touching the PSM.
+        uint256 out = _asSY(sy).redeem(user, shares, address(sUSDS), 0, false);
+        vm.stopPrank();
+
+        assertEq(out, shares, "direct sUSDS redemption must return the shares 1:1");
+        assertEq(sUSDS.balanceOf(user), AMOUNT);
+        assertEq(sUSDS.balanceOf(sy), 0, "redemption must release the resident sUSDS backing");
+        assertEq(_asSY(sy).totalSupply(), 0);
+    }
+
     // Dust deposits below the exchange-rate quantum floor to zero shares in the unguarded adapter
     // families (4626 vault, PSM3 swap, wrap, unwrap). Each test below pins one family and relies
     // on the SYBase zero-output guard, not an adapter-local check, to revert the stranded input.
@@ -752,6 +1216,100 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         _assertDustDepositReverts(sy, eETH, amount);
     }
 
+    function testSkySusdsDustDepositRevertsOnZeroSharesOut() external {
+        uint256 amount = 1;
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        MockVault sUSDS = new MockVault(address(usds));
+        sUSDS.setAssetsPerShare(2e18);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUsdsSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+        );
+
+        _assertDustDepositReverts(sy, usds, amount);
+    }
+
+    function testWeEthNativeDustDepositRevertsOnZeroSharesOutAndRefunds() external {
+        uint256 amount = 1;
+        MockToken eETH = new MockToken("eETH", "eETH", 18);
+        MockWeETH weETH = new MockWeETH(address(eETH));
+        MockLiquidityPool pool = new MockLiquidityPool();
+        MockDepositAdapter depositAdapter = new MockDepositAdapter();
+        // At a 2x share rate, 1 wei of ETH buys zero weETH shares.
+        weETH.setShareRate(2e18);
+        pool.setShareRate(2e18);
+        depositAdapter.setShareRate(2e18);
+        depositAdapter.setWeETHToken(weETH);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunWeETHSYUpgradeable()),
+            abi.encodeCall(
+                OutrunWeETHSYUpgradeable.initialize,
+                (owner, address(eETH), address(weETH), address(depositAdapter), address(pool))
+            )
+        );
+
+        vm.deal(user, amount);
+        vm.startPrank(user);
+        vm.expectRevert(IStandardizedYield.SYZeroSharesOut.selector);
+        _asSY(sy).deposit{value: amount}(user, NATIVE, amount, 0);
+        vm.stopPrank();
+
+        // The dust native deposit reverts atomically: the 1 wei is refunded, nothing is minted.
+        assertEq(user.balance, amount, "dust native deposit must refund the ETH");
+        assertEq(sy.balance, 0);
+        assertEq(weETH.balanceOf(sy), 0);
+    }
+
+    // Preview-vs-execution bound on the vault-backed adapters: a vault whose virtual-offset
+    // previewDeposit can over-quote the minted shares must stay within the adapter-documented
+    // one-wei bound (preview <= actual + 1) on the same block.
+    function testEthenaPreviewDepositBoundsVaultMintWithinOneWei() external {
+        MockToken usde = new MockToken("USDe", "USDe", 18);
+        VirtualOffsetVault sUSDe = new VirtualOffsetVault(address(usde));
+        _seedVirtualOffsetVault(sUSDe);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUSDeSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUSDeSYUpgradeable.initialize, (owner, address(usde), address(sUSDe)))
+        );
+
+        _assertPreviewBoundsExecutionWithinOneWei(sy, usde, 9 ether + 1);
+    }
+
+    function testSkyPreviewDepositBoundsVaultMintWithinOneWei() external {
+        MockToken usds = new MockToken("USDS", "USDS", 18);
+        VirtualOffsetVault sUSDS = new VirtualOffsetVault(address(usds));
+        _seedVirtualOffsetVault(sUSDS);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunStakedUsdsSYUpgradeable()),
+            abi.encodeCall(OutrunStakedUsdsSYUpgradeable.initialize, (owner, address(usds), address(sUSDS)))
+        );
+
+        _assertPreviewBoundsExecutionWithinOneWei(sy, usds, 9 ether + 1);
+    }
+
+    /// @dev Seeds the virtual-offset vault so the offset quote diverges from the plain mint: at a
+    ///      1.5e18 asset-per-share rate and 2e18 seeded shares, an AMOUNT-like deposit of 9e18+1
+    ///      mints 6e18 plain-floor shares while the offset preview quotes 6e18+1.
+    function _seedVirtualOffsetVault(VirtualOffsetVault vault) internal {
+        vault.setAssetsPerShare(1.5e18);
+        vault.mint(2 ether, makeAddr("vaultSeeder"));
+    }
+
+    /// @dev Shared bound leg: the adapter's previewDeposit forwards the vault's offset quote while
+    ///      deposit mints the vault's plain-floor shares; the over-quote must exist and stay <= 1 wei.
+    function _assertPreviewBoundsExecutionWithinOneWei(address sy, MockToken asset, uint256 amount) internal {
+        asset.mint(user, amount);
+        vm.startPrank(user);
+        asset.approve(sy, amount);
+        uint256 preview = _asSY(sy).previewDeposit(address(asset), amount);
+        uint256 actual = _asSY(sy).deposit(user, address(asset), amount, 0);
+        vm.stopPrank();
+
+        assertGt(actual, 0);
+        assertGe(preview, actual, "preview must not under-quote the vault mint");
+        assertLe(preview - actual, 1, "preview over-quote must stay within the documented one-wei bound");
+    }
+
     function testOracleAndBnbFamiliesCoverRoundtripPreviewAndExchangeRate() external {
         address generic = _deployL2Staked();
         _assertYieldTokenRoundtrip(generic, token, AMOUNT);
@@ -797,6 +1355,27 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         assertEq(sharesOut, expectedShares);
         assertEq(previewShares, expectedShares * 9950 / 10000);
         assertEq(_asSY(sy).exchangeRate(), rate);
+    }
+
+    function testListaNativeDepositRevertsWhenStakeManagerMintsNothingAndRefunds() external {
+        // slisBnbToken left unset: the stake manager accepts the BNB call but mints no slisBNB.
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunSlisBNBSYUpgradeable()),
+            abi.encodeCall(OutrunSlisBNBSYUpgradeable.initialize, (owner, address(token), address(stakeManager)))
+        );
+
+        vm.deal(user, AMOUNT);
+        vm.startPrank(user);
+        vm.expectRevert(OutrunSlisBNBSYUpgradeable.StakeManagerDepositZero.selector);
+        _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+        vm.stopPrank();
+
+        // The no-mint deposit reverts atomically: the BNB is refunded and nothing is minted.
+        assertEq(user.balance, AMOUNT, "no-mint stake must refund the deposited BNB");
+        assertEq(sy.balance, 0, "no-mint stake must leave no BNB on the SY");
+        assertEq(_asSY(sy).balanceOf(user), 0, "no-mint stake must mint no shares");
+        assertEq(token.balanceOf(sy), 0);
     }
 
     function testAsterNativeDepositMatchesPreviewAndExchangeRate() external {
@@ -879,6 +1458,54 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         vm.prank(user);
         vm.expectRevert(OutrunAsBNBSYUpgradeable.AsBnbMintQueued.selector);
         _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+    }
+
+    function testAsterNativeDepositRevertsOnZeroSharesOutsideQueueAndRefunds() external {
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(stakeManager));
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        // Zero mint with a non-queued proxy: a true zero-output failure, not a retryable queue state.
+        StubAsBnbMinter minter = new StubAsBnbMinter(address(token), address(slis), address(yieldProxy), true);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAsBNBSYUpgradeable()),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter)))
+        );
+
+        vm.deal(user, AMOUNT);
+        vm.startPrank(user);
+        vm.expectRevert(OutrunAsBNBSYUpgradeable.AsBnbMintZeroShares.selector);
+        _asSY(sy).deposit{value: AMOUNT}(user, NATIVE, AMOUNT, 0);
+        vm.stopPrank();
+
+        // The zero-mint deposit reverts atomically: the BNB is refunded and nothing is minted.
+        assertEq(user.balance, AMOUNT, "zero-mint deposit must refund the deposited BNB");
+        assertEq(sy.balance, 0, "zero-mint deposit must leave no BNB on the SY");
+        assertEq(_asSY(sy).balanceOf(user), 0);
+    }
+
+    function testAsterSlisBnbDepositRevertsWhenQueuedAndKeepsInputIntact() external {
+        MockListaStakeManager stakeManager = new MockListaStakeManager();
+        MockYieldProxy yieldProxy = new MockYieldProxy(address(stakeManager));
+        MockToken slis = new MockToken("slisBNB", "slisBNB", 18);
+        MockAsBnbMinter minter = new MockAsBnbMinter(address(token), address(slis), address(yieldProxy));
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAsBNBSYUpgradeable()),
+            abi.encodeCall(OutrunAsBNBSYUpgradeable.initialize, (owner, address(token), address(slis), address(minter)))
+        );
+
+        // The queued classification also covers the slisBNB input branch, not only the native one.
+        yieldProxy.setActivitiesOnGoing(true);
+        slis.mint(user, AMOUNT);
+        vm.startPrank(user);
+        slis.approve(sy, AMOUNT);
+        vm.expectRevert(OutrunAsBNBSYUpgradeable.AsBnbMintQueued.selector);
+        _asSY(sy).deposit(user, address(slis), AMOUNT, 0);
+        vm.stopPrank();
+
+        // The queued deposit reverts atomically: the pulled slisBNB returns to the user.
+        assertEq(slis.balanceOf(user), AMOUNT, "queued deposit must return the pulled slisBNB");
+        assertEq(slis.balanceOf(sy), 0, "queued deposit must strand no slisBNB on the SY");
+        assertEq(token.balanceOf(sy), 0, "queued deposit must mint no asBNB");
     }
 
     function testWeEthNativeDepositMatchesPreviewAndExchangeRate() external {
@@ -1378,6 +2005,39 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
     function testWstEthBackingShortfallHaltsStakingPositionMintsAndKeepsRedeemOpen() external {
         (address sy, address ybt) = _depositWstEthBacking();
         _assertBackingShortfallHaltsPositionMints(sy, ybt);
+    }
+
+    // SP-level propagation of the Aave zero-index guard: the position's mint-side entries read the
+    // rate through _currentExchangeRate, so with the reserve index at zero the adapter's named
+    // ZeroIndex revert propagates unchanged (the SP zero-rate guard never sees a value to inspect).
+    function testAaveZeroLiquidityIndexHaltsStakingPositionMintsAndQuotes() external {
+        MockToken underlying = new MockToken("Underlying", "UND", 18);
+        MockAToken aToken = new MockAToken(address(underlying));
+        MockAavePool pool = new MockAavePool();
+        pool.setReserve(address(underlying), aToken, 1e27);
+        address sy = ProxyTestHelper.deploy(
+            address(new OutrunAaveV3SYUpgradeable()),
+            abi.encodeCall(
+                OutrunAaveV3SYUpgradeable.initialize, ("SY Aave", "SYA", address(aToken), address(pool), owner)
+            )
+        );
+        (OutrunStakingPositionUpgradeable position,) = _deployPositionOverUAsset(sy);
+
+        // Fund and approve while the reserve is healthy, so only the index flips afterwards.
+        aToken.mint(user, AMOUNT);
+        vm.startPrank(user);
+        aToken.approve(sy, AMOUNT);
+        _asSY(sy).deposit(user, address(aToken), AMOUNT, 0);
+        _asSY(sy).approve(address(position), AMOUNT);
+        vm.stopPrank();
+
+        pool.setReserve(address(underlying), aToken, 0);
+        vm.startPrank(user);
+        vm.expectRevert(AaveAdapterLib.ZeroIndex.selector);
+        position.stakeForGenesis(AMOUNT, user, 42, 0);
+        vm.stopPrank();
+        vm.expectRevert(AaveAdapterLib.ZeroIndex.selector);
+        position.previewStake(AMOUNT);
     }
 
     /// @dev SP propagation leg shared by the vault-backed families and the Sky L2 family.

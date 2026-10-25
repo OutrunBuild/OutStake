@@ -106,16 +106,16 @@ ray（`1e27`）是 Aave 流动性指数的数值域，区别于上文 SYUtils �
 
 成对换算函数与舍入方向：
 
-- `AaveAdapterLib.sol::calcSharesFromAssetHalfUp(amountAssets, index)`：内部走 `WadRayMath.rayDiv`，half-up 舍入；存款收份额方向——`OutrunAaveV3SYUpgradeable` 在 aToken 直存路径与 `_previewDeposit` 的 aToken 分支中以它把资产额折成 scaled shares；index==0 前置 revert `ZeroIndex()`
-- `AaveAdapterLib.sol::calcSharesFromAssetDown(amountAssets, index)`：`(amountAssets * 1e27) / index`，floor 舍入；存款收份额保守预览方向——`OutrunAaveV3SYUpgradeable` 在 `_previewDeposit` 的 underlying 分支中以它报价，同块满足 `preview ≤ execution`（执行侧 half-up，经 `scaledBalanceOf` 差量，最大 1 wei 低估、0 wei 高估，详见 `OutrunAaveV3SYUpgradeable.sol::_previewDeposit`），跨块见 `docs/spec/yield/yield-adapters.md` 预览注记；index==0 无前置守卫，裸除触发除零 Panic(0x12)；乘法 `amountAssets * 1e27` 为 checked，`amountAssets > type(uint256).max / 1e27`（≈1.1579e50）时溢出 revert Panic(0x11) fail-closed——Aave 资产域不可达（index 恒 ≥1e27 且金额远低于该阈值），属与下文 rayDiv `a` 超上界 guard 同类的完备性记录，运行期不触发
-- `AaveAdapterLib.sol::calcSharesToAssetDown(amountShares, index)`：`(amountShares * index) / 1e27`，floor 舍入；赎回付资产方向——`OutrunAaveV3SYUpgradeable` 在 `_redeem` 与 `_previewRedeem` 中以它把 scaled shares 折回资产额；乘法 `amountShares * index` 同为 checked，`amountShares > type(uint256).max / index`（index ≥1e27 时至多 ≈1.1579e50，阈值随 index 增大递减）时溢出 revert Panic(0x11) fail-closed——不可达；`index == 0` 时 `(amountShares * 0) / 1e27 == 0` 静默返回 0、不 revert——三函数对 `index == 0` 的三种分歧行为（HalfUp 具名 `ZeroIndex`、FromAssetDown 除零 Panic(0x12)、本函数静默返回 0）中唯一 fail-silent 的一支
+- `AaveAdapterLib.sol::calcSharesFromAssetHalfUp(amountAssets, index)`：内部走 `WadRayMath.rayDiv`，half-up 舍入；存款收份额方向——`OutrunAaveV3SYUpgradeable` 在 aToken 直存路径与 `_previewDeposit` 的 aToken 分支中以它把资产额折成 scaled shares；index==0 前置 revert `ZeroIndex()`——零指数意味着 Aave 储备未初始化或坏状态，三函数对该输入统一以具名错误 fail-closed，下两条同款守卫
+- `AaveAdapterLib.sol::calcSharesFromAssetDown(amountAssets, index)`：`(amountAssets * 1e27) / index`，floor 舍入；存款收份额保守预览方向——`OutrunAaveV3SYUpgradeable` 在 `_previewDeposit` 的 underlying 分支中以它报价，同块满足 `preview ≤ execution`（执行侧 half-up，经 `scaledBalanceOf` 差量，最大 1 wei 低估、0 wei 高估，详见 `OutrunAaveV3SYUpgradeable.sol::_previewDeposit`），跨块见 `docs/spec/yield/yield-adapters.md` 预览注记；index==0 前置 revert `ZeroIndex()`（三函数统一具名守卫）；乘法 `amountAssets * 1e27` 为 checked，`amountAssets > type(uint256).max / 1e27`（≈1.1579e50）时溢出 revert Panic(0x11) fail-closed——Aave 资产域不可达（健康/已初始化的 Aave 储备 index 恒 ≥1e27 且金额远低于该阈值），属与下文 rayDiv `a` 超上界 guard 同类的完备性记录，运行期不触发
+- `AaveAdapterLib.sol::calcSharesToAssetDown(amountShares, index)`：`(amountShares * index) / 1e27`，floor 舍入；赎回付资产方向——`OutrunAaveV3SYUpgradeable` 在 `_redeem` 与 `_previewRedeem` 中以它把 scaled shares 折回资产额；乘法 `amountShares * index` 同为 checked，`amountShares > type(uint256).max / index`（index ≥1e27 时至多 ≈1.1579e50，阈值随 index 增大递减）时溢出 revert Panic(0x11) fail-closed——不可达；index==0 前置 revert `ZeroIndex()`（三函数统一具名守卫，原静默返回 0 的 fail-silent 分支已收敛为具名 revert）
 
 舍入对照：`calcSharesFromAssetHalfUp` 的 half-up 不是 `canonical asset -> SY` up 内联公式的恒向上语义——后者无条件向 ceiling 进位，前者仅在商的小数部分达到 0.5 及以上时进位；两者是不同数值域上的不同舍入策略，`AaveAdapterLib` 的 NatSpec 显式区分这一点以防混淆。
 
 `WadRayMath.sol::rayDiv` 的 half-up 定义与溢出 guard 契约：
 
 - half-up 定义：`c = (a * 1e27 + b / 2) / b`（余数加半除数后整除）
-- `b == 0` revert — 空数据 `revert(0,0)`（汇编 `revert(0,0)`）为镜像 Aave gas 优化原文的刻意保留，属本仓 custom-error 可观测性约定的已记录例外；已在调用方 `AaveAdapterLib.sol::calcSharesFromAssetHalfUp` 前置 `if (index == 0) revert ZeroIndex()` 守卫，index==0 为具名 selector 可观测
+- `b == 0` revert — 空数据 `revert(0,0)`（汇编 `revert(0,0)`）为镜像 Aave gas 优化原文的刻意保留，属本仓 custom-error 可观测性约定的已记录例外；已在调用方 `AaveAdapterLib.sol::calcSharesFromAssetHalfUp` 前置 `if (index == 0) revert ZeroIndex()` 守卫（rayDiv 的生产调用方仅此一处，另两个不走 rayDiv 的换算函数在各自入口同款前置，三函数统一零指数具名守卫），index==0 为具名 selector 可观测
 - `a` 超上界 revert：要求 `a <= (type(uint256).max - b / 2) / 1e27`（同为空数据 `revert(0,0)`；该分支阈值 `(max - b/2)/1e27 ≈1.1579e50` 远高于任何合理 `a`，仅为完备守卫）
 
 `WadRayMath` 为镜像 Aave 上游 `WadRayMath` 语义的本仓库裁剪版（含空 `revert(0,0)` 的保留）；本节只记本仓库消费方向的契约，上游规则全集仍属外部依赖（体例同 `docs/spec/yield/oracles-and-integrations.md` 的 Evidence Rules：外部协议语义不得记为本地保证）。

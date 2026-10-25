@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {AaveAdapterLib} from "../../../src/libraries/AaveAdapterLib.sol";
 import {WadRayMath} from "../../../src/libraries/WadRayMath.sol";
 
 /// @notice Mock contract exposing guarded actions for ReentrancyGuard tests.
@@ -25,5 +26,21 @@ contract WadRayMathHelper {
 
     function rayDivOverflow(uint256 a, uint256 b) external pure {
         a.rayDiv(b);
+    }
+}
+
+/// @notice Helper that forwards to AaveAdapterLib so library reverts are observable through an
+///         external call (internal library calls are inlined and invisible to vm.expectRevert).
+contract AaveAdapterLibHelper {
+    function calcSharesFromAssetHalfUp(uint256 assets, uint256 index) external pure returns (uint256) {
+        return AaveAdapterLib.calcSharesFromAssetHalfUp(assets, index);
+    }
+
+    function calcSharesToAssetDown(uint256 shares, uint256 index) external pure returns (uint256) {
+        return AaveAdapterLib.calcSharesToAssetDown(shares, index);
+    }
+
+    function calcSharesFromAssetDown(uint256 assets, uint256 index) external pure returns (uint256) {
+        return AaveAdapterLib.calcSharesFromAssetDown(assets, index);
     }
 }

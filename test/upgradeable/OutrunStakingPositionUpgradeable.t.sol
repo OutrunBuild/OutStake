@@ -3,9 +3,11 @@ pragma solidity ^0.8.35;
 
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
+import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {GenesisGateLib} from "../../src/libraries/GenesisGateLib.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {
@@ -15,6 +17,7 @@ import {
     MockGenesisTransferBackLauncher,
     MockGenesisRevertingLauncher
 } from "./mocks/LauncherMocks.sol";
+import {MockPositionUUPSV2, MockPositionUUPSV2Continuous} from "./mocks/MockUUPSVersion.sol";
 import {MockSY, MockERC20, MockUAsset} from "./mocks/PositionTestMocks.sol";
 import {PositionMockToken, PositionSettableOracle} from "./mocks/PositionMocks.sol";
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
@@ -30,7 +33,9 @@ import {PositionRefModel} from "./helpers/PositionRefModel.sol";
  *         (`stakeForGenesis` is the only mint entrypoint: minted debt equals the collateral value
  *         at the mint-time rate), the genesis physical gate (SP balance conservation, launcher
  *         hand-off, kill switch), two-leg redeem (principal burn + interest transfer), zero-fee
- *         duty semantics, the owner-governed parameter surface, the view family, and input guards.
+ *         duty semantics, the owner-governed parameter surface, the view family, input guards, and
+ *         the UUPS upgrade surface (authorization, decimals-immutability guard, post-upgrade
+ *         semantic continuity).
  *         There is no liquidation, no LTV surface, and no free-borrowing entrypoint.
  * @dev Fixture: 18/18 decimals, MockSY rate default 1e18. Interest follows the RAY
  *      compounding closed form (`rmul(rpow(duty, dt), rate)`): the reference segment table
@@ -390,6 +395,36 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         assertEq(uAsset.balanceOf(address(genesisLauncher)), expectedMinted, "launcher holds exactly the minted amount");
     }
 
+    /// @notice A third party may fund the SY while a beneficiary owns the position: the funder is
+    ///         the caller but never gains redeem rights, the launcher credits the beneficiary, and
+    ///         the beneficiary alone can redeem.
+    function test_ThirdPartyFunderOpensPositionForBeneficiary() external {
+        sy.mintShares(other, 10e18); // `other` funds; `user` is the beneficiary owner
+        vm.startPrank(other);
+        sy.approve(address(position), 10e18);
+        uint256 positionId = position.stakeForGenesis(10e18, user, VERSE_ID, 0);
+        vm.stopPrank();
+
+        (address recordedOwner,,,,) = position.positions(positionId);
+        assertEq(recordedOwner, user, "beneficiary recorded as position owner");
+        (, uint256 launchedAmount, address launchedUser) = genesisLauncher.snapshot();
+        assertEq(launchedAmount, 10e18, "launcher received the value-parity mint");
+        assertEq(launchedUser, user, "launcher credits the beneficiary, not the funder");
+
+        // The funder holds no redeem right on the position it paid for.
+        vm.prank(other);
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        position.redeem(positionId, 1e18, other, address(sy), 0);
+
+        // The beneficiary redeems the full position unaided.
+        (,, uint256 principal,,) = position.positions(positionId);
+        _fundUAsset(user, principal);
+        vm.prank(user);
+        position.redeem(positionId, 10e18, user, address(sy), 0);
+        (address ownerAfterRedeem,,,,) = position.positions(positionId);
+        assertEq(ownerAfterRedeem, address(0), "beneficiary's full redeem deleted the position");
+    }
+
     /// @notice Pre-donated uAsset dust on the SP stays outside the post-assertion domain: the
     ///         gate asserts a return to the pre-mint baseline, not to zero, so a fully consumed
     ///         genesis succeeds while the SP still holds the dust.
@@ -689,6 +724,20 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         position.redeem(positionId + 100, 1e18, user, address(sy), 0);
     }
 
+    /// @notice previewRedeem denies both a never-existing id and a fully-redeemed (deleted) id,
+    ///         mirroring the executor's existence guard.
+    function test_RevertWhen_PreviewRedeemMissingOrDeletedPosition() external {
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        position.previewRedeem(42, 1e18, address(sy));
+
+        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18, 1e18);
+        _fundUAsset(user, principal);
+        vm.prank(user);
+        position.redeem(positionId, 10e18, user, address(sy), 0);
+        vm.expectRevert(IOutrunStakeManager.PositionAccessDenied.selector);
+        position.previewRedeem(positionId, 1e18, address(sy));
+    }
+
     /// @notice Zero and over-sized redeem inputs are rejected with the exact payload.
     function test_RevertWhen_RedeemZeroOrExcessInputs() external {
         (uint256 positionId,) = _stakeAtRate(user, 10e18, 1e18);
@@ -729,6 +778,72 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         vm.prank(user);
         (,, uint256 syOut) = position.redeem(positionId, 1e18, user, address(sy), 0);
         assertEq(syOut, 1e18, "SY exit is oracle-independent");
+    }
+
+    /// @notice Cross-block drift on the mint side: a minUAssetMinted quoted at a higher exchange
+    ///         rate rejects the stake after the rate drops, with the actual/minimum payload, before
+    ///         any funds move or a position is written.
+    function test_RevertWhen_StakeMinUAssetMintedDriftsAcrossRateChange() external {
+        sy.setExchangeRate(1.15e18);
+        uint256 staleMin = position.previewStake(10e18);
+        assertEq(staleMin, 11.5e18, "quote taken at the higher rate");
+
+        sy.setExchangeRate(1.1e18); // rate drops between quote and execution
+        sy.mintShares(user, 10e18);
+        vm.startPrank(user);
+        sy.approve(address(position), 10e18);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.InsufficientUAssetMinted.selector, 11e18, 11.5e18));
+        position.stakeForGenesis(10e18, user, VERSE_ID, staleMin);
+        vm.stopPrank();
+        _assertGenesisRevertedCleanly();
+    }
+
+    /// @notice Cross-block drift on the redeem side: a minTokenOut quoted through the adapter at
+    ///         the healthy output factor rejects the redeem after the adapter output degrades
+    ///         between quote and execution.
+    function test_RevertWhen_RedeemMinTokenOutDriftsAcrossBlocks() external {
+        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18, 1e18);
+        _fundUAsset(user, principal);
+        (,, uint256 staleQuote) = position.previewRedeem(positionId, 4e18, address(underlying));
+        assertEq(staleQuote, 4e18, "adapter quote at the healthy output factor");
+
+        sy.setRedeemOutputFactor(9e17); // adapter output degrades 10% between quote and execution
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IStandardizedYield.SYInsufficientTokenOut.selector, 3.6e18, 4e18));
+        position.redeem(positionId, 4e18, user, address(underlying), staleQuote);
+
+        (address ownerAfter, uint256 syStaked,,,) = position.positions(positionId);
+        assertEq(ownerAfter, user, "position survived the rejected redeem");
+        assertEq(syStaked, 10e18, "collateral untouched");
+    }
+
+    /// @notice Adapter slippage pass-through and atomicity: a redeem whose tokenOut routes through
+    ///         SY.redeem with an output below minTokenOut reverts with the SY-side error surfaced
+    ///         unchanged, and the whole redeem rolls back — position, treasury leg, minter ledger,
+    ///         and the caller's repay cover all intact.
+    function test_RevertWhen_AdapterSlippageRollsBackWholeRedeem() external {
+        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18, 1e18);
+        uint256 openSnapshot = position.rate();
+        _warp(20);
+        uint256 interest = _refInterest(principal, _refUnit(warpAt) - openSnapshot);
+        _fundUAsset(user, principal + interest); // balance and allowance cover both repay legs
+
+        sy.setRedeemOutputFactor(9e17);
+        uint256 syRedeemed = 5e18;
+        vm.startPrank(user);
+        vm.expectRevert(abi.encodeWithSelector(IStandardizedYield.SYInsufficientTokenOut.selector, 4.5e18, 5e18));
+        position.redeem(positionId, syRedeemed, user, address(underlying), syRedeemed);
+        vm.stopPrank();
+
+        (address ownerAfter, uint256 syStaked, uint256 principalDebt,,) = position.positions(positionId);
+        assertEq(ownerAfter, user, "position intact");
+        assertEq(syStaked, 10e18, "collateral intact");
+        assertEq(principalDebt, principal, "principal intact");
+        assertEq(uAsset.balanceOf(treasury), 0, "treasury received nothing");
+        (, uint256 amountInMinted) = uAsset.mintingStatusTable(address(position));
+        assertEq(amountInMinted, principal, "minter ledger untouched");
+        assertEq(uAsset.balanceOf(user), principal + interest, "repay cover untouched");
+        assertEq(underlying.balanceOf(user), 0, "no adapter output leaked to the receiver");
     }
 
     /// @notice A shared-allowance shortfall on either leg reverts the whole redeem atomically.
@@ -907,6 +1022,35 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         );
     }
 
+    /// @notice A principal at the uint128 cap accrues one second without wraparound: the cumulative
+    ///         rate is exactly rmul(rpow(duty, 1), RAY) and the interest is the floored product of
+    ///         the principal and the rate delta, matching the hand computation wei for wei.
+    function test_Uint128MaxPrincipalAccruesOneSecondExactly() external {
+        uint256 amountInSY = MAX_UINT128; // identity rate: principal == amountInSY
+        sy.mintShares(user, amountInSY);
+        vm.startPrank(user);
+        sy.approve(address(position), amountInSY);
+        uint256 positionId = position.stakeForGenesis(amountInSY, user, VERSE_ID, 0);
+        vm.stopPrank();
+        (,, uint256 principal,, uint256 openSnapshot) = position.positions(positionId);
+        assertEq(principal, MAX_UINT128, "principal at the uint128 cap");
+        assertEq(openSnapshot, RAY, "genesis-segment snapshot at RAY");
+
+        _warp(1);
+        // Hand computation of the v1 closed form: rmul(rpow(duty, 1), RAY).
+        uint256 manualRate = _refRmul(_refRpow(DUTY, 1), RAY);
+        assertEq(position.currentRate(), manualRate, "one-second cumulative rate matches the closed form");
+        uint256 manualInterest = MAX_UINT128 * (manualRate - RAY) / RAY;
+        assertEq(position.pendingInterest(positionId), manualInterest, "pending interest matches the hand product");
+        assertEq(
+            position.pendingInterest(positionId),
+            _refInterest(MAX_UINT128, _refUnit(warpAt) - RAY),
+            "reference model agrees"
+        );
+        assertGt(position.pendingInterest(positionId), 0, "one second of interest is positive");
+        assertGt(position.positionDebt(positionId), MAX_UINT128, "debt exceeds the principal without wraparound");
+    }
+
     /// @notice setGenesisLauncher accepts any address including zero and emits the old/new pair;
     ///         zero is the legal kill-switch state that disables the entrypoint.
     function test_SetGenesisLauncherAcceptsAnyAddressIncludingZero() external {
@@ -968,7 +1112,7 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         assertEq(uAsset.balanceOf(newTreasury), interest, "new treasury received the interest leg");
     }
 
-    /// @notice Every setter and the circuit breaker are owner-only.
+    /// @notice Every setter and both circuit-breaker directions (pause and unpause) are owner-only.
     function test_RevertWhen_NonOwnerCallsSetters() external {
         vm.startPrank(other);
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, other));
@@ -981,7 +1125,16 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         position.setProtocolTreasury(other);
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, other));
         position.pause();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, other));
+        position.unpause();
         vm.stopPrank();
+    }
+
+    /// @notice A second initialize through the proxy is rejected: the initializer is already
+    ///         consumed, so no parameter of a live position contract can be re-bound.
+    function test_RevertWhen_InitializeTwice() external {
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        position.initialize(owner, address(sy), address(uAsset), treasury, 1, DUTY);
     }
 
     /// @notice initialize validates zero-value guards and the duty domain (no ratchet at init:
@@ -1004,6 +1157,93 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         _deployPosition(impl, owner, address(sy), address(uAsset), treasury, 1, 0);
         vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.DutyCap.selector, DUTY_CAP + 1));
         _deployPosition(impl, owner, address(sy), address(uAsset), treasury, 1, DUTY_CAP + 1);
+    }
+
+    // ==========================================================================
+    // Section 4: UUPS upgrade surface (authorization, decimals guard, continuity)
+    // ==========================================================================
+
+    /// @notice The upgrade path is owner-only: any other account's upgradeToAndCall is rejected
+    ///         before the decimals guard or the code swap runs.
+    function test_RevertWhen_NonOwnerUpgrades() external {
+        MockPositionUUPSV2 v2 = new MockPositionUUPSV2();
+        vm.prank(other);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, other));
+        position.upgradeToAndCall(address(v2), "");
+    }
+
+    /// @notice The upgrade guard enforces decimals immutability: live `SY.assetInfo().assetDecimals`
+    ///         or `uAsset.decimals()` diverging from the initialize-time cache reverts
+    ///         DecimalsMismatch with the exact cached/live payload (either dimension alone trips),
+    ///         and restoring the decimals lets the same upgrade pass.
+    function test_RevertWhen_UpgradeWithDriftedDecimals() external {
+        MockPositionUUPSV2 v2 = new MockPositionUUPSV2();
+
+        // Canonical-asset drift: SY reports 6 while the SP cached 18.
+        sy.setDecimals(18, 6);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.DecimalsMismatch.selector, 18, 6, 18, 18));
+        position.upgradeToAndCall(address(v2), "");
+        sy.setDecimals(18, 18);
+
+        // uAsset drift: the token reports 6 while the SP cached 18.
+        uAsset.setUAssetDecimals(6);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.DecimalsMismatch.selector, 18, 18, 18, 6));
+        position.upgradeToAndCall(address(v2), "");
+        uAsset.setUAssetDecimals(18);
+
+        // Consistent decimals pass the guard and the implementation swaps.
+        vm.prank(owner);
+        position.upgradeToAndCall(address(v2), "");
+        bytes32 implSlot = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
+        assertEq(uint256(vm.load(address(position), implSlot)), uint256(uint160(address(v2))), "implementation swapped");
+    }
+
+    /// @notice Post-upgrade semantic continuity: a live interest-bearing position upgraded to a
+    ///         full-logic V2 keeps its storage, quotes the same legs in the same second, and redeems
+    ///         exactly on the uninterrupted reference trajectory across the code swap.
+    function test_UpgradeToV2PreservesRedeemSemantics() external {
+        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18, 1e18);
+        uint256 openSnapshot = position.rate();
+        _warp(50);
+        (uint256 quotedPrincipal, uint256 quotedInterest,) = position.previewRedeem(positionId, 10e18, address(sy));
+
+        MockPositionUUPSV2Continuous v2 = new MockPositionUUPSV2Continuous();
+        vm.prank(owner);
+        position.upgradeToAndCall(address(v2), "");
+        assertEq(MockPositionUUPSV2Continuous(address(position)).version(), 2, "proxy runs the V2 implementation");
+
+        // Storage continuity: the live position record is unchanged by the code swap.
+        (address ownerAfter, uint256 syStaked, uint256 principalDebt, uint256 accrued, uint256 lastRate) =
+            position.positions(positionId);
+        assertEq(ownerAfter, user, "owner survived");
+        assertEq(syStaked, 10e18, "collateral survived");
+        assertEq(principalDebt, principal, "principal survived");
+        assertEq(accrued, 0, "accrued survived");
+        assertEq(lastRate, openSnapshot, "rate snapshot survived");
+
+        // Quote continuity: the same-second quote through V2 equals the pre-upgrade quote.
+        (uint256 requotedPrincipal, uint256 requotedInterest,) = position.previewRedeem(positionId, 10e18, address(sy));
+        assertEq(requotedPrincipal, quotedPrincipal, "V2 quote: principal leg");
+        assertEq(requotedInterest, quotedInterest, "V2 quote: interest leg");
+
+        // Execution continuity: redeem follows the uninterrupted reference trajectory across the swap.
+        _warp(50);
+        uint256 expectedInterest = _refInterest(principal, _refUnit(warpAt) - openSnapshot);
+        assertGt(expectedInterest, quotedInterest, "accrual continued across the upgrade");
+        _fundUAsset(user, principal + expectedInterest);
+        vm.startPrank(user);
+        (uint256 burned, uint256 paid, uint256 syOut) = position.redeem(positionId, 10e18, user, address(sy), 0);
+        vm.stopPrank();
+        assertEq(burned, principal, "V2 redeem: principal leg");
+        assertEq(paid, expectedInterest, "V2 redeem: interest leg equals the whole-span reference");
+        assertEq(syOut, 10e18, "V2 redeem: SY output");
+        assertEq(uAsset.balanceOf(treasury), expectedInterest, "treasury received the interest leg");
+        (address ownerAfterRedeem,,,,) = position.positions(positionId);
+        assertEq(ownerAfterRedeem, address(0), "full redeem deletes the position under V2");
+        (, uint256 amountInMinted) = uAsset.mintingStatusTable(address(position));
+        assertEq(amountInMinted, 0, "minter ledger cleared under V2");
     }
 
     // ==========================================================================
@@ -1053,6 +1293,50 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         vm.stopPrank();
         assertEq(sy.balanceOf(address(position)), 0, "no SY entered on rejected stakes");
         assertEq(position.idCounter(), 0, "no position created");
+    }
+
+    /// @notice Cross-decimals 18-canonical/6-uAsset dust boundary: with the SY rate at 1e18, minted
+    ///         uAsset = floor(SY / 1e12). Below the 1e12-wei quantum the preview deliberately
+    ///         returns 0 while the executor reverts DustRoundedToZero for the same input; exactly at
+    ///         the quantum the smallest stakeable input mints exactly one uAsset unit.
+    function test_CrossDecimals18To6DustBoundaryMatrix() external {
+        // Local 18/6 stack: the uAsset decimals must be set before the SP caches them at initialize.
+        MockUAsset uAsset6 = new MockUAsset();
+        uAsset6.setUAssetDecimals(6);
+        MockGenesisLauncher launcher6 = new MockGenesisLauncher(address(uAsset6));
+        OutrunStakingPositionUpgradeable position6 = _deployPosition(
+            new OutrunStakingPositionUpgradeable(), owner, address(sy), address(uAsset6), treasury, 1, DUTY
+        );
+        vm.prank(owner);
+        position6.setGenesisLauncher(address(launcher6));
+        uAsset6.setMintingCap(address(position6), type(uint128).max);
+
+        // Below the quantum: quote returns 0, executor rejects, nothing is created.
+        uint256[3] memory dustInputs = [uint256(1), 1e11, 1e12 - 1];
+        for (uint256 i = 0; i < dustInputs.length; ++i) {
+            assertEq(position6.previewStake(dustInputs[i]), 0, "preview floors sub-quantum dust to 0");
+            sy.mintShares(user, dustInputs[i]);
+            vm.startPrank(user);
+            sy.approve(address(position6), dustInputs[i]);
+            vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
+            position6.stakeForGenesis(dustInputs[i], user, VERSE_ID, 0);
+            vm.stopPrank();
+        }
+        assertEq(position6.idCounter(), 0, "no dust position was created");
+
+        // Exactly at the quantum: the smallest stakeable input mints the single smallest unit.
+        assertEq(position6.previewStake(1e12), 1, "quote at the quantum mints 1 unit");
+        sy.mintShares(user, 1e12);
+        vm.startPrank(user);
+        sy.approve(address(position6), 1e12);
+        uint256 positionId = position6.stakeForGenesis(1e12, user, VERSE_ID, 1);
+        vm.stopPrank();
+        (,, uint256 principalDebt,,) = position6.positions(positionId);
+        assertEq(principalDebt, 1, "principal debt is the single smallest uAsset unit");
+        (, uint256 launchedAmount, address launchedUser) = launcher6.snapshot();
+        assertEq(launchedAmount, 1, "launcher received the single unit");
+        assertEq(launchedUser, user, "launcher credits the position owner");
+        assertEq(sy.balanceOf(address(position6)), 1e12, "SP holds the staked SY");
     }
 
     // ==========================================================================

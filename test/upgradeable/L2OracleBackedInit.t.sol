@@ -71,6 +71,36 @@ contract L2OracleBackedInitTest is UAssetHelper {
         h.validateOracleBacked(L1_STETH, 18, address(oracle));
     }
 
+    // --- init zero-address legs (checked before the oracle's first reading is taken) ---
+
+    /// @notice A zero oracle address would make every rate read call into address(0), so the
+    ///      init fails closed before any state is stored.
+    function test_RevertWhen_InitWithZeroExchangeRateOracle() external {
+        OutrunL2StakedTokenSYUpgradeable implementation = new OutrunL2StakedTokenSYUpgradeable();
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(implementation),
+            abi.encodeCall(
+                OutrunL2StakedTokenSYUpgradeable.initialize,
+                ("SY", "SY", owner, address(token), address(0), L1_USDC, 18)
+            )
+        );
+    }
+
+    /// @notice A zero L1 underlying-asset address would poison position accounting metadata, so
+    ///      the init fails closed before any state is stored.
+    function test_RevertWhen_InitWithZeroUnderlyingAssetOnEth() external {
+        OutrunL2StakedTokenSYUpgradeable implementation = new OutrunL2StakedTokenSYUpgradeable();
+        vm.expectRevert(IStandardizedYield.SYZeroAddress.selector);
+        ProxyTestHelper.deploy(
+            address(implementation),
+            abi.encodeCall(
+                OutrunL2StakedTokenSYUpgradeable.initialize,
+                ("SY", "SY", owner, address(token), address(oracle), address(0), 18)
+            )
+        );
+    }
+
     // --- Integration: assetInfo -> Position canonicalAssetDecimals caching ---
 
     function test_PositionCachesDecimalsFromAssetInfo() external {

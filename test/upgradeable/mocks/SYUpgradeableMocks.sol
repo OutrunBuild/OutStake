@@ -5,6 +5,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {SYBaseUpgradeable} from "../../../src/yield/SYBaseUpgradeable.sol";
+import {OutrunL2OracleBackedSYUpgradeable} from "../../../src/yield/OutrunL2OracleBackedSYUpgradeable.sol";
+import {IStandardizedYield} from "../../../src/yield/interfaces/IStandardizedYield.sol";
 import {OutrunERC20Upgradeable} from "../../../src/assets/base/OutrunERC20Upgradeable.sol";
 import {ArrayLib} from "../../../src/libraries/ArrayLib.sol";
 
@@ -110,5 +112,85 @@ contract TestSYUpgradeableV2 is TestSYUpgradeable {
 contract TestSYUpgradeableWithoutUpdatePauseBackstop is TestSYUpgradeable {
     function _update(address from, address to, uint256 value) internal override {
         OutrunERC20Upgradeable._update(from, to, value);
+    }
+}
+
+/// @dev V2 upgrade target for the L2 oracle-backed SY family. Inherits the abstract production
+/// base, so its ERC-7201 storage namespaces derive from the same constants as the V1 concrete
+/// adapter and every stored field stays addressable after upgradeToAndCall.
+contract TestL2OracleBackedSYUpgradeableV2 is OutrunL2OracleBackedSYUpgradeable {
+    /// @dev Signature mirrors OutrunL2StakedTokenSYUpgradeable.initialize for shape parity; the
+    ///      upgrade path itself passes no init data and never runs this.
+    function initialize(
+        string calldata name_,
+        string calldata symbol_,
+        address owner_,
+        address token_,
+        address exchangeRateOracle_,
+        address underlyingAssetOnEthAddr_,
+        uint8 underlyingAssetOnEthDecimals_
+    ) external initializer {
+        __L2OracleBackedSY_init(
+            name_,
+            symbol_,
+            owner_,
+            token_,
+            exchangeRateOracle_,
+            underlyingAssetOnEthAddr_,
+            underlyingAssetOnEthDecimals_
+        );
+    }
+
+    /// @notice Returns version 2 to confirm the upgrade took effect.
+    function version() external pure returns (uint256) {
+        return 2;
+    }
+}
+
+/// @dev Receives a native sweep payout and uses its receive() callback — which runs inside the
+///      sweep's low-level transfer call — to attempt reentrant sweep/deposit/redeem on the SY.
+///      Each attempt's revert selector is compared against ReentrancyGuardReentrantCall so the
+///      test can prove the nonReentrant guard (not some other check) blocked the reentry while
+///      the outer sweep still completed.
+contract NativeReentrantSweepReceiver {
+    address internal immutable token;
+    // Bound after the SY proxy exists: this contract is deployed as that SY's owner, so the
+    // nested sweep passes onlyOwner and only the reentrancy guard can block it.
+    address internal sy;
+
+    bool public sweepBlockedByReentrancyGuard;
+    bool public depositBlockedByReentrancyGuard;
+    bool public redeemBlockedByReentrancyGuard;
+
+    constructor(address token_) {
+        token = token_;
+    }
+
+    /// @notice Binds the SY under test and approves the token pull a reentrant deposit would
+    ///      need, so a removed guard would let the nested deposit succeed and flip its flag false.
+    function bindSy(address sy_) external {
+        sy = sy_;
+        IERC20(token).approve(sy_, type(uint256).max);
+    }
+
+    receive() external payable {
+        sweepBlockedByReentrancyGuard =
+            _revertsReentrantCall(abi.encodeCall(SYBaseUpgradeable.sweep, (token, address(this), 1)));
+        depositBlockedByReentrancyGuard =
+            _revertsReentrantCall(abi.encodeCall(IStandardizedYield.deposit, (address(this), token, 1, 0)));
+        redeemBlockedByReentrancyGuard =
+            _revertsReentrantCall(abi.encodeCall(IStandardizedYield.redeem, (address(this), 1, token, 0, false)));
+    }
+
+    /// @dev True only when the nested call reverted specifically with ReentrancyGuardReentrantCall;
+    ///      success or any other revert reason returns false.
+    function _revertsReentrantCall(bytes memory callData) internal returns (bool) {
+        (bool ok, bytes memory reason) = sy.call(callData);
+        if (ok || reason.length < 4) return false;
+        bytes4 selector;
+        assembly {
+            selector := mload(add(reason, 0x20))
+        }
+        return selector == ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector;
     }
 }

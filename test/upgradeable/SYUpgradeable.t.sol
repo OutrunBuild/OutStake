@@ -10,11 +10,13 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {SYBaseUpgradeable} from "../../src/yield/SYBaseUpgradeable.sol";
 import {NativeTransferFailed} from "../../src/libraries/TokenHelper.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {
     SYUpgradeableMockToken,
     TestSYUpgradeable,
     TestSYUpgradeableV2,
-    TestSYUpgradeableWithoutUpdatePauseBackstop
+    TestSYUpgradeableWithoutUpdatePauseBackstop,
+    NativeReentrantSweepReceiver
 } from "./mocks/SYUpgradeableMocks.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {RevertingReceiver} from "../support/mocks/TokenHelperMocks.sol";
@@ -26,6 +28,9 @@ contract SYUpgradeableTest is Test {
 
     bytes4 internal constant UNAUTHORIZED_INTERNAL_REDEEMER_SELECTOR =
         bytes4(keccak256("SYUnauthorizedInternalRedeemer(address)"));
+
+    // Mirror declaration for vm.expectEmit (matched by full event signature, not source import).
+    event Sweep(address indexed token, address indexed to, uint256 amount);
 
     SYUpgradeableMockToken internal token;
     TestSYUpgradeable internal sy;
@@ -172,6 +177,38 @@ contract SYUpgradeableTest is Test {
         assertEq(token.balanceOf(user), amount);
     }
 
+    // The router path burns this contract's own share balance; requesting one share above what it
+    // holds must fail on the burn, and the already-executed token-out delivery must roll back with it.
+    function testInternalRedeemRevertsWhenInternalShareBalanceInsufficient() external {
+        uint256 heldShares = 10e18;
+        token.mint(user, heldShares);
+        vm.prank(owner);
+        sy.setTrustedRouter(trustedRouter);
+
+        vm.startPrank(user);
+        token.approve(address(sy), heldShares);
+        sy.deposit(address(sy), address(token), heldShares, 0);
+        vm.stopPrank();
+
+        // Extra backing tokens so the token-out leg (which runs before the burn) succeeds and the
+        // share burn is the failing leg under test.
+        token.mint(address(sy), 1e18);
+
+        vm.prank(trustedRouter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, address(sy), heldShares, heldShares + 1
+            )
+        );
+        sy.redeem(user, heldShares + 1, address(token), 0, true);
+
+        // Atomic rollback: the token delivery never happened and the internal shares survived.
+        assertEq(sy.balanceOf(address(sy)), heldShares);
+        assertEq(token.balanceOf(address(sy)), heldShares + 1e18);
+        assertEq(token.balanceOf(user), 0);
+        assertEq(sy.totalSupply(), heldShares);
+    }
+
     // Pause is two-layer: deposit/redeem revert at entry via whenNotPaused, and share transfers
     // revert via the ERC20 _update backstop. Preview/exchangeRate views stay usable while paused.
     function testSYBasePauseBlocksDepositAndRedeem() external {
@@ -247,6 +284,30 @@ contract SYUpgradeableTest is Test {
         vm.prank(user);
         vm.expectRevert(IStandardizedYield.SYZeroRedeem.selector);
         sy.redeem(user, 0, address(token), 0, false);
+    }
+
+    // Execution reverts on zero amounts (SYZeroDeposit/SYZeroRedeem) while previews quote zero
+    // without reverting — the asymmetry is deliberate: previews are pure math with no guards to
+    // consume, so a zero quote stays callable for off-chain accounting.
+    function testSYBasePreviewZeroAmountsReturnZero() external {
+        assertEq(sy.previewDeposit(address(token), 0), 0);
+        assertEq(sy.previewRedeem(address(token), 0), 0);
+    }
+
+    // Shares are minted to the receiver, so a zero receiver fails inside _mint with the ERC20
+    // invalid-receiver error after the input tokens were already pulled in.
+    function testSYBaseDepositToZeroReceiverReverts() external {
+        uint256 amount = 10e18;
+        token.mint(user, amount);
+        vm.startPrank(user);
+        token.approve(address(sy), amount);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0)));
+        sy.deposit(address(0), address(token), amount, 0);
+        vm.stopPrank();
+
+        // The pull rolled back with the mint.
+        assertEq(token.balanceOf(user), amount);
+        assertEq(sy.totalSupply(), 0);
     }
 
     function testSYBaseDepositBelowMinSharesReverts() external {
@@ -358,6 +419,70 @@ contract SYUpgradeableTest is Test {
         sy.sweep(address(0), user, 1 ether);
 
         assertEq(user.balance, 1 ether);
+    }
+
+    // Sweep guard family, continued: authorization, the success path's event, and the self-sweep
+    // no-op shape.
+    function testSYBaseSweepRevertsWhenCallerIsNotOwner() external {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
+        sy.sweep(address(token), user, 1);
+    }
+
+    function testSYBaseSweepEmitsEventAndDeliversRescueToken() external {
+        // A token that is neither the yield-bearing token nor the SY itself, so no guard leg fires.
+        SYUpgradeableMockToken rescueToken = new SYUpgradeableMockToken();
+        uint256 amount = 5e18;
+        rescueToken.mint(address(sy), amount);
+
+        vm.expectEmit(true, true, false, true);
+        emit Sweep(address(rescueToken), user, amount);
+        vm.prank(owner);
+        sy.sweep(address(rescueToken), user, amount);
+
+        assertEq(rescueToken.balanceOf(user), amount);
+        assertEq(rescueToken.balanceOf(address(sy)), 0);
+    }
+
+    // PIN of current semantics (recorded behavior, not an endorsement): to == the SY itself
+    // is a permitted near no-op — the transfer moves the balance from the contract to itself,
+    // so the rescue completes (and emits) without changing any balance.
+    function testSYBaseSweepToSelfCompletesAsNearNoOp() external {
+        SYUpgradeableMockToken rescueToken = new SYUpgradeableMockToken();
+        uint256 amount = 3e18;
+        rescueToken.mint(address(sy), amount);
+
+        vm.prank(owner);
+        sy.sweep(address(rescueToken), address(sy), amount);
+
+        assertEq(rescueToken.balanceOf(address(sy)), amount);
+    }
+
+    // Native sweep reentrancy: the receiver's receive() callback fires mid-transfer, so every SY
+    // entry point must already be inside the sweep's nonReentrant window. The callback swallows
+    // the nested reverts, so the outer sweep still delivers its full amount.
+    function testSYBaseSweepNativeReentrantReceiverBlockedByGuardAndOuterCompletes() external {
+        NativeReentrantSweepReceiver receiver = new NativeReentrantSweepReceiver(address(token));
+        // The receiver IS the owner, so the nested sweep passes onlyOwner and only the
+        // reentrancy guard can block it — pinning the guard, not the owner check, as the blocker.
+        TestSYUpgradeable ownedSy = TestSYUpgradeable(
+            payable(ProxyTestHelper.deploy(
+                    address(new TestSYUpgradeable()),
+                    abi.encodeCall(TestSYUpgradeable.initialize, ("SY Token", "SYT", address(token), address(receiver)))
+                ))
+        );
+        receiver.bindSy(address(ownedSy));
+        token.mint(address(receiver), 10e18);
+        vm.deal(address(ownedSy), 1 ether);
+
+        vm.prank(address(receiver));
+        ownedSy.sweep(address(0), address(receiver), 1 ether);
+
+        assertTrue(receiver.sweepBlockedByReentrancyGuard(), "reentrant sweep must hit the reentrancy guard");
+        assertTrue(receiver.depositBlockedByReentrancyGuard(), "reentrant deposit must hit the reentrancy guard");
+        assertTrue(receiver.redeemBlockedByReentrancyGuard(), "reentrant redeem must hit the reentrancy guard");
+        assertEq(address(ownedSy).balance, 0, "outer sweep delivered its full native balance");
+        assertEq(address(receiver).balance, 1 ether, "receiver kept the swept native amount");
     }
 
     function _deploySYWithoutUpdatePauseBackstop() internal returns (TestSYUpgradeable) {

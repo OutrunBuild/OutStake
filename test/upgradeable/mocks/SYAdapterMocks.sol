@@ -260,12 +260,24 @@ contract MockWstETH is MockToken {
     }
 
     // solhint-disable-next-line no-complex-fallback
-    receive() external payable {
+    receive() external payable virtual {
         // Mimic real WstETH.receive: stake ETH via stETH and mint wstETH directly
         // Real path is shares = stETH.submit{value}(); _mint(msg.sender, shares);
         // MockStETH.submit mints stETH token to caller and returns shares
         uint256 shares = MockStETH(STETH).submit{value: msg.value}(address(0));
         _mint(msg.sender, shares);
+    }
+}
+
+/// @notice Mock wstETH variant whose native stake shortcut (receive) always fails.
+/// @dev Models a wstETH whose ETH-to-wstETH submit path rejects the stake: the adapter's raw
+///      `call{value}` then reports failure and must revert WstETHStakeFailed with the value intact.
+///      wrap/unwrap/stEthPerToken are inherited unchanged because only the native leg is under test.
+contract RevertingWstETH is MockWstETH {
+    constructor(address stETH_) MockWstETH(stETH_) {}
+
+    receive() external payable override {
+        revert();
     }
 }
 
@@ -304,7 +316,7 @@ contract MockVault is MockToken, IERC4626 {
         return type(uint256).max;
     }
 
-    function previewDeposit(uint256 assets) external view returns (uint256) {
+    function previewDeposit(uint256 assets) external view virtual returns (uint256) {
         return convertToShares(assets);
     }
 
@@ -356,6 +368,19 @@ contract MockVault is MockToken, IERC4626 {
         assets = convertToAssets(shares);
         // ERC-4626 redeem pays out from the vault's own asset holdings, not from thin air.
         MockToken(ASSET).transfer(receiver, assets);
+    }
+}
+
+/// @notice Vault variant whose preview quotes with a one-unit virtual offset.
+/// @dev Models ERC-4626 vaults whose `previewDeposit` can over-quote the shares actually minted by
+///      `deposit` by at most one wei — the preview-vs-execution caveat documented on the vault-backed
+///      SY adapters. The preview uses the `(totalSupply + 1) / (totalAssets + 1)` virtual-offset form
+///      while the inherited execution keeps the plain `assets * 1e18 / assetsPerShare` floor mint.
+contract VirtualOffsetVault is MockVault {
+    constructor(address asset_) MockVault(asset_) {}
+
+    function previewDeposit(uint256 assets) external view override returns (uint256) {
+        return assets * (totalSupply() + 1) / (this.totalAssets() + 1);
     }
 }
 
@@ -520,6 +545,58 @@ contract MockAsBnbMinter {
 
     function convertToAsBnb(uint256 tokenAmount) external view returns (uint256) {
         return tokenAmount * 1e18 / rate;
+    }
+}
+
+/// @notice Yield proxy variant that reports a zero stake manager.
+/// @dev Models both IYieldProxy seams; the zero stake manager exercises the Aster initializer's
+///      InvalidStakeManager guard while activitiesOnGoing stays false.
+contract ZeroStakeManagerYieldProxy {
+    function stakeManager() external pure returns (address) {
+        return address(0);
+    }
+
+    function activitiesOnGoing() external pure returns (bool) {
+        return false;
+    }
+}
+
+/// @notice Minter stub with configurable wiring reports and a toggleable zero mint.
+/// @dev Reports the constructor-configured asBnb/token/yieldProxy back to the Aster initializer, so
+///      a mismatch on any leg reverts with the matching InvalidAsBnbMinter*/InvalidYieldProxy error.
+///      With `zeroMint` set, mintAsBnb returns zero while the yield proxy stays non-queued, so the
+///      adapter's true zero-output classification (AsBnbMintZeroShares, not AsBnbMintQueued) fires.
+///      Partial mock: models the wiring-read seams and the mint return value; real mint accounting,
+///      delivery, and conversion rates are unmodeled — every tested path either reverts in
+///      initialize before any mint or reverts on the zero mint, so the identity conversion quotes
+///      only satisfy the initializer's wiring parity checks.
+contract StubAsBnbMinter {
+    address public immutable asBnb;
+    address public immutable token;
+    address public immutable yieldProxy;
+    bool public immutable zeroMint;
+
+    constructor(address asBnb_, address token_, address yieldProxy_, bool zeroMint_) {
+        asBnb = asBnb_;
+        token = token_;
+        yieldProxy = yieldProxy_;
+        zeroMint = zeroMint_;
+    }
+
+    function mintAsBnb() external payable returns (uint256) {
+        return zeroMint ? 0 : msg.value;
+    }
+
+    function mintAsBnb(uint256 amount) external returns (uint256) {
+        return zeroMint ? 0 : amount;
+    }
+
+    function convertToTokens(uint256 asBnbAmount) external pure returns (uint256) {
+        return asBnbAmount;
+    }
+
+    function convertToAsBnb(uint256 tokenAmount) external pure returns (uint256) {
+        return tokenAmount;
     }
 }
 

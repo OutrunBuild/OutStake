@@ -12,6 +12,7 @@ import {
     SendParam
 } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
 import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 import {OutrunRateLimiterUpgradeable} from "../../src/assets/omnichain/OutrunRateLimiterUpgradeable.sol";
@@ -53,6 +54,14 @@ contract OutrunOFTUpgradeableTest is Test {
         OutrunUpgradeableOftHarness maximumPrecisionOft = new OutrunUpgradeableOftHarness(63, address(endpoint));
 
         assertEq(maximumPrecisionOft.decimalConversionRate(), 1e57);
+    }
+
+    /// @dev A zero LayerZero endpoint is rejected by our own constructor guard: the upstream
+    ///      OApp core constructor stores the address unchecked, so without this check a
+    ///      misconfigured deployment would compile in an endpoint that can never route messages.
+    function test_RevertWhen_LzEndpointIsZero() external {
+        vm.expectRevert(OutrunOFTUpgradeable.InvalidLayerZeroEndpoint.selector);
+        new OutrunUpgradeableOftHarness(18, address(0));
     }
 
     function testTokenAndApprovalRequiredUseLocalToken() external {
@@ -137,6 +146,20 @@ contract OutrunOFTUpgradeableTest is Test {
 
         assertEq(received, 25e18);
         assertEq(oft.balanceOf(user), 125e18);
+    }
+
+    /// @dev A wire credit addressed to the zero address must not be silently destroyed by the
+    ///      ERC20 mint-then-burn zero-to-zero path: the receiver is remapped to 0xdead, so the
+    ///      dead address holds the full amount and totalSupply grows by it. A missing remap
+    ///      would add and subtract the same value, burning the bridged amount out of existence.
+    function testCreditRemapsZeroReceiverToDeadAddress() external {
+        uint256 supplyBefore = oft.totalSupply();
+
+        uint256 received = oft.exposedCredit(address(0), 25e18, DST_EID);
+
+        assertEq(received, 25e18);
+        assertEq(oft.balanceOf(address(0xdead)), 25e18);
+        assertEq(oft.totalSupply(), supplyBefore + 25e18);
     }
 
     function testAmountCanBeSentResetsWhenWindowElapsed() external {
@@ -301,6 +324,75 @@ contract OutrunOFTUpgradeableTest is Test {
         (uint256 clearedInFlight, uint256 clearedCanBeSent) = oft.getAmountCanBeSent(DST_EID);
         assertEq(clearedInFlight, 0);
         assertEq(clearedCanBeSent, 10e18);
+    }
+
+    /// @dev Pins the exactly-at-limit boundary through the OFT debit path: an outflow equal to
+    ///      the remaining capacity is accepted (rejection is strictly-greater), drains capacity
+    ///      to zero, and the smallest DCR-aligned follow-up send (1e12 = one shared-decimal
+    ///      unit, above the dust floor so it passes the AmountTooSmall gate) is then rejected
+    ///      with RateLimitExceeded.
+    function testDebitExactlyAtLimitDrainsCapacityThenRejectsSmallestAlignedSend() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
+
+        vm.prank(user);
+        oft.exposedDebit(user, 40e18, 0, DST_EID);
+
+        assertEq(oft.balanceOf(user), 60e18);
+        assertEq(oft.totalSupply(), 60e18);
+
+        (uint256 inFlight, uint256 canBeSent) = oft.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 40e18);
+        assertEq(canBeSent, 0);
+
+        // Read before expectRevert: an intervening external call would consume the expectation.
+        uint256 smallestAlignedSend = oft.decimalConversionRate();
+        vm.prank(user);
+        vm.expectRevert(OutrunRateLimiterUpgradeable.RateLimitExceeded.selector);
+        oft.exposedDebit(user, smallestAlignedSend, 0, DST_EID);
+    }
+
+    /// @dev window == 0 is reserved as the unconfigured/deleted infinite sentinel; configuring
+    ///      it would write an ambiguous state and must revert.
+    function test_RevertWhen_WindowIsZero() external {
+        vm.prank(owner);
+        vm.expectRevert(OutrunOFTUpgradeable.InvalidWindowSeconds.selector);
+        oft.setOutboundRateLimit(DST_EID, 40e18, 0);
+    }
+
+    /// @dev limit == 0 would silently halt every outbound send to the destination; lifting a
+    ///      limit must go through removeOutboundRateLimit instead.
+    function test_RevertWhen_LimitIsZero() external {
+        vm.prank(owner);
+        vm.expectRevert(OutrunOFTUpgradeable.InvalidRateLimit.selector);
+        oft.setOutboundRateLimit(DST_EID, 0, 1 days);
+    }
+
+    /// @dev limit < window leaves below-1-per-second refill: the integer decay stays 0 for long
+    ///      stretches and capacity appears frozen, so it is rejected as an invalid limit.
+    function test_RevertWhen_LimitBelowWindow() external {
+        vm.prank(owner);
+        vm.expectRevert(OutrunOFTUpgradeable.InvalidRateLimit.selector);
+        oft.setOutboundRateLimit(DST_EID, 100, 86400);
+    }
+
+    /// @dev The limit-below-window check is strict: limit == window (one wei of capacity per
+    ///      second) is the smallest accepted configuration.
+    function testSetOutboundRateLimitAcceptsLimitEqualToWindow() external {
+        vm.prank(owner);
+        oft.setOutboundRateLimit(DST_EID, 1 days, 1 days);
+
+        OutrunRateLimiterUpgradeable.RateLimit memory rateLimit = oft.rateLimits(DST_EID);
+        assertEq(rateLimit.limit, 1 days);
+        assertEq(rateLimit.window, 1 days);
+        assertTrue(oft.isRateLimited(DST_EID));
+    }
+
+    /// @dev Only the owner may configure outbound rate limits.
+    function test_RevertIf_SetOutboundRateLimitNotOwner() external {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, user));
+        oft.setOutboundRateLimit(DST_EID, 40e18, 1 days);
     }
 
     function testRemoveLimitRestoresSharedDecimalEnvelope() external {
@@ -545,6 +637,44 @@ contract OutrunRateLimiterBaseTest is Test {
 
         assertEq(inFlight, 0, "zero window with nonzero limit: no tokens in flight");
         assertEq(canBeSent, type(uint256).max, "zero window with nonzero limit: capacity is the infinite sentinel");
+    }
+
+    /// @dev Pins the exactly-equal outflow boundary of the strict-greater rejection: an outflow
+    ///      equal to the full limit is accepted and recorded in flight, capacity drains to zero,
+    ///      and the very next single-unit outflow reverts RateLimitExceeded.
+    function testOutflowEqualToLimitDrainsCapacityThenRejectsNextUnit() external {
+        rateLimiter.setRateLimits(_singleConfig(40e18, 1 days));
+
+        rateLimiter.outflow(DST_EID, 40e18);
+
+        (uint256 inFlight, uint256 canBeSent) = rateLimiter.getAmountCanBeSent(DST_EID);
+        assertEq(inFlight, 40e18, "outflow equal to the limit must be accepted and recorded in flight");
+        assertEq(canBeSent, 0, "outflow equal to the limit must drain capacity to zero");
+
+        vm.expectRevert(OutrunRateLimiterUpgradeable.RateLimitExceeded.selector);
+        rateLimiter.outflow(DST_EID, 1);
+    }
+
+    /// @dev A single _setRateLimits batch must configure every destination independently:
+    ///      each dstEid keeps its own (limit, window) pair and starts with no in-flight amount.
+    ///      The per-destination owner entry only ever submits one-element arrays, so the batch
+    ///      semantics are pinned here through the harness surface.
+    function testBatchSetRateLimitsConfiguresEveryDestinationInOneCall() external {
+        OutrunRateLimiterUpgradeable.RateLimitConfig[] memory configs =
+            new OutrunRateLimiterUpgradeable.RateLimitConfig[](3);
+        configs[0] = OutrunRateLimiterUpgradeable.RateLimitConfig({dstEid: 301, limit: 10e18, window: 1 days});
+        configs[1] = OutrunRateLimiterUpgradeable.RateLimitConfig({dstEid: 302, limit: 20e18, window: 2 days});
+        configs[2] = OutrunRateLimiterUpgradeable.RateLimitConfig({dstEid: 303, limit: 30e18, window: 3 days});
+
+        rateLimiter.setRateLimits(configs);
+
+        for (uint256 i; i < configs.length; ++i) {
+            OutrunRateLimiterUpgradeable.RateLimit memory configured = rateLimiter.rateLimits(configs[i].dstEid);
+            assertEq(configured.limit, configs[i].limit, "each batched destination must store its own limit");
+            assertEq(configured.window, configs[i].window, "each batched destination must store its own window");
+            assertEq(configured.amountInFlight, 0, "a fresh batched config must record no in-flight amount");
+            assertTrue(rateLimiter.isRateLimited(configs[i].dstEid), "each batched destination must be rate-limited");
+        }
     }
 
     function _singleConfig(uint192 limit, uint64 window)

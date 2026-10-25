@@ -12,23 +12,37 @@ import {IOutrunStakeManager} from "../../../src/position/interfaces/IOutrunStake
  * @notice Partial mock SY used in position tests.
  * @dev Partial mock: models deposit/redeem around the underlying token for consumer-level tests.
  *      Does not model exchange-rate-based redeem conversion or a production token surface;
- *      token surfaces are aligned to the underlying token only.
+ *      token surfaces are aligned to the underlying token only. Models a settable redeem-output
+ *      factor (1e18 = 1:1 default) applied identically by redeem and previewRedeem, so tests can
+ *      degrade the adapter output between a quote and an execution (slippage injection); the
+ *      factor never mints shares or underlying, it only scales the transferred output down to the
+ *      pre-funded backing.
  */
 contract MockSY is ERC20, IStandardizedYield {
     address internal immutable underlying;
     uint256 internal rate;
+    // Redeem-output scaling factor in 1e18 terms: output = shares * factor / 1e18. Default 1e18
+    // keeps redeem 1:1 with the burned shares.
+    uint256 internal redeemOutputFactor;
     uint8 internal syDecimals;
     uint8 internal canonicalAssetDecimals;
 
     constructor(address underlying_) ERC20("Mock SY", "mSY") {
         underlying = underlying_;
         rate = 1e18;
+        redeemOutputFactor = 1e18;
         syDecimals = 18;
         canonicalAssetDecimals = 18;
     }
 
     function setExchangeRate(uint256 newRate) external {
         rate = newRate;
+    }
+
+    /// @notice Sets the redeem-output factor (1e18 = 1:1). Scales both `redeem` and `previewRedeem`
+    ///         so the quote/execute pair stays consistent in the same state.
+    function setRedeemOutputFactor(uint256 factor) external {
+        redeemOutputFactor = factor;
     }
 
     function setDecimals(uint8 syDecimals_, uint8 canonicalAssetDecimals_) external {
@@ -73,7 +87,7 @@ contract MockSY is ERC20, IStandardizedYield {
             _burn(msg.sender, amountSharesToRedeem);
         }
 
-        amountTokenOut = amountSharesToRedeem;
+        amountTokenOut = amountSharesToRedeem * redeemOutputFactor / 1e18;
         MockERC20(tokenOut).transfer(receiver, amountTokenOut);
         if (amountTokenOut < minTokenOut) {
             revert IStandardizedYield.SYInsufficientTokenOut(amountTokenOut, minTokenOut);
@@ -110,8 +124,8 @@ contract MockSY is ERC20, IStandardizedYield {
         amountSharesOut = amountTokenToDeposit;
     }
 
-    function previewRedeem(address, uint256 amountSharesToRedeem) external pure returns (uint256 amountTokenOut) {
-        amountTokenOut = amountSharesToRedeem;
+    function previewRedeem(address, uint256 amountSharesToRedeem) external view returns (uint256 amountTokenOut) {
+        amountTokenOut = amountSharesToRedeem * redeemOutputFactor / 1e18;
     }
 
     function assetInfo() external view returns (AssetType assetType, address assetAddress, uint8 assetDecimals) {

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.35;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
@@ -10,7 +12,12 @@ import {IUniversalAssets} from "../../src/assets/interfaces/IUniversalAssets.sol
 import {OutrunPSMUpgradeable} from "../../src/psm/OutrunPSMUpgradeable.sol";
 import {IPSM} from "../../src/psm/interfaces/IPSM.sol";
 import {NativeAmountMismatch, NativeTransferFailed} from "../../src/libraries/TokenHelper.sol";
-import {NativeRejectingReceiver, PSMMockReserveERC20, ReenteringReserveERC20} from "./mocks/PSMMocks.sol";
+import {
+    NativeReenteringFeeRecipient,
+    NativeRejectingReceiver,
+    PSMMockReserveERC20,
+    ReenteringReserveERC20
+} from "./mocks/PSMMocks.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
 import {UAssetHelper} from "../upgradeable/helpers/UAssetHelper.sol";
 
@@ -684,6 +691,16 @@ contract OutrunPSMTest is UAssetHelper {
         assertEq(paidOut, 999e18);
         assertEq(psmNative.netUAssetMinted(), 0);
 
+        // Saturation-domain sweep: once the ledger saturates at zero, the 1e18 of native left
+        // behind by the foreign redemption is fully sweepable principal — the sweep pays out the
+        // whole held surplus, empties the PSM, and still never touches the net-minted ledger.
+        assertEq(psmNative.sweepableFees(), 1e18);
+        vm.prank(bob);
+        uint256 swept = psmNative.sweepFees();
+        assertEq(swept, 1e18);
+        assertEq(address(psmNative).balance, 0);
+        assertEq(psmNative.netUAssetMinted(), 0);
+
         // Saturation restored the full stock-cap headroom: with no per-swap flow cap, a single mint
         // fills the whole raised cap — per-swap size is bounded only by the headroom.
         vm.startPrank(psmOwner);
@@ -940,6 +957,335 @@ contract OutrunPSMTest is UAssetHelper {
         // Conservation: the remaining 1_999_000 units of cover equal the mint fee (1e18) plus
         // the redeem fee (0.999e18) in face value.
         assertEq(evil.balanceOf(address(evilPsm)) * 1e12, 1.999e18);
+    }
+
+    /// @notice A redeem whose ERC20 payout exceeds the reserve actually held reverts on the payout
+    ///         transfer and rolls back atomically: the caller keeps the (foreign-minted) uAsset,
+    ///         the PSM keeps its reserve, and the net-minted ledger is untouched. The foreign
+    ///         uAsset enters supply through the debt-ledger path (setMintingCap + mint), never
+    ///         backed by this PSM's reserve.
+    function test_RevertWhen_RedeemExceedsHeldReserveERC20Leg() external {
+        vm.prank(alice);
+        psm.mint(alice, 1000e6); // PSM holds 1000e6 USDC against 999e18 net minted
+
+        vm.startPrank(uAssetOwner);
+        uAsset.setMintingCap(bob, 2_000_000e18);
+        vm.stopPrank();
+        vm.prank(bob);
+        uAsset.mint(alice, 1_000_000e18);
+
+        // 1_000_000e18 face * (1 - 0.1%) floored to 6 decimals far exceeds the 1000e6 held.
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(psm), 1000e6, 999_000e6)
+        );
+        psm.redeem(alice, 1_000_000e18);
+
+        // Atomic rollback: balances and the ledger read exactly as before the failed redeem.
+        assertEq(uAsset.balanceOf(alice), 999e18 + 1_000_000e18);
+        assertEq(usdc.balanceOf(address(psm)), 1000e6);
+        assertEq(psm.netUAssetMinted(), 999e18);
+    }
+
+    /// @notice The native-leg twin: a payout exceeding the native held fails the low-level payout
+    ///         call and reverts NativeTransferFailed, with the same atomic rollback of the uAsset
+    ///         pull, the burn, and the net-minted ledger.
+    function test_RevertWhen_RedeemExceedsHeldReserveNativeLeg() external {
+        vm.prank(alice);
+        psmNative.mint{value: 1000e18}(alice, 1000e18); // PSM holds 1000e18 native, net minted 999e18
+
+        vm.startPrank(uAssetOwner);
+        uAsset.setMintingCap(bob, 2_000_000e18);
+        vm.stopPrank();
+        vm.prank(bob);
+        uAsset.mint(alice, 1_000_000e18);
+
+        // Payout 999_000e18 > 1000e18 held: the value-carrying call fails on the PSM's own balance.
+        vm.prank(alice);
+        vm.expectRevert(NativeTransferFailed.selector);
+        psmNative.redeem(alice, 1_000_000e18);
+
+        assertEq(uAsset.balanceOf(alice), 999e18 + 1_000_000e18);
+        assertEq(address(psmNative).balance, 1000e18);
+        assertEq(psmNative.netUAssetMinted(), 999e18);
+    }
+
+    /// @notice The UUPS surface is owner-only: a non-owner upgradeToAndCall reverts
+    ///         OwnableUnauthorizedAccount before any implementation switch.
+    function test_RevertIf_UpgradeByNonOwner() external {
+        OutrunPSMUpgradeable nextImplementation = new OutrunPSMUpgradeable();
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, alice));
+        psm.upgradeToAndCall(address(nextImplementation), "");
+    }
+
+    /// @notice An owner upgrade to a fresh same-spec implementation preserves every binding and
+    ///         parameter (they live in namespaced storage, not implementation code) — including
+    ///         the net-minted ledger — and swaps keep routing through the preserved bindings.
+    function test_UpgradePreservesBindingsLedgerAndSwaps() external {
+        vm.prank(alice);
+        psm.mint(alice, 1000e6); // net minted 999e18 against 1000e6 held
+
+        // Deploy before the prank: a `new` inside the call arguments would itself consume the
+        // prank, leaving the upgrade to run as the test contract instead of the owner.
+        OutrunPSMUpgradeable nextImplementation = new OutrunPSMUpgradeable();
+        vm.prank(psmOwner);
+        psm.upgradeToAndCall(address(nextImplementation), "");
+
+        assertEq(psm.uAsset(), address(uAsset));
+        assertEq(psm.reserveToken(), address(usdc));
+        assertEq(psm.feeRecipient(), feeRecipient);
+        assertEq(psm.tin(), TIN);
+        assertEq(psm.tout(), TOUT);
+        assertEq(psm.stockCap(), STOCK_CAP);
+        assertEq(psm.netUAssetMinted(), 999e18);
+        assertEq(psm.owner(), psmOwner);
+
+        vm.prank(alice);
+        uint256 paidOut = psm.redeem(alice, 999e18);
+        assertEq(paidOut, 998_001_000);
+        assertEq(psm.netUAssetMinted(), 0);
+    }
+
+    /// @notice An upgrade-time drift of the bound uAsset decimals reverts UAssetDecimalsMismatch:
+    ///         the authorization hook reads the live uAsset, so a metadata drift fails the
+    ///         upgrade closed. The decimals mock is cleared afterwards to prove it was the sole
+    ///         blocker and leaves no residue for the rest of the test.
+    function test_RevertWhen_UpgradeWithDriftedUAssetDecimals() external {
+        vm.mockCall(address(uAsset), abi.encodeCall(IERC20Metadata.decimals, ()), abi.encode(uint8(6)));
+
+        // Same prank-ordering rule as the owner upgrade: deploy before the prank.
+        OutrunPSMUpgradeable nextImplementation = new OutrunPSMUpgradeable();
+        vm.prank(psmOwner);
+        vm.expectRevert(abi.encodeWithSelector(IPSM.UAssetDecimalsMismatch.selector, 18, 6));
+        psm.upgradeToAndCall(address(nextImplementation), "");
+
+        vm.clearMockedCalls();
+        assertEq(uAsset.decimals(), 18);
+    }
+
+    /// @notice A uAsset with non-18 decimals cannot be bound at initialization: PSM face-value
+    ///         math hardcodes 18 decimals, so a 6-dec uAsset reverts UAssetDecimalsMismatch(18, 6)
+    ///         instead of silently mis-scaling every future swap.
+    function test_RevertWhen_InitializeBindsSixDecimalsUAsset() external {
+        OutrunUniversalAssetsUpgradeable uAssetSix = _deployUAsset(uAssetOwner, 6);
+        // Deployed before the expectRevert: a `new` after it would consume the expectation.
+        OutrunPSMUpgradeable implementation = new OutrunPSMUpgradeable();
+
+        vm.expectRevert(abi.encodeWithSelector(IPSM.UAssetDecimalsMismatch.selector, 18, 6));
+        _deploy(implementation, address(uAssetSix), address(usdc), psmOwner, feeRecipient, STOCK_CAP, TIN, TOUT);
+    }
+
+    /// @notice A native feeRecipient whose receive() hook re-enters sweepFees/mint/redeem while
+    ///         the sweep payout is in flight is blocked by the transient guard on all three
+    ///         nested attempts, and the outer sweep still completes: the recipient is paid the
+    ///         full surplus while the reserve cover for net minted stays in the PSM.
+    function test_ReentrantSweepViaNativeFeeRecipientIsBlocked() external {
+        NativeReenteringFeeRecipient reenteror = new NativeReenteringFeeRecipient(address(0));
+        OutrunPSMUpgradeable psmReenter = _deploy(
+            new OutrunPSMUpgradeable(), address(uAsset), NATIVE, psmOwner, address(reenteror), STOCK_CAP, TIN, TOUT
+        );
+        reenteror.setPsm(address(psmReenter));
+        vm.prank(uAssetOwner);
+        uAsset.setReserveMinter(address(psmReenter), true);
+
+        vm.prank(alice);
+        psmReenter.mint{value: 1000e18}(alice, 1000e18); // 1e18 fee surplus against 999e18 net
+
+        vm.prank(bob);
+        uint256 swept = psmReenter.sweepFees();
+
+        assertEq(reenteror.firstFailure(), reenteror.NO_FAILURE(), "reentrant entry was not blocked by the guard");
+        assertEq(swept, 1e18);
+        assertEq(address(reenteror).balance, 1e18);
+        // Only the surplus left: the 999e18 of reserve cover for the net minted stays behind.
+        assertEq(address(psmReenter).balance, 999e18);
+        assertEq(psmReenter.netUAssetMinted(), 999e18);
+    }
+
+    /// @notice Quote/execution divergence at zero and dust inputs: the previews return 0 without
+    ///         reverting while the executors revert ZeroInput on the same inputs — a deliberate
+    ///         divergence, so callers must treat a 0 quote as non-executable.
+    function test_QuoteZeroAndDustDivergesFromExecution() external {
+        assertEq(psmNative.quoteMint(0), 0);
+        assertEq(psm.quoteRedeem(0), 0);
+
+        // 1 wei of native face value floors to 0 uAsset after the 0.1% tin.
+        assertEq(psmNative.quoteMint(1), 0);
+        vm.prank(alice);
+        vm.expectRevert(IPSM.ZeroInput.selector);
+        psmNative.mint{value: 1}(alice, 1);
+
+        // 12_345 wei of uAsset face value floors to 0 six-dec reserve units after tout + rescale.
+        assertEq(psm.quoteRedeem(12_345), 0);
+        vm.prank(alice);
+        vm.expectRevert(IPSM.ZeroInput.selector);
+        psm.redeem(alice, 12_345);
+    }
+
+    /// @notice Zero-output redeem on the native leg: with a 1% tout, 1 wei of uAsset face floors
+    ///         to a zero payout and reverts ZeroInput — the dust guard fires before any uAsset is
+    ///         pulled or burned.
+    function test_RevertWhen_NativeRedeemOutputFloorsToZero() external {
+        vm.prank(psmOwner);
+        psmNative.setFees(0, 1e16);
+
+        vm.prank(alice);
+        vm.expectRevert(IPSM.ZeroInput.selector);
+        psmNative.redeem(alice, 1);
+
+        // The guard fired before the pull: nothing moved.
+        assertEq(uAsset.balanceOf(alice), 0);
+        assertEq(psmNative.netUAssetMinted(), 0);
+    }
+
+    /// @notice Smallest executable native mint under zero fees: 1 wei in, 1 wei of uAsset out —
+    ///         the dust guard rejects only a zero output, never a one-wei output.
+    function test_ZeroFeeOneWeiNativeMintSucceeds() external {
+        vm.prank(psmOwner);
+        psmNative.setFees(0, 0);
+
+        vm.prank(alice);
+        uint256 amountOut = psmNative.mint{value: 1}(alice, 1);
+
+        assertEq(amountOut, 1);
+        assertEq(uAsset.balanceOf(alice), 1);
+        assertEq(psmNative.netUAssetMinted(), 1);
+        assertEq(address(psmNative).balance, 1);
+    }
+
+    /// @notice Lowering the stock cap below the current net minted puts the instance in a
+    ///         transient over-cap state: every mint reverts StockCapExceeded until redemptions
+    ///         free headroom below the new cap — the cap constrains only mints, never redemptions.
+    function test_StockCapLoweredBelowNetMintedBlocksMintUntilRedeem() external {
+        vm.startPrank(psmOwner);
+        psmNative.setFees(0, 0);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        psmNative.mint{value: 1000e18}(alice, 1000e18); // net minted == 1000e18
+
+        vm.prank(psmOwner);
+        psmNative.setStockCap(999e18);
+
+        // Transient over-cap: net minted (1000e18) now exceeds the lowered cap (999e18).
+        assertGt(psmNative.netUAssetMinted(), psmNative.stockCap());
+
+        vm.prank(alice);
+        vm.expectRevert(IPSM.StockCapExceeded.selector);
+        psmNative.mint{value: 1}(alice, 1);
+
+        // Redeem is never cap-bound: it frees headroom below the lowered cap...
+        vm.prank(alice);
+        uint256 paidOut = psmNative.redeem(alice, 400e18);
+        assertEq(paidOut, 400e18);
+        assertEq(psmNative.netUAssetMinted(), 600e18);
+
+        // ...and mints recover exactly up to the new cap line, then stop again.
+        vm.prank(alice);
+        uint256 reMinted = psmNative.mint{value: 399e18}(alice, 399e18);
+        assertEq(reMinted, 399e18);
+        assertEq(psmNative.netUAssetMinted(), 999e18);
+
+        vm.prank(alice);
+        vm.expectRevert(IPSM.StockCapExceeded.selector);
+        psmNative.mint{value: 1}(alice, 1);
+    }
+
+    /// @notice The mint receiver is decoupled from the payer: alice swaps her reserve in, bob
+    ///         receives the minted uAsset, and the fee/ledger accounting matches a
+    ///         self-received mint exactly.
+    function test_MintToThirdPartyRecipient() external {
+        vm.prank(alice);
+        uint256 amountOut = psm.mint(bob, 1000e6);
+
+        assertEq(amountOut, 999e18);
+        assertEq(uAsset.balanceOf(bob), 999e18);
+        assertEq(uAsset.balanceOf(alice), 0);
+        assertEq(usdc.balanceOf(alice), 1_000_000e6 - 1000e6);
+        assertEq(usdc.balanceOf(address(psm)), 1000e6);
+        assertEq(psm.netUAssetMinted(), 999e18);
+    }
+
+    /// @notice A redeem the caller cannot back with uAsset fails the pull and changes nothing:
+    ///         insufficient balance (with full allowance) and insufficient allowance (with
+    ///         balance) both revert on the uAsset transferFrom before any payout or ledger write.
+    function test_RevertWhen_RedeemExceedsCallerBalanceOrAllowance() external {
+        // alice approved the PSM for the max in setUp but holds no uAsset.
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, alice, 0, 1e18));
+        psm.redeem(alice, 1e18);
+
+        // carol holds foreign-minted uAsset but never approved the PSM.
+        address carol = makeAddr("carol");
+        vm.startPrank(uAssetOwner);
+        uAsset.setMintingCap(bob, 1_000_000e18);
+        vm.stopPrank();
+        vm.prank(bob);
+        uAsset.mint(carol, 5e18);
+
+        vm.prank(carol);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(psm), 0, 5e18));
+        psm.redeem(carol, 5e18);
+
+        // Neither failed pull moved any state.
+        assertEq(uAsset.balanceOf(alice), 0);
+        assertEq(uAsset.balanceOf(carol), 5e18);
+        assertEq(uAsset.balanceOf(address(psm)), 0);
+        assertEq(usdc.balanceOf(address(psm)), 0);
+        assertEq(psm.netUAssetMinted(), 0);
+    }
+
+    /// @notice Execution at the fee ceiling (1% on both sides): real mint and redeem with the
+    ///         exact fee math asserted end to end — 1000e6 of face mints 990e18, redeeming that
+    ///         pays 980_100_000 units, and the PSM retains the 19.9e18 of combined face fees.
+    function test_MaxFeeLevelSwapExecution() external {
+        vm.prank(psmOwner);
+        psm.setFees(1e16, 1e16);
+
+        vm.prank(alice);
+        uint256 amountOut = psm.mint(alice, 1000e6);
+        assertEq(amountOut, 990e18);
+        assertEq(uAsset.balanceOf(alice), 990e18);
+        assertEq(psm.netUAssetMinted(), 990e18);
+
+        vm.prank(alice);
+        uint256 paidOut = psm.redeem(alice, 990e18);
+        assertEq(paidOut, 980_100_000);
+        assertEq(usdc.balanceOf(alice), 1_000_000e6 - 1000e6 + 980_100_000);
+        assertEq(uAsset.balanceOf(alice), 0);
+        assertEq(psm.netUAssetMinted(), 0);
+
+        // Retained fees: 10e18 (mint) + 9.9e18 (redeem) of face == 19_900_000 reserve units.
+        assertEq(usdc.balanceOf(address(psm)), 19_900_000);
+        assertEq(psm.sweepableFees(), 19_900_000);
+    }
+
+    /// @notice A max-uint256 mint on a 6-dec reserve overflows the checked face-value rescale
+    ///         (amountIn * 1e12) and fails closed with the arithmetic panic; the shared quote
+    ///         helper runs the same rescale and panics identically. The native leg's identity
+    ///         scale has no multiplication, so the same input quotes without panicking.
+    function test_RevertWhen_MintFaceValueMultiplicationOverflows() external {
+        // Panic(0x11) payload pinned byte-exact (Panic selector + the arithmetic code): the
+        // checked face-value rescale must fail closed with the arithmetic panic, never a silent
+        // mispricing.
+        bytes memory panicOverflow = abi.encodeWithSelector(bytes4(0x4e487b71), uint256(0x11));
+
+        vm.prank(alice);
+        vm.expectRevert(panicOverflow);
+        psm.mint(alice, type(uint256).max);
+
+        vm.expectRevert(panicOverflow);
+        psm.quoteMint(type(uint256).max);
+
+        // Native identity scale: floor(max * 0.999) = max - floor(max/1000) - 1.
+        assertEq(psmNative.quoteMint(type(uint256).max), type(uint256).max - type(uint256).max / 1000 - 1);
+
+        // No state moved behind any of the panicking calls.
+        assertEq(usdc.balanceOf(address(psm)), 0);
+        assertEq(uAsset.balanceOf(alice), 0);
+        assertEq(psm.netUAssetMinted(), 0);
     }
 
     /// @dev Deploys a fresh single-reserve instance bound to a malicious reentering reserve, with

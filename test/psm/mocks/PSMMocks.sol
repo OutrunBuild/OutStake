@@ -129,3 +129,66 @@ contract ReenteringReserveERC20 is PSMMockReserveERC20 {
         return super.transferFrom(from, to, amount);
     }
 }
+
+/**
+ * @title NativeReenteringFeeRecipient
+ * @notice Fee-recipient contract whose native receive hook re-enters the PSM while a
+ *         sweepFees native payout transfer is still in flight.
+ * @dev Partial mock: models the native-payout reentrancy surface only — on every received
+ *      native transfer it first fires nested attempts at PSM.sweepFees, PSM.mint, and
+ *      PSM.redeem (each expected to be blocked by the transient reentrancy guard), then
+ *      accepts the transfer. Unmodeled: ERC20 receipt, calldata message handling, and any
+ *      seam other than the native receive hook.
+ */
+contract NativeReenteringFeeRecipient {
+    bytes4 internal constant GUARD_SELECTOR = ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector;
+    uint256 public constant NO_FAILURE = type(uint256).max;
+
+    IPSM internal psm;
+
+    /// @notice Index of the first nested entry not blocked by the transient guard; NO_FAILURE
+    ///         when all were blocked.
+    uint256 public firstFailure = NO_FAILURE;
+
+    /// @param psm_ PSM instance targeted by the nested swap attempts (placeholder until setPsm).
+    constructor(address psm_) {
+        psm = IPSM(psm_);
+    }
+
+    /// @notice Test-only re-point of the attacked PSM; breaks the recipient/instance construction
+    ///         cycle (the instance must bind this contract as feeRecipient, this contract must
+    ///         target the instance).
+    /// @param psm_ PSM instance targeted by the nested swap attempts.
+    function setPsm(address psm_) external {
+        psm = IPSM(psm_);
+    }
+
+    receive() external payable {
+        // The guard is an outermost modifier on all three PSM entrypoints, so each nested call
+        // must revert with the guard's custom error before any body logic runs; arguments only
+        // need valid ABI shape, they are never evaluated past the guard.
+        address self = address(this);
+        bytes[] memory attempts = new bytes[](3);
+        attempts[0] = abi.encodeCall(psm.sweepFees, ());
+        attempts[1] = abi.encodeCall(psm.mint, (self, 1));
+        attempts[2] = abi.encodeCall(psm.redeem, (self, 1e18));
+        for (uint256 i = 0; i < attempts.length; ++i) {
+            // Only the mint attempt carries value: a native mint must satisfy msg.value == amountIn
+            // to get past the input checks if the guard ever fails to block it.
+            // forge-lint: disable-next-line(unchecked-call)
+            (bool ok, bytes memory ret) = address(psm).call{value: i == 1 ? 1 : 0}(attempts[i]);
+            if (ok || ret.length < 4) {
+                firstFailure = i;
+                return;
+            }
+            // Casting to bytes4 is safe after the length check: a custom error's selector is
+            // exactly the first 4 revert-data bytes.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            bytes4 selector = bytes4(ret);
+            if (selector != GUARD_SELECTOR) {
+                firstFailure = i;
+                return;
+            }
+        }
+    }
+}

@@ -118,11 +118,16 @@ contract OutrunAaveV3SYUpgradeable layout at erc7201("outrun.storage.OutrunAaveV
     ///      Half-up is not adopted: half-up rounds up only at >= 0.5 fractional
     ///      part, while the canonical asset -> SY up formula always rounds toward
     ///      ceiling — different strategies on different domains.
+    ///      Fail closed on a zero index: a zero liquidity index means an uninitialized or broken
+    ///      Aave reserve, so the named ZeroIndex revert replaces the silent zero rate the raw
+    ///      division would quote.
     /// @return exchange rate in 1e18 precision
     function exchangeRate() public view override returns (uint256) {
         address _underlying = underlying();
         address _pool = aavePool();
-        return _getNormalizedIncome(_underlying, _pool) / 1e9;
+        uint256 index = _getNormalizedIncome(_underlying, _pool);
+        if (index == 0) revert AaveAdapterLib.ZeroIndex();
+        return index / 1e9;
     }
 
     /// @notice Preview the scaled shares received for a given deposit.

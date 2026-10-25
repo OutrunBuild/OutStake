@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
@@ -13,6 +14,7 @@ import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeMan
 import {OutrunPSMUpgradeable} from "../../src/psm/OutrunPSMUpgradeable.sol";
 import {IPSM} from "../../src/psm/interfaces/IPSM.sol";
 import {NativeAmountMismatch} from "../../src/libraries/TokenHelper.sol";
+import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
 import {
@@ -22,6 +24,9 @@ import {
     MockGenesisTransferBackLauncher,
     MockGenesisRevertingLauncher,
     MockPreorderRevertingLauncher,
+    MockPreorderPartialLauncher,
+    MockPreorderEmptyLauncher,
+    MockPreorderTransferBackLauncher,
     MockPOLend,
     MockCreditRegistry
 } from "./mocks/LauncherMocks.sol";
@@ -1258,6 +1263,25 @@ contract OutrunRouterTestNativeValueGate is Test {
         vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
         router.genesisByPSM{value: 1}(address(uAsset), address(0xBEEF), 10e18, VERSE_ID, user);
     }
+
+    /// @notice Same entry-top ordering for the leveraged PSM genesis: a wrong `msg.value` surfaces
+    ///         before both the PSM registry gate and the POLend gate on a multi-fault input.
+    function test_RevertIf_LeveragedGenesisByPSMNativeValueCheckPrecedesRegistryGates() external {
+        vm.prank(user);
+        // Unregistered (uAsset, reserve), wrong msg.value, and no POLend wired: expect the native
+        // error, not UnregisteredPsm or PolendNotSet.
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.leveragedGenesisByPSM{value: 1}(address(uAsset), address(0xBEEF), 10e18, VERSE_ID, user);
+    }
+
+    /// @notice Same entry-top ordering for the preorder-only PSM entry: a wrong `msg.value`
+    ///         surfaces before the PSM registry gate on a multi-fault input.
+    function test_RevertIf_PreorderByPSMNativeValueCheckPrecedesRegistryGate() external {
+        vm.prank(user);
+        // Unregistered (uAsset, reserve) and wrong msg.value: expect the native error, not UnregisteredPsm.
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.preorderByPSM{value: 1}(address(uAsset), address(0xBEEF), 10e18, VERSE_ID, user);
+    }
 }
 
 /**
@@ -1657,15 +1681,32 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
     }
 
     /// @notice Cached-token divergence: after the factory is rewired, POLend's cached token no
-    ///         longer matches the router's resolution, and POLend's own safeTransferFrom (the
-    ///         router has zero allowance on the cached token) reverts the whole call.
+    ///         longer matches the router's resolution, and POLend's own transferFrom on the cached
+    ///         token reverts the whole call. The router approved the factory-resolved token while
+    ///         POLend pulls its cached one, so the failure surface is the OZ allowance check on the
+    ///         cached token: `ERC20InsufficientAllowance(polend, 0, creditAmount)` — the router has
+    ///         pulled and approved the factory token, never the cached one.
     function test_CombinedCreditLegCachedTokenDivergenceReverts() external {
         _wirePolendFixture();
         RouterMockERC20 divergent = new RouterMockERC20("Divergent Credit", "dGC");
         polend.setCreditWiring(address(creditFactory), address(divergent));
-        vm.prank(user);
-        vm.expectRevert();
+        uint256 userCreditBefore = credit.balanceOf(user);
+        uAsset.mint(user, 1e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(polend), 0, 1e18)
+        );
         router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(1e18), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(credit.balanceOf(user), userCreditBefore, "credit pull must roll back with the call");
+        assertEq(credit.balanceOf(address(polend)), 0, "polend escrow empty after the rollback");
+        assertEq(divergent.balanceOf(address(polend)), 0, "no cached token reached polend");
+        assertEq(credit.allowance(address(router), address(polend)), 0, "credit allowance must roll back");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "preorder pull must roll back with the call");
     }
 
     /// @notice No credit contract for this uAsset: a zero resolution is rejected before any pull.
@@ -2178,5 +2219,842 @@ contract OutrunRouterPreorderByPSMTest is OutrunRouterTest {
         (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
         assertEq(lastPreorderBase, type(uint128).max, "preorder credited exactly the uint128 cap");
         assertEq(uAsset.balanceOf(address(launcher)), MAX_UINT128, "launcher holds the full cap amount");
+    }
+}
+
+/**
+ * @title OutrunRouterConsumptionFailureTest
+ * @notice Failure injection into every router-side strict full-consumption post-condition: the
+ *     preorder-only PSM entry (`preorderByPSM`) against partial / zero / transfer-back launcher
+ *     consumption, the combined entry's preorder leg and the `_uAssetToLauncher` genesis/preorder
+ *     legs against partial consumption, the leveraged family's three interest legs (uAsset, Psm,
+ *     credit) against a half-pulling POLend, and the router-side path-A genesis tail against a
+ *     transfer-back launcher — each asserting the exact
+ *     `GenesisUAssetNotConsumed(residualBalance, residualAllowance)` payload and a full balance
+ *     rollback of the already-executed legs.
+ * @dev Grows in a fresh contract because the consolidated `OutrunRouterTest` sits at the solc
+ *     0.8.35 via-ir assembly-tag ceiling (see `OutrunRouterTestNativeValueGate`); inherits the
+ *     combined-entry fixture for the PSM/credit/POLend wiring and the FundInput helpers. The PSM
+ *     fee starts at zero, so the fee-free mint equals the reserve input and every residual payload
+ *     is exact.
+ */
+contract OutrunRouterConsumptionFailureTest is OutrunRouterCombinedEntryTest {
+    /// @notice `preorderByPSM` with a launcher pulling only half of the preorder mint: the residual
+    ///         balance and the residual allowance are both reported and the whole call reverts.
+    function test_RevertWhen_PreorderByPSMLauncherConsumesHalf() external {
+        MockPreorderPartialLauncher partialLauncher = new MockPreorderPartialLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(partialLauncher));
+        uint256 amountIn = 10e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, amountIn / 2, amountIn / 2));
+        router.preorderByPSM(address(uAsset), address(underlying), amountIn, VERSE_ID, user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "failed call must not pull the reserve");
+        assertEq(uAsset.balanceOf(address(partialLauncher)), 0, "half pull must roll back with the call");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds no uAsset after the rollback");
+        assertEq(uAsset.allowance(address(router), address(partialLauncher)), 0, "allowance must roll back");
+        assertEq(IPSM(address(psm)).netUAssetMinted(), 0, "PSM ledger must roll back");
+    }
+
+    /// @notice `preorderByPSM` with a launcher consuming none of the preorder mint: the full mint
+    ///         is reported on both dimensions (balance and untouched allowance).
+    function test_RevertWhen_PreorderByPSMLauncherConsumesNothing() external {
+        MockPreorderEmptyLauncher emptyLauncher = new MockPreorderEmptyLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(emptyLauncher));
+        uint256 amountIn = 10e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, amountIn, amountIn));
+        router.preorderByPSM(address(uAsset), address(underlying), amountIn, VERSE_ID, user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "failed call must not pull the reserve");
+        assertEq(uAsset.balanceOf(address(router)), 0, "mint must roll back with the call");
+        assertEq(uAsset.allowance(address(router), address(emptyLauncher)), 0, "allowance must roll back");
+        (,, address recordedUser) = emptyLauncher.preorderSnapshot();
+        assertEq(recordedUser, address(0), "no preorder record survived the rollback");
+    }
+
+    /// @notice `preorderByPSM` with a launcher pulling the full mint and transferring a tenth back:
+    ///         the balance dimension fires with the transfer-back residual and a zero allowance.
+    function test_RevertWhen_PreorderByPSMLauncherTransfersBack() external {
+        MockPreorderTransferBackLauncher transferBackLauncher = new MockPreorderTransferBackLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(transferBackLauncher));
+        uint256 amountIn = 10e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, amountIn / 10, 0));
+        router.preorderByPSM(address(uAsset), address(underlying), amountIn, VERSE_ID, user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "failed call must not pull the reserve");
+        assertEq(uAsset.balanceOf(address(transferBackLauncher)), 0, "launcher holding must roll back");
+        assertEq(uAsset.balanceOf(address(router)), 0, "transfer-back must roll back with the call");
+        assertEq(uAsset.allowance(address(router), address(transferBackLauncher)), 0, "no allowance residual");
+    }
+
+    /// @notice Combined entry with a preorder leg whose launcher pulls only half of the PSM mint:
+    ///         the already-completed genesis leg rolls back with the failing preorder leg.
+    function test_RevertWhen_CombinedPreorderLegLauncherConsumesHalf() external {
+        MockPreorderPartialLauncher partialLauncher = new MockPreorderPartialLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(partialLauncher));
+        uint256 genesisAmount = 2e18;
+        uint256 preorderReserve = 10e18;
+        uAsset.mint(user, genesisAmount);
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(
+            abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, preorderReserve / 2, preorderReserve / 2)
+        );
+        router.genesisAndPreorder(
+            VERSE_ID, _fundUAsset(genesisAmount), _fundPsm(address(underlying), preorderReserve), user
+        );
+        vm.stopPrank();
+
+        // The genesis leg fully executed first (full pull + record) yet the call rolled back.
+        assertEq(uAsset.balanceOf(address(partialLauncher)), 0, "launcher holds zero uAsset after rollback");
+        (, uint256 recordedGenesis,) = partialLauncher.snapshot();
+        assertEq(recordedGenesis, 0, "no genesis record survived the rollback");
+        (,, address recordedPreorderUser) = partialLauncher.preorderSnapshot();
+        assertEq(recordedPreorderUser, address(0), "no preorder record survived the rollback");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "caller uAsset unchanged after rollback");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "caller reserve unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(partialLauncher)), 0, "no allowance residual");
+    }
+
+    /// @notice Combined entry with a preorder leg whose launcher consumes none of the PSM mint:
+    ///         the full mint stays as residual balance and the allowance stays untouched.
+    function test_RevertWhen_CombinedPreorderLegLauncherConsumesNothing() external {
+        MockPreorderEmptyLauncher emptyLauncher = new MockPreorderEmptyLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(emptyLauncher));
+        uint256 genesisAmount = 2e18;
+        uint256 preorderReserve = 10e18;
+        uAsset.mint(user, genesisAmount);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, preorderReserve, preorderReserve));
+        router.genesisAndPreorder(
+            VERSE_ID, _fundUAsset(genesisAmount), _fundPsm(address(underlying), preorderReserve), user
+        );
+        vm.stopPrank();
+
+        assertEq(uAsset.balanceOf(address(emptyLauncher)), 0, "launcher holds zero uAsset after rollback");
+        (, uint256 recordedGenesis,) = emptyLauncher.snapshot();
+        assertEq(recordedGenesis, 0, "no genesis record survived the rollback");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "caller uAsset unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(emptyLauncher)), 0, "no allowance residual");
+    }
+
+    /// @notice The uAsset-funded genesis leg (`_uAssetToLauncher`, preorderLeg = false) with a
+    ///         half-consuming launcher: the residual is measured against the pre-pull baseline, so
+    ///         half the pulled amount stays on both dimensions.
+    function test_RevertWhen_CombinedUAssetGenesisLegLauncherConsumesHalf() external {
+        MockGenesisPartialLauncher partialLauncher = new MockGenesisPartialLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(partialLauncher));
+        uint256 genesisAmount = 10e18;
+        uAsset.mint(user, genesisAmount + 1e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(
+            abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, genesisAmount / 2, genesisAmount / 2)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(genesisAmount), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(uAsset.balanceOf(address(partialLauncher)), 0, "half pull must roll back with the call");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "caller uAsset unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(partialLauncher)), 0, "no allowance residual");
+    }
+
+    /// @notice The uAsset-funded preorder leg (`_uAssetToLauncher`, preorderLeg = true) with a
+    ///         half-consuming launcher: the genesis leg consumes in full first (router balance back
+    ///         at its zero baseline), then the preorder leg leaves half of its pull as residual.
+    function test_RevertWhen_CombinedUAssetPreorderLegLauncherConsumesHalf() external {
+        MockPreorderPartialLauncher partialLauncher = new MockPreorderPartialLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(partialLauncher));
+        uint256 genesisAmount = 2e18;
+        uint256 preorderAmount = 10e18;
+        uAsset.mint(user, genesisAmount + preorderAmount);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(
+            abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, preorderAmount / 2, preorderAmount / 2)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(genesisAmount), _fundUAsset(preorderAmount), user);
+        vm.stopPrank();
+
+        // Both legs rolled back: the completed genesis pull and record are gone with the call.
+        assertEq(uAsset.balanceOf(address(partialLauncher)), 0, "launcher holds zero uAsset after rollback");
+        (, uint256 recordedGenesis,) = partialLauncher.snapshot();
+        assertEq(recordedGenesis, 0, "no genesis record survived the rollback");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "caller uAsset unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(partialLauncher)), 0, "no allowance residual");
+    }
+
+    /// @notice Leveraged family, uAsset interest leg with a half-pulling POLend: the residual is
+    ///         measured against the pre-pull baseline and half the interest stays on both dimensions.
+    function test_RevertWhen_CombinedLeveragedUAssetLegPolendConsumesHalf() external {
+        _wirePolendFixture();
+        polend.setPullHalf();
+        uint256 interest = 6e18;
+        uAsset.mint(user, interest + 1e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, interest / 2, interest / 2));
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundUAsset(interest), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(uAsset.balanceOf(address(polend)), 0, "half pull must roll back with the call");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "caller uAsset unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(polend)), 0, "no allowance residual");
+    }
+
+    /// @notice Leveraged family, PSM interest leg with a half-pulling POLend: the fee-free mint
+    ///         equals the reserve input, so half of it stays on both dimensions.
+    function test_RevertWhen_CombinedLeveragedPsmLegPolendConsumesHalf() external {
+        _wirePolendFixture();
+        polend.setPullHalf();
+        uint256 interestReserve = 8e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.startPrank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, interestReserve / 2, interestReserve / 2)
+        );
+        router.leveragedGenesisAndPreorder(
+            VERSE_ID, _fundPsm(address(underlying), interestReserve), _fundUAsset(1e18), user
+        );
+        vm.stopPrank();
+
+        assertEq(uAsset.balanceOf(address(polend)), 0, "half pull must roll back with the call");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "caller reserve unchanged after rollback");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds zero uAsset after rollback");
+        assertEq(uAsset.allowance(address(router), address(polend)), 0, "no allowance residual");
+    }
+
+    /// @notice Leveraged family, credit interest leg with a half-pulling POLend: the strict
+    ///         consumption assertion runs on the credit token and half the pulled credit stays on
+    ///         both dimensions.
+    function test_RevertWhen_CombinedLeveragedCreditLegPolendConsumesHalf() external {
+        _wirePolendFixture();
+        polend.setPullHalfCredit();
+        uint256 creditIn = 6e18;
+        uAsset.mint(user, 1e18);
+        uint256 userCreditBefore = credit.balanceOf(user);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, creditIn / 2, creditIn / 2));
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundCredit(creditIn), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(credit.balanceOf(address(polend)), 0, "half pull must roll back with the call");
+        assertEq(credit.balanceOf(user), userCreditBefore, "caller credit unchanged after rollback");
+        assertEq(credit.balanceOf(address(router)), 0, "router holds zero credit after rollback");
+        assertEq(credit.allowance(address(router), address(polend)), 0, "no credit allowance residual");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "preorder pull must roll back with the call");
+    }
+
+    /// @notice Path A (`genesisByPSM`) with a launcher that pulls the full mint and transfers a
+    ///         tenth back: the router-side `_genesisTail` fires on the balance dimension with a
+    ///         fully consumed allowance — the path-A twin of the SP-side transfer-back test.
+    function test_RevertWhen_GenesisByPSMLauncherTransfersBack() external {
+        MockGenesisTransferBackLauncher transferBackLauncher = new MockGenesisTransferBackLauncher(address(uAsset));
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(transferBackLauncher));
+        uint256 amountIn = 10e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(GENESIS_U_ASSET_NOT_CONSUMED_SELECTOR, amountIn / 10, 0));
+        router.genesisByPSM(address(uAsset), address(underlying), amountIn, VERSE_ID, user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "failed call must not pull the reserve");
+        assertEq(uAsset.balanceOf(address(transferBackLauncher)), 0, "launcher holding must roll back");
+        assertEq(uAsset.balanceOf(address(router)), 0, "transfer-back must roll back with the call");
+        assertEq(uAsset.allowance(address(router), address(transferBackLauncher)), 0, "no allowance residual");
+    }
+}
+
+/**
+ * @title OutrunRouterCombinedGuardTest
+ * @notice Guard-surface coverage of the combined entrypoints: the shared preamble's four
+ *     `ZeroInput` branches (zero user, zero genesis amount, zero preorder amount, unknown verse
+ *     resolving to the zero address), the remaining `FundInput` validation-matrix branches
+ *     (preorder-leg Stake/Credit on the leveraged family, stake-only fields on non-Stake sources,
+ *     preorder-leg field violations), the direct-SY stake leg's silent `minSyOut` ignore, the
+ *     leveraged family's native value corners (underpaid, mixed native/ERC20 split, mixed
+ *     overpaid, and the wrap-to-zero exact-wrap pair), and the value gate's precedence over the
+ *     PSM registry gate on a multi-fault input.
+ * @dev Grows in a fresh contract because the consolidated `OutrunRouterTest` sits at the solc
+ *     0.8.35 via-ir assembly-tag ceiling (see `OutrunRouterTestNativeValueGate`); inherits the
+ *     combined-entry fixture.
+ */
+contract OutrunRouterCombinedGuardTest is OutrunRouterCombinedEntryTest {
+    // --------------------------------------------------------------------------
+    // Shared preamble ZeroInput branches
+    // --------------------------------------------------------------------------
+
+    /// @notice A zero credited user reverts `ZeroInput` before any funds move.
+    function test_RevertWhen_CombinedEntryWithZeroUser() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, 1e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunRouter.ZeroInput.selector);
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(address(underlying), 1e18), _fundUAsset(1e18), address(0));
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "zero-user guard must fire before any pull");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "zero-user guard must fire before any uAsset pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds no uAsset");
+        assertEq(address(router).balance, 0, "router holds no native");
+    }
+
+    /// @notice A zero genesis-leg amount reverts `ZeroInput` before the verse read or any pull.
+    function test_RevertWhen_CombinedEntryWithZeroGenesisAmount() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, 1e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunRouter.ZeroInput.selector);
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(0), _fundUAsset(1e18), user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "zero-amount guard must fire before any pull");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "zero-amount guard must fire before any uAsset pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds no uAsset");
+    }
+
+    /// @notice A zero preorder-leg amount reverts `ZeroInput` before the verse read or any pull.
+    function test_RevertWhen_CombinedEntryWithZeroPreorderAmount() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunRouter.ZeroInput.selector);
+        router.genesisAndPreorder(VERSE_ID, _fundPsm(address(underlying), 1e18), _fundPsm(address(underlying), 0), user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "zero-amount guard must fire before any pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds no uAsset");
+    }
+
+    /// @notice An unknown verse (launcher binding read returning the zero address) reverts
+    ///         `ZeroInput` after the amount checks and before any pull.
+    function test_RevertWhen_CombinedEntryWithUnknownVerse() external {
+        // Deploy before the prank: `vm.prank` would otherwise be consumed by the constructor call.
+        MockGenesisEmptyLauncher emptyLauncher = new MockGenesisEmptyLauncher();
+        vm.prank(owner);
+        router.setMemeverseLauncher(address(emptyLauncher));
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uAsset.mint(user, 2e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(IOutrunRouter.ZeroInput.selector);
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), _fundUAsset(1e18), user);
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "unknown-verse guard must fire before any pull");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "unknown-verse guard must fire before any uAsset pull");
+        assertEq(uAsset.balanceOf(address(router)), 0, "router holds no uAsset");
+    }
+
+    // --------------------------------------------------------------------------
+    // FundInput validation matrix: remaining branches
+    // --------------------------------------------------------------------------
+
+    /// @notice The preorder leg accepts only `UAsset` and `Psm` on the leveraged family too:
+    ///         `Stake` is rejected with the leveraged-family flag set, before any SY moves.
+    function test_RevertWhen_CombinedPreorderLegStakeSourceOnLeveragedFamily() external {
+        uint256 userSYBefore = sy.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundSourceNotAllowed.selector, IOutrunRouter.FundSource.Stake, true)
+        );
+        router.leveragedGenesisAndPreorder(
+            VERSE_ID, _fundUAsset(1e18), _fundStake(address(position), address(sy), 1e18), user
+        );
+
+        assertEq(sy.balanceOf(user), userSYBefore, "source guard must fire before any SY is pulled");
+    }
+
+    /// @notice The preorder leg rejects `Credit` on the leveraged family with the leveraged-family
+    ///         flag set, before any credit moves.
+    function test_RevertWhen_CombinedPreorderLegCreditSourceOnLeveragedFamily() external {
+        uint256 userCreditBefore = credit.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundSourceNotAllowed.selector, IOutrunRouter.FundSource.Credit, true)
+        );
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundUAsset(1e18), _fundCredit(1e18), user);
+
+        assertEq(credit.balanceOf(user), userCreditBefore, "source guard must fire before any credit is pulled");
+    }
+
+    /// @notice A UAsset-funded leg carrying `minUAssetMinted` (stake-only field) reverts
+    ///         `FundFieldMustBeZero` before any funds move.
+    function test_RevertWhen_CombinedUAssetLegWithMinUAssetMinted() external {
+        IOutrunRouter.FundInput memory bad = _fundUAsset(1e18);
+        bad.minUAssetMinted = 1;
+        uAsset.mint(user, 2e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.UAsset)
+        );
+        router.genesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "field guard must fire before any uAsset pull");
+    }
+
+    /// @notice A Psm-funded leg must leave the three stake-only fields (`sp`, `minSyOut`,
+    ///         `minUAssetMinted`) zero: each violation reverts `FundFieldMustBeZero` before any
+    ///         reserve moves.
+    function test_RevertWhen_CombinedPsmLegWithStakeOnlyFields() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.startPrank(user);
+        IOutrunRouter.FundInput memory withSp = _fundPsm(address(underlying), 1e18);
+        withSp.sp = address(position);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.Psm)
+        );
+        router.genesisAndPreorder(VERSE_ID, withSp, _fundUAsset(1e18), user);
+
+        IOutrunRouter.FundInput memory withMinSyOut = _fundPsm(address(underlying), 1e18);
+        withMinSyOut.minSyOut = 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.Psm)
+        );
+        router.genesisAndPreorder(VERSE_ID, withMinSyOut, _fundUAsset(1e18), user);
+
+        IOutrunRouter.FundInput memory withMinUAssetMinted = _fundPsm(address(underlying), 1e18);
+        withMinUAssetMinted.minUAssetMinted = 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.Psm)
+        );
+        router.genesisAndPreorder(VERSE_ID, withMinUAssetMinted, _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "field guards must fire before any pull");
+    }
+
+    /// @notice A Credit-funded leg (leveraged family genesis) carrying a `token` reverts
+    ///         `FundFieldMustBeZero` before any credit moves.
+    function test_RevertWhen_CombinedCreditLegWithToken() external {
+        IOutrunRouter.FundInput memory bad = _fundCredit(1e18);
+        bad.token = address(underlying);
+        uint256 userCreditBefore = credit.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.Credit)
+        );
+        router.leveragedGenesisAndPreorder(VERSE_ID, bad, _fundUAsset(1e18), user);
+
+        assertEq(credit.balanceOf(user), userCreditBefore, "field guard must fire before any credit pull");
+    }
+
+    /// @notice Preorder-leg field violations (the existing field tests all hit the genesis leg):
+    ///         a Psm preorder leg with `sp` and a UAsset preorder leg with `token` each revert
+    ///         `FundFieldMustBeZero` before any funds move.
+    function test_RevertWhen_CombinedPreorderLegFieldViolations() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.startPrank(user);
+        IOutrunRouter.FundInput memory preorderPsmWithSp = _fundPsm(address(underlying), 1e18);
+        preorderPsmWithSp.sp = address(position);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.Psm)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), preorderPsmWithSp, user);
+
+        IOutrunRouter.FundInput memory preorderUAssetWithToken = _fundUAsset(1e18);
+        preorderUAssetWithToken.token = address(0xBEEF);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOutrunRouter.FundFieldMustBeZero.selector, IOutrunRouter.FundSource.UAsset)
+        );
+        router.genesisAndPreorder(VERSE_ID, _fundUAsset(1e18), preorderUAssetWithToken, user);
+        vm.stopPrank();
+
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "field guards must fire before any pull");
+    }
+
+    // --------------------------------------------------------------------------
+    // Direct-SY stake leg: silent minSyOut ignore
+    // --------------------------------------------------------------------------
+
+    /// @notice The direct-SY stake leg charges SY units without a deposit, so `minSyOut` is
+    ///         accepted but ignored (`FundInput`'s only explicit silent-ignore exception): even
+    ///         `type(uint256).max` must not act as a floor. Pins the ignore against a future
+    ///         deposit-side floor being added to the direct-charge branch.
+    function test_CombinedStakeDirectSYLegIgnoresMinSyOut() external {
+        uint256 syIn = 4e18;
+        uint256 preorderReserve = 1e18;
+        uint256 userSYBefore = sy.balanceOf(user);
+
+        vm.prank(user);
+        router.genesisAndPreorder(
+            VERSE_ID,
+            _fundStakeWithMins(address(position), address(sy), syIn, type(uint256).max, 0),
+            _fundPsm(address(underlying), preorderReserve),
+            user
+        );
+
+        (address positionOwner, uint256 syStaked,,,) = position.positions(1);
+        assertEq(positionOwner, user, "position opened despite the max minSyOut");
+        assertEq(syStaked, syIn, "direct SY charge recorded the full leg amount");
+        assertEq(sy.balanceOf(user), userSYBefore - syIn, "caller paid the SY principal");
+        assertEq(uAsset.balanceOf(address(launcher)), syIn + preorderReserve, "parity mint + preorder delivered");
+    }
+
+    // --------------------------------------------------------------------------
+    // Leveraged family native corners
+    // --------------------------------------------------------------------------
+
+    /// @notice An underpaid `msg.value` on the leveraged family (native PSM genesis leg plus a
+    ///         uAsset preorder leg) reverts `NativeAmountMismatch` before any funds move.
+    function test_RevertIf_LeveragedCombinedNativeUnderfunded() external {
+        _wirePolendFixture();
+        uint256 userNativeBefore = user.balance;
+        uAsset.mint(user, 1e18);
+        uint256 userUAssetBefore = uAsset.balanceOf(user);
+
+        vm.startPrank(user);
+        uAsset.approve(address(router), type(uint256).max);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.leveragedGenesisAndPreorder{value: 1}(VERSE_ID, _fundPsm(NATIVE, 1e18), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(address(psmNative).balance, 0, "failed call must not move native into the PSM");
+        assertEq(uAsset.balanceOf(user), userUAssetBefore, "failed call must not pull the preorder uAsset");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
+        assertEq(address(router).balance, 0, "failed call leaves no native on the router");
+        assertEq(user.balance, userNativeBefore, "reverted value returns to the caller");
+    }
+
+    /// @notice Mixed legs on the leveraged family, native (interest) + ERC20 (preorder): the exact
+    ///         `msg.value` matching only the native interest leg passes the gate, native reaches
+    ///         only the interest leg's PSM, the ERC20 pays only the preorder leg, and neither leg
+    ///         leaves a router residual.
+    function test_LeveragedCombinedNativeGenesisAndErc20PreorderMixedValueSplit() external {
+        _wirePolendFixture();
+        uint256 interestNativeIn = 2e18;
+        uint256 preorderReserve = 3e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        router.leveragedGenesisAndPreorder{value: interestNativeIn}(
+            VERSE_ID, _fundPsm(NATIVE, interestNativeIn), _fundPsm(address(underlying), preorderReserve), user
+        );
+
+        assertEq(address(psmNative).balance, interestNativeIn, "native reached only the interest leg's PSM");
+        assertEq(
+            userUnderlyingBefore - underlying.balanceOf(user),
+            preorderReserve,
+            "ERC20 reserve paid only the preorder leg"
+        );
+        (, uint256 lastInterest,) = polend.interestSnapshot();
+        (, uint256 lastPreorderBase,) = launcher.preorderSnapshot();
+        assertEq(lastInterest, interestNativeIn, "interest leg credited the fee-free native mint");
+        assertEq(uAsset.balanceOf(address(polend)), interestNativeIn, "interest escrowed in polend");
+        assertEq(lastPreorderBase, preorderReserve, "preorder leg credited the fee-free ERC20 mint");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset residual on router");
+        assertEq(address(router).balance, 0, "no native residual on router");
+    }
+
+    /// @notice Mixed legs, overpaid: `msg.value = interest + preorderReserve` (overpaying native
+    ///         for the ERC20 preorder leg) reverts `NativeAmountMismatch` before any funds move.
+    function test_RevertIf_LeveragedCombinedNativeGenesisAndErc20PreorderOverpaid() external {
+        _wirePolendFixture();
+        uint256 interestNativeIn = 2e18;
+        uint256 preorderReserve = 3e18;
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.leveragedGenesisAndPreorder{value: interestNativeIn + preorderReserve}(
+            VERSE_ID, _fundPsm(NATIVE, interestNativeIn), _fundPsm(address(underlying), preorderReserve), user
+        );
+
+        assertEq(address(psmNative).balance, 0, "failed call must not move native into the PSM");
+        assertEq(uAsset.balanceOf(address(polend)), 0, "failed call must not escrow interest");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "failed call must not pull the reserve");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
+    }
+
+    /// @notice Wrap-to-zero edge on the leveraged family: two native legs whose sum wraps to
+    ///         exactly 0 (1 + type(uint256).max) with `msg.value = 0` pass the preamble's value
+    ///         gate and the POLend market gate, then the whole call reverts empty at the first
+    ///         native forwarding (the interest leg's PSM mint CALL value, with the router's actual
+    ///         balance 0): fail-closed, balances unchanged.
+    function test_RevertIf_LeveragedCombinedNativeLegSumWrapsToZero() external {
+        _wirePolendFixture();
+
+        vm.prank(user);
+        // Empty revert data: the router bubbles the raw returndata of the failed native
+        // forwarding CALL (insufficient balance => success = false, no returndata).
+        vm.expectRevert(bytes(""));
+        router.leveragedGenesisAndPreorder(VERSE_ID, _fundPsm(NATIVE, 1), _fundPsm(NATIVE, type(uint256).max), user);
+
+        assertEq(address(router).balance, 0, "router native unchanged");
+        assertEq(address(psmNative).balance, 0, "PSM native unchanged");
+        assertEq(uAsset.balanceOf(address(polend)), 0, "no interest escrowed");
+        assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset minted to the router");
+    }
+
+    // --------------------------------------------------------------------------
+    // Value gate precedes the PSM registry gate on the combined entry
+    // --------------------------------------------------------------------------
+
+    /// @notice A combined PSM genesis leg on an unregistered (uAsset, reserve) pair plus a wrong
+    ///         `msg.value` surfaces `NativeAmountMismatch` (preamble value gate), not
+    ///         `UnregisteredPsm` (leg-runner registry gate) — the combined-entry twin of the
+    ///         single-leg entry-top ordering tests.
+    function test_RevertIf_CombinedValueGatePrecedesPsmRegistryGate() external {
+        RouterMockERC20 strayReserve = new RouterMockERC20("Stray", "STR");
+        strayReserve.mint(user, 1e18);
+
+        vm.startPrank(user);
+        strayReserve.approve(address(router), 1e18);
+        vm.expectRevert(NATIVE_AMOUNT_MISMATCH_SELECTOR);
+        router.genesisAndPreorder{value: 1}(VERSE_ID, _fundPsm(address(strayReserve), 1e18), _fundUAsset(1e18), user);
+        vm.stopPrank();
+
+        assertEq(strayReserve.balanceOf(user), 1e18, "failed call must not pull the reserve");
+        assertEq(uAsset.balanceOf(address(router)), 0, "failed call must not mint uAsset to the router");
+        assertEq(address(router).balance, 0, "reverted value returns to the caller");
+    }
+}
+
+/**
+ * @title OutrunRouterAdminSurfaceTest
+ * @notice Admin and read-surface coverage outside the genesis flows: the `sweep` guards (zero
+ *     recipient, zero amount, non-owner) and the NATIVE rescue with its `Sweep` event, the
+ *     `redeemSyToToken` registry gate and the SY-side `SYInsufficientTokenOut` propagation with a
+ *     full rollback, the `setTrustedSY`/`setTrustedSP` setter surface (NATIVE and zero-address
+ *     rejections, non-owner reverts, events and registry updates), and the preview registry gates
+ *     (unregistered SP and `SP.SY()` drift mirrored from the execution entries onto
+ *     `previewStakeFromToken`/`previewStakeFromSY`).
+ * @dev Grows in a fresh contract because the consolidated `OutrunRouterTest` sits at the solc
+ *     0.8.35 via-ir assembly-tag ceiling (see `OutrunRouterTestNativeValueGate`); inherits the
+ *     base router fixture.
+ */
+contract OutrunRouterAdminSurfaceTest is OutrunRouterTest {
+    // --------------------------------------------------------------------------
+    // sweep
+    // --------------------------------------------------------------------------
+
+    /// @notice A zero recipient is rejected before any transfer.
+    function test_RevertWhen_SweepToZeroAddress() external {
+        uAsset.setMintingCap(address(this), type(uint128).max);
+        uAsset.mint(address(router), 1e18);
+
+        vm.prank(owner);
+        vm.expectRevert(IOutrunRouter.SweepZeroAddress.selector);
+        router.sweep(address(uAsset), address(0), 1e18);
+
+        assertEq(uAsset.balanceOf(address(router)), 1e18, "failed sweep must leave the router balance intact");
+    }
+
+    /// @notice A zero amount is rejected before any transfer.
+    function test_RevertWhen_SweepZeroAmount() external {
+        uAsset.setMintingCap(address(this), type(uint128).max);
+        uAsset.mint(address(router), 1e18);
+
+        vm.prank(owner);
+        vm.expectRevert(IOutrunRouter.SweepZeroAmount.selector);
+        router.sweep(address(uAsset), treasury, 0);
+
+        assertEq(uAsset.balanceOf(treasury), 0, "failed sweep must move nothing");
+    }
+
+    /// @notice Only the owner may sweep; a non-owner call reverts at the Ownable gate.
+    function test_RevertWhen_SweepCalledByNonOwner() external {
+        uAsset.setMintingCap(address(this), type(uint128).max);
+        uAsset.mint(address(router), 1e18);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTHORIZED_SELECTOR, user));
+        router.sweep(address(uAsset), treasury, 1e18);
+
+        assertEq(uAsset.balanceOf(treasury), 0, "unauthorized sweep must move nothing");
+        assertEq(uAsset.balanceOf(address(router)), 1e18, "router balance untouched");
+    }
+
+    /// @notice The NATIVE sentinel routes the sweep to a native transfer and emits `Sweep`.
+    function test_SweepNativeSucceedsAndEmits() external {
+        uint256 amount = 1 ether;
+        vm.deal(address(router), amount);
+
+        vm.prank(owner);
+        vm.expectEmit(true, true, false, true);
+        emit IOutrunRouter.Sweep(NATIVE, treasury, amount);
+        router.sweep(NATIVE, treasury, amount);
+
+        assertEq(treasury.balance, amount, "native rescued to the recipient");
+        assertEq(address(router).balance, 0, "router native drained");
+    }
+
+    // --------------------------------------------------------------------------
+    // redeemSyToToken
+    // --------------------------------------------------------------------------
+
+    /// @notice An SY outside the trusted registry fails `redeemSyToToken` before any SY is pulled.
+    function test_RevertWhen_RedeemSyToTokenWithUntrustedSY() external {
+        RouterMockSY untrustedSY = new RouterMockSY(address(underlying));
+        uint256 userSYBefore = sy.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(UNTRUSTED_ROUTER_TARGET_SELECTOR, address(untrustedSY)));
+        router.redeemSyToToken(address(untrustedSY), user, address(underlying), 1e18, 0);
+
+        assertEq(untrustedSY.balanceOf(user), 0, "untrusted gate must fire before any pull");
+        assertEq(sy.balanceOf(user), userSYBefore, "trusted SY balance untouched");
+    }
+
+    /// @notice An output floor above the identity-rate redemption reverts with the SY-side
+    ///         `SYInsufficientTokenOut` payload and rolls the whole call back: no SY left the
+    ///         caller and no underlying left the SY contract.
+    function test_RevertWhen_RedeemSyToTokenBelowMinTokenOut() external {
+        uint256 amountInSY = 1e18;
+        uint256 minTokenOut = 2e18;
+        uint256 userSYBefore = sy.balanceOf(user);
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+        uint256 syUnderlyingBefore = underlying.balanceOf(address(sy));
+
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IStandardizedYield.SYInsufficientTokenOut.selector, amountInSY, minTokenOut)
+        );
+        router.redeemSyToToken(address(sy), user, address(underlying), amountInSY, minTokenOut);
+
+        assertEq(sy.balanceOf(user), userSYBefore, "SY pull must roll back with the call");
+        assertEq(sy.balanceOf(address(sy)), 0, "SY contract holds no burned shares");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "redeem output must roll back");
+        assertEq(underlying.balanceOf(address(sy)), syUnderlyingBefore, "SY underlying unchanged");
+    }
+
+    // --------------------------------------------------------------------------
+    // setTrustedSY / setTrustedSP
+    // --------------------------------------------------------------------------
+
+    /// @notice Registering the NATIVE sentinel as a trusted SY target is rejected: the shared
+    ///         untrusted-target payload fires with the sentinel itself.
+    function test_RevertWhen_SetTrustedSYWithNativeAddress() external {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(UNTRUSTED_ROUTER_TARGET_SELECTOR, NATIVE));
+        router.setTrustedSY(NATIVE, true);
+
+        assertFalse(router.trustedSY(NATIVE), "NATIVE must stay untrusted");
+    }
+
+    /// @notice Registering a zero-address SP is rejected with the shared untrusted-target payload.
+    function test_RevertWhen_SetTrustedSPWithZeroAddress() external {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(UNTRUSTED_ROUTER_TARGET_SELECTOR, address(0)));
+        router.setTrustedSP(address(0), address(sy));
+    }
+
+    /// @notice Only the owner may maintain the SY trust registry.
+    function test_RevertWhen_SetTrustedSYCalledByNonOwner() external {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTHORIZED_SELECTOR, user));
+        router.setTrustedSY(address(sy), false);
+
+        assertTrue(router.trustedSY(address(sy)), "non-owner call must not flip the trust flag");
+    }
+
+    /// @notice Only the owner may maintain the SP pair registry.
+    function test_RevertWhen_SetTrustedSPCalledByNonOwner() external {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(OWNABLE_UNAUTHORIZED_SELECTOR, user));
+        router.setTrustedSP(address(position), address(0));
+
+        assertEq(router.trustedSYForSP(address(position)), address(sy), "non-owner call must not revoke the pair");
+    }
+
+    /// @notice Both setters emit their events and update the getters on registration and
+    ///         revocation.
+    function test_SetTrustedSYAndSPUpdateRegistriesAndEmit() external {
+        RouterMockSY extraSY = new RouterMockSY(address(underlying));
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, false, true);
+        emit IOutrunRouter.TrustedSYUpdated(address(extraSY), true);
+        router.setTrustedSY(address(extraSY), true);
+        assertTrue(router.trustedSY(address(extraSY)), "extra SY trusted");
+
+        vm.expectEmit(true, true, false, true);
+        emit IOutrunRouter.TrustedSYUpdated(address(extraSY), false);
+        router.setTrustedSY(address(extraSY), false);
+        assertFalse(router.trustedSY(address(extraSY)), "revocation clears the trust flag");
+
+        vm.expectEmit(true, true, false, true);
+        emit IOutrunRouter.TrustedSPUpdated(address(position), address(sy));
+        router.setTrustedSP(address(position), address(sy));
+        vm.stopPrank();
+
+        assertEq(router.trustedSYForSP(address(position)), address(sy), "SP pair re-registered");
+    }
+
+    // --------------------------------------------------------------------------
+    // Preview registry gates
+    // --------------------------------------------------------------------------
+
+    /// @notice Both previews refuse to quote an unregistered SP with the shared untrusted-target
+    ///         payload, mirroring the execution entries' registry gate.
+    function test_RevertWhen_PreviewsOnUnregisteredSP() external {
+        vm.expectRevert(abi.encodeWithSelector(UNTRUSTED_ROUTER_TARGET_SELECTOR, user));
+        router.previewStakeFromToken(user, address(underlying), 10e18);
+
+        vm.expectRevert(abi.encodeWithSelector(UNTRUSTED_ROUTER_TARGET_SELECTOR, user));
+        router.previewStakeFromSY(user, 10e18);
+    }
+
+    /// @notice Both previews refuse to quote a drifted `SP.SY()` binding with the three-party
+    ///         mismatch payload — the preview-side twin of the `genesisBySY`/`genesisByToken`
+    ///         drift gates.
+    function test_RevertIf_PreviewsOnSPBindingDrift() external {
+        address driftedSY = address(0xDEAD);
+        vm.mockCall(address(position), abi.encodeWithSelector(IOutrunStakeManager.SY.selector), abi.encode(driftedSY));
+        bytes memory expected =
+            abi.encodeWithSelector(ROUTER_TARGET_MISMATCH_SELECTOR, address(position), address(sy), driftedSY);
+
+        vm.expectRevert(expected);
+        router.previewStakeFromToken(address(position), address(underlying), 10e18);
+
+        vm.expectRevert(expected);
+        router.previewStakeFromSY(address(position), 10e18);
     }
 }

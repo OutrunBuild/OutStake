@@ -7,7 +7,7 @@ import {WadRayMath} from "../../src/libraries/WadRayMath.sol";
 import {ArrayLib} from "../../src/libraries/ArrayLib.sol";
 import {SYUtils} from "../../src/libraries/SYUtils.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {MockGuarded, WadRayMathHelper} from "./mocks/LibraryMocks.sol";
+import {AaveAdapterLibHelper, MockGuarded, WadRayMathHelper} from "./mocks/LibraryMocks.sol";
 
 // ============================================================================
 // WadRayMath Tests
@@ -141,6 +141,12 @@ contract ReentrancyGuardTest is Test {
 // ============================================================================
 
 contract AaveAdapterLibTest is Test {
+    AaveAdapterLibHelper internal helper;
+
+    function setUp() public {
+        helper = new AaveAdapterLibHelper();
+    }
+
     function testCalcSharesFromAssetHalfUpRoundsHalfUpAtExactHalf() public {
         // 3 assets at index 2e27 -> quotient exactly 1.5. Half-up rounds to 2;
         // a floor rounding mode would give 1, so this pins the half-up direction.
@@ -167,5 +173,28 @@ contract AaveAdapterLibTest is Test {
         // a half-up rounding mode would give 2, so this pins the down direction.
         uint256 result = AaveAdapterLib.calcSharesToAssetDown(1, 1.5e27);
         assertEq(result, 1);
+    }
+
+    function test_RevertWhen_CalcSharesFromAssetHalfUpIndexIsZero() public {
+        // A zero liquidity index means a broken/uninitialized reserve; the helper fails closed
+        // with the decoded ZeroIndex selector instead of rayDiv's empty revert.
+        // All three helpers carry this guard, so the same input fails closed on every path.
+        vm.expectRevert(AaveAdapterLib.ZeroIndex.selector);
+        helper.calcSharesFromAssetHalfUp(1 ether, 0);
+    }
+
+    function test_RevertWhen_CalcSharesToAssetDownIndexIsZero() public {
+        // Same unified guard as the half-up helper: a zero liquidity index means a broken or
+        // uninitialized reserve, so this path fails closed with the named ZeroIndex selector
+        // instead of silently returning zero.
+        vm.expectRevert(AaveAdapterLib.ZeroIndex.selector);
+        helper.calcSharesToAssetDown(1 ether, 0);
+    }
+
+    function test_RevertWhen_CalcSharesFromAssetDownIndexIsZero() public {
+        // Same unified guard as the other two helpers: a zero liquidity index fails closed with
+        // the named ZeroIndex selector instead of a division-by-zero Panic.
+        vm.expectRevert(AaveAdapterLib.ZeroIndex.selector);
+        helper.calcSharesFromAssetDown(1 ether, 0);
     }
 }

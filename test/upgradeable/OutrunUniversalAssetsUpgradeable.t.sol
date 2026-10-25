@@ -250,6 +250,150 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         assertEq(uAsset.totalSupply(), totalSupplyBefore);
     }
 
+    /// @dev Gives `receiver` circulating balance through the debt path: the owner grants the
+    ///      minter headroom and the minter mints, so later calls operate on real ERC20 state.
+    function _fundReceiver(uint256 amount) internal {
+        vm.prank(owner);
+        uAsset.setMintingCap(minter, 100e18);
+        vm.prank(minter);
+        uAsset.mint(receiver, amount);
+    }
+
+    /// @dev The debt path must retire supply symmetrically with mint: repaying the full minted
+    ///      amount zeroes the minter's debt, the receiver's balance, and the total supply.
+    function testDebtPathRepayOfFullMintedAmountClearsTotalSupply() external {
+        _fundReceiver(40e18);
+
+        vm.prank(receiver);
+        uAsset.approve(minter, 40e18);
+
+        vm.prank(minter);
+        uAsset.repay(receiver, 40e18);
+
+        assertEq(uAsset.totalSupply(), 0);
+        assertEq(uAsset.balanceOf(receiver), 0);
+        assertEq(uAsset.mintingStatusTable(minter).amountInMinted, 0);
+    }
+
+    /// @dev Pause is a full stop on the debt path too, not only the reserve path: with debt,
+    ///      balance, and allowance all in place, both mint and repay revert EnforcedPause —
+    ///      only the pause gate blocks them.
+    function testDebtPathMintAndRepayRevertWhenPaused() external {
+        _fundReceiver(40e18);
+
+        vm.prank(receiver);
+        uAsset.approve(minter, 40e18);
+
+        vm.prank(owner);
+        uAsset.pause();
+
+        vm.prank(minter);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        uAsset.mint(receiver, 1e18);
+
+        vm.prank(minter);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        uAsset.repay(receiver, 40e18);
+    }
+
+    /// @dev Zero-amount and zero-receiver mints are rejected with ZeroInput before any debt or
+    ///      supply write.
+    function testMintRejectsZeroAmountAndZeroReceiver() external {
+        vm.prank(owner);
+        uAsset.setMintingCap(minter, 100e18);
+
+        vm.startPrank(minter);
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.mint(receiver, 0);
+
+        vm.expectRevert(IUniversalAssets.ZeroInput.selector);
+        uAsset.mint(address(0), 1e18);
+        vm.stopPrank();
+
+        assertEq(uAsset.totalSupply(), 0);
+        assertEq(uAsset.mintingStatusTable(minter).amountInMinted, 0);
+    }
+
+    /// @dev Repaying another account's balance without allowance: the caller's debt covers the
+    ///      amount (the debt check runs first), so the failure surfaces as the standard ERC20
+    ///      allowance error with the caller as the rejected spender.
+    function testRepayAnotherAccountBalanceWithoutAllowanceRevertsInsufficientAllowance() external {
+        _fundReceiver(40e18);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, minter, 0, 15e18));
+        uAsset.repay(receiver, 15e18);
+    }
+
+    /// @dev PIN of current semantics (recorded behavior, not an endorsement): repay checks
+    ///      debt before tokens — a caller with zero outstanding debt — registered
+    ///      but never minted, or never registered at all — fails the debt check with
+    ///      ReachBurnCap before any allowance or balance read.
+    function testRepayWithZeroOutstandingDebtRevertsReachBurnCap() external {
+        vm.prank(owner);
+        uAsset.setMintingCap(minter, 100e18);
+
+        // Registered minter that never minted: debt is zero.
+        vm.prank(minter);
+        vm.expectRevert(IUniversalAssets.ReachBurnCap.selector);
+        uAsset.repay(receiver, 1);
+
+        // Unregistered caller: no minting record at all.
+        vm.prank(otherMinter);
+        vm.expectRevert(IUniversalAssets.ReachBurnCap.selector);
+        uAsset.repay(receiver, 1);
+    }
+
+    /// @dev Cap management is owner-only in both directions.
+    function testNonOwnerCannotSetMintingCapOrRevokeMinter() external {
+        vm.startPrank(minter);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, minter));
+        uAsset.setMintingCap(minter, 100e18);
+
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, minter));
+        uAsset.revokeMinter(minter);
+        vm.stopPrank();
+    }
+
+    /// @dev Plain transferFrom with no allowance surfaces the standard ERC20InsufficientAllowance
+    ///      error through the uAsset proxy.
+    function testTransferFromWithoutAllowanceRevertsInsufficientAllowance() external {
+        _fundReceiver(40e18);
+
+        vm.prank(minter);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, minter, 0, 10e18));
+        uAsset.transferFrom(receiver, otherMinter, 10e18);
+    }
+
+    /// @dev Plain transfer to the zero address surfaces the standard ERC20InvalidReceiver error.
+    function testTransferToZeroAddressRevertsInvalidReceiver() external {
+        _fundReceiver(40e18);
+
+        vm.prank(receiver);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InvalidReceiver.selector, address(0)));
+        uAsset.transfer(address(0), 10e18);
+    }
+
+    /// @dev Pause blocks the plain ERC20 surface as well: with balance and allowance in place,
+    ///      both transfer and transferFrom revert EnforcedPause while paused.
+    function testPausedBlocksPlainTransferAndTransferFrom() external {
+        _fundReceiver(40e18);
+
+        vm.prank(receiver);
+        uAsset.approve(minter, 40e18);
+
+        vm.prank(owner);
+        uAsset.pause();
+
+        vm.prank(receiver);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        uAsset.transfer(otherMinter, 1e18);
+
+        vm.prank(minter);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        uAsset.transferFrom(receiver, otherMinter, 1e18);
+    }
+
     function testOwnerCanTransferMinterDebtWithoutChangingSupplyOrBalances() external {
         vm.prank(owner);
         uAsset.setMintingCap(minter, 100e18);

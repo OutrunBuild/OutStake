@@ -2,6 +2,7 @@
 pragma solidity ^0.8.35;
 
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 import {UAssetHelper} from "./helpers/UAssetHelper.sol";
 import {OutrunL2OracleBackedSYUpgradeable} from "../../src/yield/OutrunL2OracleBackedSYUpgradeable.sol";
@@ -11,6 +12,8 @@ import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.
 import {ProxyTestHelper} from "./helpers/ProxyTestHelper.sol";
 import {SPTestDefaults} from "./helpers/SPTestDefaults.sol";
 import {PositionMockToken, PositionSettableOracle} from "./mocks/PositionMocks.sol";
+import {RevertingOracle} from "./mocks/OracleSetterMocks.sol";
+import {TestL2OracleBackedSYUpgradeableV2} from "./mocks/SYUpgradeableMocks.sol";
 
 /// @title L2OracleRateBreakerUpgradeableTest
 /// @notice Rate-anchor deviation breaker on the L2 oracle-backed SY base: the anchor is seeded
@@ -108,6 +111,13 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
         oracle.setExchangeRate(type(uint96).max);
         OutrunL2StakedTokenSYUpgradeable other = _deploySy();
         assertEq(other.exchangeRate(), type(uint96).max, "uint96-max first reading is its own anchor");
+    }
+
+    /// @notice The concrete L2 adapter's initializer is one-shot: a second initialize on the
+    ///      live proxy reverts and cannot rewrite the seeded anchor or wiring.
+    function test_RevertWhen_L2StakedTokenInitializeRunsTwice() external {
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        sy.initialize("x", "x", owner, address(token), address(oracle), address(token), 18);
     }
 
     // --------------------------------------------------------------------------
@@ -366,6 +376,36 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
         assertEq(sy.exchangeRate(), lower, "the lower anchor itself is in-band at elapsed 0");
     }
 
+    /// @notice Repeated commits can ratchet the anchor upward, but each commit only adopts the
+    ///      oracle's actual reading: after every round the stored anchor equals that reading and
+    ///      never exceeds it, so a malicious committer cannot push the anchor past what the feed
+    ///      reports. Deterministic bounded loop: eight hourly rounds at the default 5 bps/h.
+    function test_AnchorRatchetNeverExceedsOracleReading() external {
+        uint256 anchor = ANCHOR;
+        // The test frame's own block.timestamp never reflects vm.warp, so the loop advances its
+        // own clock; each commit lands exactly one hour after the previous one.
+        uint256 loopTs = anchorTs;
+        for (uint256 i = 0; i < 8; i++) {
+            loopTs += 1 hours;
+            vm.warp(loopTs);
+            // Maximum in-band reading for one elapsed hour at 5 bps/h (the 200 bps cap is far away).
+            uint256 maxReading = _maxRiseRate(anchor, DEFAULT_RISE_BPS_PER_HOUR, DEFAULT_RISE_CAP_BPS, 3600);
+            oracle.setExchangeRate(maxReading);
+            sy.commitRateAnchor();
+            anchor = maxReading;
+            // Reading the rate back at elapsed 0 returns the reading itself; a stored anchor
+            // above it would fail the drop bound and revert here instead.
+            assertEq(sy.exchangeRate(), maxReading, "anchor equals the oracle reading after each commit");
+        }
+
+        // Pin the final anchor value: at elapsed 0 the allowance is 0, so the revert's anchorRate
+        // argument must be exactly the eighth compounded reading — a higher anchor fails to match.
+        uint256 oneAbove = anchor + 1;
+        oracle.setExchangeRate(oneAbove);
+        _expectRateDeviation(oneAbove, anchor, 0);
+        sy.exchangeRate();
+    }
+
     // --------------------------------------------------------------------------
     // resetRateAnchor (owner-only recovery)
     // --------------------------------------------------------------------------
@@ -414,6 +454,30 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
         sy.resetRateAnchor();
         vm.stopPrank();
 
+        uint256 outOfBand = _applyBps(ANCHOR, 500);
+        oracle.setExchangeRate(outOfBand);
+        _expectRateDeviation(outOfBand, ANCHOR, 0);
+        sy.exchangeRate();
+    }
+
+    /// @notice A reverting oracle fails both anchor-writing entry points closed: the raw oracle
+    ///      error propagates (no partial state) and the committed anchor is left untouched —
+    ///      verified by swapping back to a working source and pinning the band's revert
+    ///      arguments, which echo the stored anchor.
+    function test_CommitAndResetPropagateOracleRevertAndKeepAnchor() external {
+        RevertingOracle brokenOracle = new RevertingOracle();
+        vm.prank(owner);
+        sy.setExchangeRateOracle(address(brokenOracle));
+
+        vm.expectRevert("ORACLE_DOWN");
+        sy.commitRateAnchor();
+
+        vm.prank(owner);
+        vm.expectRevert("ORACLE_DOWN");
+        sy.resetRateAnchor();
+
+        vm.prank(owner);
+        sy.setExchangeRateOracle(address(oracle));
         uint256 outOfBand = _applyBps(ANCHOR, 500);
         oracle.setExchangeRate(outOfBand);
         _expectRateDeviation(outOfBand, ANCHOR, 0);
@@ -524,6 +588,121 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
     }
 
     // --------------------------------------------------------------------------
+    // Breaker severs pricing only: deposit/redeem/previews stay open
+    // --------------------------------------------------------------------------
+
+    /// @notice The breaker's design promise is that it severs PRICING, not liquidity: with the
+    ///      oracle reading in the exact state that reverts `exchangeRate()` (and position
+    ///      pricing with it), previews still quote, and a full deposit -> redeem round trip
+    ///      moves funds 1:1 — the yield-bearing token IS the SY, so exits never consult the
+    ///      oracle and holders cannot be trapped by a broken feed.
+    function test_BreakerStateKeepsDepositAndRedeemOpenWhilePricingFails() external {
+        uint256 amount = 10e18;
+        token.mint(nonOwner, amount);
+
+        // Trip the breaker.
+        uint256 outOfBand = _applyBps(ANCHOR, 500);
+        oracle.setExchangeRate(outOfBand);
+
+        // Control: the same state breaks SY pricing...
+        _expectRateDeviation(outOfBand, ANCHOR, 0);
+        sy.exchangeRate();
+
+        // ...and position pricing with it.
+        OutrunStakingPositionUpgradeable position = OutrunStakingPositionUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunStakingPositionUpgradeable()),
+                SPTestDefaults.spInitCall(owner, address(sy), address(_deployUAsset(owner)), treasury)
+            )
+        );
+        _expectRateDeviation(outOfBand, ANCHOR, 0);
+        position.previewStake(10e18);
+
+        // Previews are pure 1:1 math and never consult the oracle.
+        assertEq(sy.previewDeposit(address(token), 4e18), 4e18, "previewDeposit works while broken");
+        assertEq(sy.previewRedeem(address(token), 4e18), 4e18, "previewRedeem works while broken");
+
+        // Full round trip in the same broken state: 1:1 in, 1:1 out.
+        vm.startPrank(nonOwner);
+        token.approve(address(sy), amount);
+        uint256 shares = sy.deposit(nonOwner, address(token), amount, amount);
+        uint256 tokensOut = sy.redeem(nonOwner, shares, address(token), shares, false);
+        vm.stopPrank();
+
+        assertEq(shares, amount, "deposit is 1:1 while broken");
+        assertEq(tokensOut, amount, "redeem is 1:1 while broken");
+        assertEq(sy.balanceOf(nonOwner), 0, "no shares left");
+        assertEq(token.balanceOf(nonOwner), amount, "funds fully returned");
+        assertEq(sy.totalSupply(), 0, "supply fully burned");
+
+        // The breaker is still engaged after the round trip.
+        _expectRateDeviation(outOfBand, ANCHOR, 0);
+        sy.exchangeRate();
+    }
+
+    // --------------------------------------------------------------------------
+    // Upgrade storage preservation
+    // --------------------------------------------------------------------------
+
+    /// @notice A V2 upgrade of the L2 oracle-backed SY preserves every breaker and wiring field
+    ///      byte for byte, and the breaker keeps enforcing and committing through the V2 code.
+    function test_UpgradeToV2PreservesBreakerStorageAndEnforcement() external {
+        // Move every stored field off its init default so the before/after comparison is meaningful.
+        vm.warp(anchorTs + 2 hours);
+        uint256 risenRate = _applyBps(ANCHOR, 5); // inside the 2h x 5 bps = 10 bps allowance
+        oracle.setExchangeRate(risenRate);
+        sy.commitRateAnchor();
+        vm.startPrank(owner);
+        sy.setRateBreakerParams(11, 6, 201);
+        sy.setTrustedRouter(treasury);
+        vm.stopPrank();
+
+        (uint96 anchorBefore, uint64 anchorTsBefore, uint16 dropBefore, uint16 riseBefore, uint16 capBefore) =
+            _readBreakerPackedStorage();
+        assertEq(anchorBefore, risenRate, "anchor before upgrade");
+        assertEq(anchorTsBefore, anchorTs + 2 hours, "anchor timestamp before upgrade");
+        assertEq(dropBefore, 11, "drop bps before upgrade");
+        assertEq(riseBefore, 6, "rise bps before upgrade");
+        assertEq(capBefore, 201, "cap bps before upgrade");
+        assertEq(sy.exchangeRateOracle(), address(oracle), "oracle before upgrade");
+        assertEq(sy.trustedRouter(), treasury, "trusted router before upgrade");
+        assertEq(sy.yieldBearingToken(), address(token), "yield-bearing token before upgrade");
+
+        TestL2OracleBackedSYUpgradeableV2 implementationV2 = new TestL2OracleBackedSYUpgradeableV2();
+        vm.prank(owner);
+        sy.upgradeToAndCall(address(implementationV2), "");
+        assertEq(TestL2OracleBackedSYUpgradeableV2(payable(address(sy))).version(), 2, "upgrade took effect");
+
+        (uint96 anchorAfter, uint64 anchorTsAfter, uint16 dropAfter, uint16 riseAfter, uint16 capAfter) =
+            _readBreakerPackedStorage();
+        assertEq(anchorAfter, anchorBefore, "anchor survives the upgrade");
+        assertEq(anchorTsAfter, anchorTsBefore, "anchor timestamp survives the upgrade");
+        assertEq(dropAfter, dropBefore, "drop bps survives the upgrade");
+        assertEq(riseAfter, riseBefore, "rise bps survives the upgrade");
+        assertEq(capAfter, capBefore, "cap bps survives the upgrade");
+        assertEq(sy.exchangeRateOracle(), address(oracle), "oracle survives the upgrade");
+        assertEq(sy.trustedRouter(), treasury, "trusted router survives the upgrade");
+        assertEq(sy.yieldBearingToken(), address(token), "yield-bearing token survives the upgrade");
+
+        // The breaker still enforces through the V2 code: an out-of-band reading reverts.
+        uint256 outOfBand = _applyBps(risenRate, 500);
+        oracle.setExchangeRate(outOfBand);
+        _expectRateDeviation(outOfBand, risenRate, 0);
+        sy.exchangeRate();
+
+        // commitRateAnchor still works through the V2 code: the rise allowance is zero at
+        // elapsed 0, so only a lower in-band reading can move the anchor — and moving it is
+        // observable both through the band and in the stored slot.
+        uint256 lower = _applyBps(risenRate, -5);
+        oracle.setExchangeRate(lower);
+        sy.commitRateAnchor();
+        (uint96 anchorAfterCommit,, uint16 dropAfterCommit,,) = _readBreakerPackedStorage();
+        assertEq(anchorAfterCommit, lower, "post-upgrade commit adopts the in-band reading");
+        assertEq(dropAfterCommit, 11, "commit leaves the breaker params untouched");
+        assertEq(sy.exchangeRate(), lower, "band re-based on the newly committed anchor");
+    }
+
+    // --------------------------------------------------------------------------
     // Helpers
     // --------------------------------------------------------------------------
 
@@ -578,5 +757,26 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
                 OutrunL2OracleBackedSYUpgradeable.RateDeviationExceeded.selector, rate, anchorRate, allowedBps
             )
         );
+    }
+
+    /// @dev ERC-7201 namespace base slot for a storage id, matching the production constants.
+    function _erc7201(string memory id) internal pure returns (bytes32) {
+        return keccak256(abi.encode(uint256(keccak256(bytes(id))) - 1)) & ~bytes32(uint256(0xff));
+    }
+
+    /// @dev Reads the packed breaker fields from the L2 oracle-backed namespace. The two leading
+    ///      addresses each take their own slot, with the uint8 decimals packed after the second
+    ///      address (20 + 1 bytes fit one slot), so the breaker fields start at namespace slot 2,
+    ///      byte 0 (low byte first): uint96 rateAnchor, uint64 rateAnchorTimestamp, then the
+    ///      three uint16 band params.
+    function _readBreakerPackedStorage()
+        internal
+        view
+        returns (uint96 rateAnchor, uint64 rateAnchorTimestamp, uint16 maxDropBps, uint16 riseBpsPerHour, uint16 capBps)
+    {
+        bytes32 base = _erc7201("outrun.storage.OutrunL2OracleBackedSY");
+        uint256 packed = uint256(vm.load(address(sy), bytes32(uint256(base) + 2)));
+        return
+            (uint96(packed), uint64(packed >> 96), uint16(packed >> 160), uint16(packed >> 176), uint16(packed >> 192));
     }
 }

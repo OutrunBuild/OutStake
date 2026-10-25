@@ -4,6 +4,8 @@ pragma solidity ^0.8.35;
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ERC4626Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
@@ -14,6 +16,7 @@ import {IUSRVault} from "../../src/usr/interfaces/IUSRVault.sol";
 import {ProxyTestHelper} from "../upgradeable/helpers/ProxyTestHelper.sol";
 import {CommonTestHelpers} from "../upgradeable/helpers/CommonTestHelpers.sol";
 import {MockUSDC} from "../support/mocks/MockUSDC.sol";
+import {MockVaultUUPSV2Continuous} from "../upgradeable/mocks/MockUUPSVersion.sol";
 
 contract OutrunUSRVaultTest is CommonTestHelpers {
     // Mirrors the contract-internal conversion constant (365-day year in seconds) so the reference
@@ -217,6 +220,46 @@ contract OutrunUSRVaultTest is CommonTestHelpers {
         // ...and the pool splits strictly by share weight (dust-level tolerance only).
         uint256 total = aliceAssets + bobAssets;
         assertApproxEqAbs(aliceAssets, Math.mulDiv(total, aliceShares, aliceShares + bobShares), 10);
+        _assertSolvency();
+    }
+
+    /// @notice Top-of-range rate (the 10% ceiling) compounds pointwise against the reference
+    ///         implementation: each half-year settlement matches the reference projection on the
+    ///      live state, the two-segment composition is exact, and a full-year redemption pays the
+    ///      compounded index.
+    function test_TopRateFullYearCompoundingMatchesReference() external {
+        vm.prank(vaultOwner);
+        vault.fund(2000e18); // cap headroom so the budget never binds over a full year at 10%
+        _setRate(RATE_MAX);
+        vm.prank(alice);
+        uint256 shares = vault.deposit(1000e18, alice); // priced at par
+
+        // Half-year point: settlement matches the reference single-span projection from par.
+        _warp(SECONDS_PER_YEAR / 2);
+        uint256 halfYear = _expectedSettledIndex();
+        vm.prank(bob);
+        vault.deposit(1e18, bob); // settlement entry
+        assertEq(vault.accrualIndex(), halfYear, "half-year settlement matches the reference");
+        assertEq(halfYear, Math.mulDiv(1e18, _refGrowth(RATE_MAX, SECONDS_PER_YEAR / 2), 1e18), "single-span reference");
+        assertGt(halfYear, 1e18);
+
+        // Full-year point: the second half-year compounds on the settled half-year index.
+        _warp(SECONDS_PER_YEAR / 2);
+        uint256 fullYear = _expectedSettledIndex();
+        vm.prank(bob);
+        vault.deposit(1e18, bob);
+        assertEq(vault.accrualIndex(), fullYear, "full-year settlement matches the reference");
+        assertEq(
+            fullYear, Math.mulDiv(halfYear, _refGrowth(RATE_MAX, SECONDS_PER_YEAR / 2), 1e18), "segment composition"
+        );
+        // (1 + 0.1/N)^N at N = one year of seconds compounds continuously toward e^0.1 (~1.105),
+        // strictly past the naive 1.1 discrete mark even with the per-second floor.
+        assertGt(fullYear, 1.1e18, "ceiling rate compounds past the naive 10% mark");
+
+        // Redemption pays exactly shares * settled index.
+        vm.prank(alice);
+        uint256 assets = vault.redeem(shares, alice, alice);
+        assertEq(assets, Math.mulDiv(shares, fullYear, 1e18), "redeem at the compounded index");
         _assertSolvency();
     }
 
@@ -592,6 +635,24 @@ contract OutrunUSRVaultTest is CommonTestHelpers {
         assertEq(vault.balanceOf(vaultOwner), 0);
     }
 
+    /// @notice fund without a prior uAsset approval by the owner reverts with the token's
+    ///         allowance error and nothing moves: the UsrFunded event emitted before the pull rolls
+    ///         back together with the call, and neither balance changes.
+    function test_RevertWhen_FundWithoutApproval() external {
+        vm.prank(vaultOwner);
+        uAsset.approve(address(vault), 0); // setUp granted max; remove it for this case
+        uint256 vaultBalanceBefore = uAsset.balanceOf(address(vault));
+
+        vm.prank(vaultOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(vault), 0, 250e18)
+        );
+        vault.fund(250e18);
+
+        assertEq(uAsset.balanceOf(address(vault)), vaultBalanceBefore, "nothing entered the vault");
+        assertEq(uAsset.balanceOf(vaultOwner), 1_000_000e18, "owner kept the full balance");
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Accrual index settlement event
     // ---------------------------------------------------------------------------------------------
@@ -845,6 +906,183 @@ contract OutrunUSRVaultTest is CommonTestHelpers {
 
         // Informational totalAssets stays the plain balance view.
         assertEq(vault.totalAssets(), uAsset.balanceOf(address(vault)));
+        _assertSolvency();
+    }
+
+    /// @notice Third-party allowance withdrawals: an approved caller can redeem and withdraw on the
+    ///         owner's behalf, the Withdraw event carries caller/receiver/owner distinctly, assets
+    ///         land on the receiver (not the caller), and share-denominated allowances are consumed
+    ///         exactly; requesting beyond the approval, or with none at all, reverts with the ERC20
+    ///         allowance error.
+    function test_ThirdPartyAllowanceWithdrawAndRedeem() external {
+        vm.prank(alice);
+        uint256 aliceShares = vault.deposit(1000e18, alice);
+        uint256 aliceAssetsBefore = uAsset.balanceOf(alice);
+
+        // Redeem path: bob redeems alice's shares, assets go to alice.
+        uint256 redeemShares = 40e18;
+        uint256 redeemAssets = vault.previewRedeem(redeemShares);
+        vm.prank(alice);
+        vault.approve(address(bob), redeemShares);
+        vm.prank(bob);
+        vm.expectEmit(true, true, true, true);
+        emit IERC4626.Withdraw(bob, alice, alice, redeemAssets, redeemShares);
+        vault.redeem(redeemShares, alice, alice);
+        assertEq(vault.balanceOf(alice), aliceShares - redeemShares, "owner's shares burned");
+        assertEq(vault.balanceOf(bob), 0, "caller minted nothing");
+        assertEq(vault.allowance(alice, bob), 0, "allowance consumed exactly");
+        assertEq(uAsset.balanceOf(alice), aliceAssetsBefore + redeemAssets, "receiver got the assets");
+        assertEq(uAsset.balanceOf(bob), 1_000_000e18, "caller received nothing");
+
+        // Withdraw path: allowance is spent in shares (previewWithdraw of the asset amount).
+        uint256 withdrawAssets = 30e18;
+        uint256 withdrawShares = vault.previewWithdraw(withdrawAssets);
+        vm.prank(alice);
+        vault.approve(address(bob), withdrawShares);
+        vm.prank(bob);
+        vault.withdraw(withdrawAssets, alice, alice);
+        assertEq(vault.balanceOf(alice), aliceShares - redeemShares - withdrawShares, "withdraw burned shares");
+        assertEq(uAsset.balanceOf(alice), aliceAssetsBefore + redeemAssets + withdrawAssets, "receiver got the assets");
+
+        // Requesting one share beyond the approval reverts with the exact ERC20 payload.
+        vm.prank(alice);
+        vault.approve(address(bob), 1e18);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, bob, 1e18, 2e18));
+        vault.redeem(2e18, alice, alice);
+
+        // No approval at all: zero-allowance payload.
+        address carol = address(0xBEEF);
+        vm.prank(carol);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, carol, 0, 1e18));
+        vault.redeem(1e18, alice, alice);
+    }
+
+    /// @notice PIN of current semantics (recorded behavior, not an endorsement): once the index
+    ///         grows past par, a 1-wei deposit is below the share quantum — it mints zero shares,
+    ///         still pulls the wei from the depositor, and leaves totalSupply unchanged, so the wei
+    ///         is absorbed as unattributable value.
+    function test_ZeroShareDustDepositPinnedCurrentBehavior() external {
+        vm.prank(vaultOwner);
+        vault.fund(1000e18);
+        _setRate(RATE_STEP);
+        vm.prank(bob);
+        vault.deposit(1000e18, bob); // live supply so the index can grow past par
+        _warp(SECONDS_PER_YEAR);
+
+        uint256 supplyBefore = vault.totalSupply();
+        uint256 aliceAssetsBefore = uAsset.balanceOf(alice);
+        uint256 vaultBalanceBefore = uAsset.balanceOf(address(vault));
+        assertGt(vault.previewRedeem(1e18), 1e18, "precondition: live index above par");
+
+        vm.prank(alice);
+        uint256 shares = vault.deposit(1, alice);
+        assertEq(shares, 0, "PIN: 1 wei below the index quantum mints zero shares");
+        assertEq(vault.balanceOf(alice), 0, "PIN: no shares attributed");
+        assertEq(uAsset.balanceOf(alice), aliceAssetsBefore - 1, "PIN: the wei is still pulled in");
+        assertEq(vault.totalSupply(), supplyBefore, "PIN: share supply unchanged");
+        assertEq(uAsset.balanceOf(address(vault)), vaultBalanceBefore + 1, "PIN: the wei sits in the vault balance");
+        _assertSolvency();
+    }
+
+    /// @notice Zero-value entries are silent no-ops: deposit(0), mint(0), redeem(0) and withdraw(0)
+    ///         all succeed without touching balances, supply, or the settled index.
+    function test_ZeroValueEntriesSucceedWithoutStateChange() external {
+        vm.prank(vaultOwner);
+        vault.fund(100e18);
+        _setRate(RATE_STEP);
+        vm.prank(alice);
+        uint256 aliceShares = vault.deposit(1000e18, alice);
+        _warp(SECONDS_PER_YEAR);
+        _settleOnly(); // settle pending seconds so the zero entries run in a zero-delta second
+
+        uint256 supplyBefore = vault.totalSupply();
+        uint256 aliceSharesBefore = vault.balanceOf(alice);
+        uint256 aliceAssetsBefore = uAsset.balanceOf(alice);
+        uint256 vaultBalanceBefore = uAsset.balanceOf(address(vault));
+        uint256 indexBefore = vault.accrualIndex();
+
+        vm.startPrank(alice);
+        vault.deposit(0, alice);
+        vault.mint(0, alice);
+        vault.redeem(0, alice, alice);
+        vault.withdraw(0, alice, alice);
+        vm.stopPrank();
+
+        assertEq(vault.totalSupply(), supplyBefore, "supply unchanged");
+        assertEq(vault.balanceOf(alice), aliceSharesBefore, "alice shares unchanged");
+        assertEq(uAsset.balanceOf(alice), aliceAssetsBefore, "alice assets unchanged");
+        assertEq(uAsset.balanceOf(address(vault)), vaultBalanceBefore, "vault balance unchanged");
+        assertEq(vault.accrualIndex(), indexBefore, "settled index unchanged");
+        assertGt(aliceShares, 0, "fixture sanity: the zero entries ran against a live position");
+    }
+
+    /// @notice Non-zero max* paths: maxDeposit/maxMint stay at the unlimited sentinel, while
+    ///         maxRedeem is the holder's full share balance and maxWithdraw is that balance priced
+    ///         at the accrued index (strictly above the deposited assets after a year of accrual).
+    function test_MaxViewsOnNonZeroPaths() external {
+        assertEq(vault.maxDeposit(alice), type(uint256).max, "deposit entry unlimited");
+        assertEq(vault.maxMint(alice), type(uint256).max, "mint entry unlimited");
+
+        vm.prank(vaultOwner);
+        vault.fund(1000e18);
+        _setRate(RATE_STEP);
+        vm.prank(alice);
+        vault.deposit(1000e18, alice);
+        _warp(SECONDS_PER_YEAR);
+
+        assertEq(vault.maxDeposit(alice), type(uint256).max, "deposit entry stays unlimited");
+        assertEq(vault.maxMint(alice), type(uint256).max, "mint entry stays unlimited");
+        assertEq(vault.maxRedeem(alice), vault.balanceOf(alice), "maxRedeem is the full share balance");
+        assertEq(
+            vault.maxWithdraw(alice), vault.previewRedeem(vault.balanceOf(alice)), "maxWithdraw priced at the index"
+        );
+        assertGt(vault.maxWithdraw(alice), 1000e18, "accrual lifted the withdrawable assets");
+        _assertSolvency();
+    }
+
+    /// @notice Cross-implementation upgrade continuity: after upgrading to a full-logic V2, the
+    ///         share/supply/asset namespaces survive, the same-second redeem quote is unchanged, a
+    ///         later settlement accrues exactly per the reference, and redemption pays
+    ///         shares * settled index.
+    function test_UpgradeToV2ContinuesAccrual() external {
+        vm.prank(vaultOwner);
+        vault.fund(1000e18);
+        _setRate(RATE_STEP);
+        vm.prank(alice);
+        uint256 shares = vault.deposit(1000e18, alice);
+
+        _warp(SECONDS_PER_YEAR);
+        uint256 quoteBeforeUpgrade = vault.previewRedeem(shares);
+
+        MockVaultUUPSV2Continuous v2 = new MockVaultUUPSV2Continuous();
+        vm.prank(vaultOwner);
+        vault.upgradeToAndCall(address(v2), "");
+        assertEq(MockVaultUUPSV2Continuous(address(vault)).version(), 2, "proxy runs the V2 implementation");
+
+        // Namespace continuity: shares, supply, and the accrual state are readable and unchanged.
+        assertEq(vault.balanceOf(alice), shares, "shares survived");
+        assertEq(vault.totalSupply(), shares, "supply survived");
+        assertEq(vault.asset(), address(uAsset), "asset binding survived");
+        assertEq(vault.accrualIndex(), 1e18, "settled index still par (pending year unsettled)");
+        assertEq(vault.lastSettledAt(), warpAt - SECONDS_PER_YEAR, "settlement timestamp survived");
+
+        // Quote continuity: the same-second V2 quote equals the pre-upgrade v1 quote.
+        assertEq(vault.previewRedeem(shares), quoteBeforeUpgrade, "same-second quote unchanged by the swap");
+
+        // Accrual continues under V2: the pending two unsettled years settle per the reference.
+        _warp(SECONDS_PER_YEAR);
+        uint256 expected = _expectedSettledIndex();
+        vm.prank(bob);
+        vault.deposit(1e18, bob); // settlement entry through V2
+        assertEq(vault.accrualIndex(), expected, "post-upgrade settlement matches the reference");
+        assertGt(expected, 1e18, "index grew across the upgrade");
+
+        // Redemption through V2 pays exactly shares * settled index per the reference conversion.
+        vm.prank(alice);
+        uint256 assets = vault.redeem(shares, alice, alice);
+        assertEq(assets, Math.mulDiv(shares, expected, 1e18), "redeem at the settled index");
+        assertGt(assets, 1000e18, "accrued interest paid out");
         _assertSolvency();
     }
 
