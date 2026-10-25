@@ -35,7 +35,9 @@ contract MockOracleWarningsTest is Test {
         adapter = new OutrunExchangeOracleAdapter(address(aggregator), 2 days, address(0), 0);
     }
 
-    function testMockSUSDSOracleRevertsWhenAnswerIsZeroOrNegative() external {
+    /// @dev Both decimal-flavored exchange-rate mocks share the same base guard: a zero or
+    ///      negative latest answer must fail closed instead of quoting a bogus rate.
+    function testMocksRevertWhenAnswerIsZeroOrNegative() external {
         vm.startPrank(owner);
 
         susdsOracle.setLatestAnswer(0);
@@ -45,12 +47,6 @@ contract MockOracleWarningsTest is Test {
         susdsOracle.setLatestAnswer(-1);
         vm.expectRevert(INVALID_ORACLE_ANSWER_SELECTOR);
         susdsOracle.getExchangeRate();
-
-        vm.stopPrank();
-    }
-
-    function testMockAUSDCOracleRevertsWhenAnswerIsZeroOrNegative() external {
-        vm.startPrank(owner);
 
         ausdcOracle.setLatestAnswer(0);
         vm.expectRevert(INVALID_ORACLE_ANSWER_SELECTOR);

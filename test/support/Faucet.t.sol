@@ -3,6 +3,7 @@ pragma solidity ^0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {
     Faucet,
@@ -75,7 +76,7 @@ contract FaucetTest is Test {
 
     function testAddHeldTokenOnlyOwner() external {
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         faucet.addHeldToken(address(held), 100e18);
     }
 
@@ -206,7 +207,7 @@ contract FaucetTest is Test {
         MockMerkleCredit credit = new MockMerkleCredit();
         bytes32[] memory proof = new bytes32[](0);
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         faucet.bootstrapGenesisCredit(address(credit), 1e18, proof);
     }
 

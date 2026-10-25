@@ -33,17 +33,15 @@ import {
 import {RouterMockSY, RouterMockERC20, RouterMockUAsset} from "./mocks/RouterMocks.sol";
 
 /**
- * @title OutrunRouterTest
- * @notice Router coverage for the genesis dual-gate surface and the target registries: the trusted-SP
- *     registry gating on the genesis path, the PSM registry (registration checks, events, revocation,
- *     runtime binding drift), genesis path A (`genesisByPSM`: ERC20 and NATIVE reserve legs, fee math,
- *     uint128 bound, strict full-consumption post-condition), and genesis path B (`genesisBySY` and its
- *     token-denominated entry `genesisByToken`: ERC20/NATIVE legs, two-level slippage floors, registry
- *     gating, uint128 bound, two-step composition equivalence, rollback on launcher failure), plus the
- *     leveraged PSM genesis (`leveragedGenesisByPSM`: POLend target gating and registration,
- *     market-uAsset pairing, native/ERC20 value rules, and strict full-consumption).
+ * @title OutrunRouterTestBase
+ * @notice Shared fixtures for every router suite in this file: the mock stack (underlying / SY /
+ *     uAsset / dual-leg PSM / staking position / router / launcher), the selector constants, and
+ *     the cross-suite assertion helpers.
+ * @dev Declared abstract so inheriting scenario suites reuse the fixtures WITHOUT re-executing
+ *      the base suite's test functions — Foundry runs inherited `test*` functions in every
+ *      concrete contract, which previously duplicated the base suite once per inheriting suite.
  */
-contract OutrunRouterTest is Test {
+abstract contract OutrunRouterTestBase is Test {
     bytes4 internal constant UNTRUSTED_ROUTER_TARGET_SELECTOR = IOutrunRouter.UntrustedRouterTarget.selector;
     bytes4 internal constant ROUTER_TARGET_MISMATCH_SELECTOR = IOutrunRouter.RouterTargetMismatch.selector;
     bytes4 internal constant UNREGISTERED_PSM_SELECTOR = IOutrunRouter.UnregisteredPsm.selector;
@@ -130,6 +128,63 @@ contract OutrunRouterTest is Test {
         vm.stopPrank();
     }
 
+    // --------------------------------------------------------------------------
+    // Shared helpers (inherited by every router suite in this file)
+    // --------------------------------------------------------------------------
+
+    /// @dev Deploys a fresh single-reserve PSM proxy with a max stock cap and zero fees, bound to
+    ///      `uAsset_` and `reserve_` and owned by `owner`.
+    function _deployPSM(address uAsset_, address reserve_) internal returns (OutrunPSMUpgradeable psm_) {
+        psm_ = OutrunPSMUpgradeable(
+            ProxyTestHelper.deploy(
+                address(new OutrunPSMUpgradeable()),
+                abi.encodeCall(
+                    OutrunPSMUpgradeable.initialize,
+                    (uAsset_, reserve_, owner, makeAddr("psmFeeRecipient"), type(uint256).max, 0, 0)
+                )
+            )
+        );
+    }
+
+    /// @dev Rotates both launcher registries to `newLauncher` in lockstep, preserving the
+    ///      SP/router launcher parity the SP-path genesis gate requires.
+    function _setLaunchersInParity(address newLauncher) internal {
+        vm.startPrank(owner);
+        position.setGenesisLauncher(newLauncher);
+        // Launcher parity must hold on the SP path too: keep the router registry in lockstep.
+        router.setMemeverseLauncher(newLauncher);
+        vm.stopPrank();
+    }
+
+    /// @dev Asserts the router holds no residual uAsset, no residual input token (NATIVE resolves to the
+    ///      router's native balance), and no leftover launcher allowance after a genesis flow.
+    function _assertGenesisLeftNoResidual(address inputToken) internal view {
+        assertEq(uAsset.balanceOf(address(router)), 0, "router kept residual uAsset");
+        assertEq(uAsset.allowance(address(router), address(launcher)), 0, "launcher allowance not cleared");
+        uint256 inputLeft =
+            inputToken == NATIVE ? address(router).balance : IERC20(inputToken).balanceOf(address(router));
+        assertEq(inputLeft, 0, "router kept a residual input-token balance");
+    }
+
+    /// @dev Asserts no position with id 1 exists (a zero owner marks a missing position).
+    function _assertNoPositionCreated() internal view {
+        (address positionOwner,,,,) = position.positions(1);
+        assertEq(positionOwner, address(0), "no position may exist");
+    }
+}
+
+/**
+ * @title OutrunRouterTest
+ * @notice Router coverage for the genesis dual-gate surface and the target registries: the trusted-SP
+ *     registry gating on the genesis path, the PSM registry (registration checks, events, revocation,
+ *     runtime binding drift), genesis path A (`genesisByPSM`: ERC20 and NATIVE reserve legs, fee math,
+ *     uint128 bound, strict full-consumption post-condition), and genesis path B (`genesisBySY` and its
+ *     token-denominated entry `genesisByToken`: ERC20/NATIVE legs, two-level slippage floors, registry
+ *     gating, uint128 bound, two-step composition equivalence, rollback on launcher failure), plus the
+ *     leveraged PSM genesis (`leveragedGenesisByPSM`: POLend target gating and registration,
+ *     market-uAsset pairing, native/ERC20 value rules, and strict full-consumption).
+ */
+contract OutrunRouterTest is OutrunRouterTestBase {
     /// @notice The launcher registry performs no code check: the constructor accepts the zero address.
     function test_ConstructorAcceptsZeroMemeverseLauncher() external {
         OutrunRouter zeroLauncherRouter = new OutrunRouter(owner, address(0));
@@ -192,27 +247,21 @@ contract OutrunRouterTest is Test {
         router.mintSYFromToken(address(sy), address(underlying), user, type(uint256).max, 0);
     }
 
-    /// @notice The launcher setter performs no code check: the zero address registers, then the
-    ///         original launcher is restored.
-    function test_SetMemeverseLauncherAcceptsZeroAddress() external {
+    /// @notice The launcher setter performs no zero-address check and no code check: the zero
+    ///         address and a codeless EOA both register, then the original launcher is restored.
+    function test_SetMemeverseLauncherAcceptsZeroAndCodelessAddress() external {
+        address eoaLauncher = address(0x1234);
         vm.startPrank(owner);
         vm.expectEmit(true, true, false, true);
         emit IOutrunRouter.SetMemeverseLauncher(address(launcher), address(0));
         router.setMemeverseLauncher(address(0));
         assertEq(router.memeverseLauncher(), address(0), "zero launcher stored without a code check");
-        router.setMemeverseLauncher(address(launcher));
-        vm.stopPrank();
-        assertEq(router.memeverseLauncher(), address(launcher), "launcher restore failed");
-    }
 
-    /// @notice A codeless launcher registers successfully; the original launcher is restored afterwards.
-    function test_SetMemeverseLauncherAcceptsCodelessAddress() external {
-        address eoaLauncher = address(0x1234);
-        vm.startPrank(owner);
         vm.expectEmit(true, true, false, true);
-        emit IOutrunRouter.SetMemeverseLauncher(address(launcher), eoaLauncher);
+        emit IOutrunRouter.SetMemeverseLauncher(address(0), eoaLauncher);
         router.setMemeverseLauncher(eoaLauncher);
         assertEq(router.memeverseLauncher(), eoaLauncher, "codeless launcher stored without a code check");
+
         router.setMemeverseLauncher(address(launcher));
         vm.stopPrank();
         assertEq(router.memeverseLauncher(), address(launcher), "launcher restore failed");
@@ -353,14 +402,6 @@ contract OutrunRouterTest is Test {
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(UNREGISTERED_PSM_SELECTOR, unregistered, address(underlying)));
         router.genesisByPSM(unregistered, address(underlying), 1e18, VERSE_ID, user);
-    }
-
-    /// @notice An unregistered reserve for a registered uAsset fails `genesisByPSM` before any funds move.
-    function test_RevertWhen_GenesisByPSMWithUnregisteredReserveForRegisteredUAsset() external {
-        address strayReserve = address(new RouterMockERC20("Stray", "STR"));
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(UNREGISTERED_PSM_SELECTOR, address(uAsset), strayReserve));
-        router.genesisByPSM(address(uAsset), strayReserve, 1e18, VERSE_ID, user);
     }
 
     /// @notice Revoking the pair PSM fails the entry closed for subsequent calls on that pair only.
@@ -699,7 +740,6 @@ contract OutrunRouterTest is Test {
         (, uint256 lastAmount,) = launcher.snapshot();
         assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(uAsset.balanceOf(address(launcher)), expectedMinted, "launcher holds exactly the minted amount");
-        assertEq(expectedMinted, principalDebt, "borrowed amount must equal the genesis consumption");
         _assertGenesisLeftNoResidual(address(sy));
         assertEq(sy.allowance(address(router), address(position)), 0, "SY allowance to SP not cleared");
     }
@@ -903,7 +943,6 @@ contract OutrunRouterTest is Test {
         (, uint256 lastAmount,) = launcher.snapshot();
         assertEq(lastAmount, expectedMinted, "launcher received the minted amount");
         assertEq(uAsset.balanceOf(address(launcher)), expectedMinted, "launcher holds exactly the minted amount");
-        assertEq(expectedMinted, principalDebt, "borrowed amount must equal the genesis consumption");
         _assertGenesisLeftNoResidual(address(underlying));
         assertEq(sy.balanceOf(address(router)), 0, "router kept residual SY");
         assertEq(sy.allowance(address(router), address(position)), 0, "SY allowance to SP not cleared");
@@ -1185,50 +1224,6 @@ contract OutrunRouterTest is Test {
         vm.expectRevert(IOutrunStakeManager.GenesisLauncherNotSet.selector);
         router.genesisBySY(address(position), 10e18, VERSE_ID, user, 0);
     }
-
-    // --------------------------------------------------------------------------
-    // Helpers
-    // --------------------------------------------------------------------------
-
-    /// @dev Deploys a fresh single-reserve PSM proxy with a max stock cap and zero fees, bound to
-    ///      `uAsset_` and `reserve_` and owned by `owner`.
-    function _deployPSM(address uAsset_, address reserve_) internal returns (OutrunPSMUpgradeable psm_) {
-        psm_ = OutrunPSMUpgradeable(
-            ProxyTestHelper.deploy(
-                address(new OutrunPSMUpgradeable()),
-                abi.encodeCall(
-                    OutrunPSMUpgradeable.initialize,
-                    (uAsset_, reserve_, owner, makeAddr("psmFeeRecipient"), type(uint256).max, 0, 0)
-                )
-            )
-        );
-    }
-
-    /// @dev Rotates both launcher registries to `newLauncher` in lockstep, preserving the
-    ///      SP/router launcher parity the SP-path genesis gate requires.
-    function _setLaunchersInParity(address newLauncher) internal {
-        vm.startPrank(owner);
-        position.setGenesisLauncher(newLauncher);
-        // Launcher parity must hold on the SP path too: keep the router registry in lockstep.
-        router.setMemeverseLauncher(newLauncher);
-        vm.stopPrank();
-    }
-
-    /// @dev Asserts the router holds no residual uAsset, no residual input token (NATIVE resolves to the
-    ///      router's native balance), and no leftover launcher allowance after a genesis flow.
-    function _assertGenesisLeftNoResidual(address inputToken) internal view {
-        assertEq(uAsset.balanceOf(address(router)), 0, "router kept residual uAsset");
-        assertEq(uAsset.allowance(address(router), address(launcher)), 0, "launcher allowance not cleared");
-        uint256 inputLeft =
-            inputToken == NATIVE ? address(router).balance : IERC20(inputToken).balanceOf(address(router));
-        assertEq(inputLeft, 0, "router kept a residual input-token balance");
-    }
-
-    /// @dev Asserts no position with id 1 exists (a zero owner marks a missing position).
-    function _assertNoPositionCreated() internal view {
-        (address positionOwner,,,,) = position.positions(1);
-        assertEq(positionOwner, address(0), "no position may exist");
-    }
 }
 
 /**
@@ -1285,28 +1280,17 @@ contract OutrunRouterTestNativeValueGate is Test {
 }
 
 /**
- * @title OutrunRouterCombinedEntryTest
- * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
- *     gating and zero-field gating, both rejected before any funds move), the full end-to-end
- *     leg-pair matrix (normal family: {UAsset, Psm, Stake} genesis x {UAsset, Psm} preorder;
- *     leveraged family: {UAsset, Psm, Credit} genesis x {UAsset, Psm} preorder) with the summed
- *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
- *     credited by the preorder leg, and oversize native sums reverting the named value-gate
- *     error instead of an arithmetic panic), the stake-funded genesis sub-paths (the tokenIn
- *     deposit through SY.deposit with both slippage floors and the token == canonical-SY direct
- *     charge in SY units that skips the deposit), the stake-leg verse-SP uAsset family binding
- *     (a foreign-family SP reverts RouterTargetMismatch before any pull), and the credit-funded
- *     leveraged interest legs (factory-resolved credit pull escrowed by POLend, the cached-token
- *     divergence fail-closed, and the unresolved-factory rejection).
- * @dev Sibling of `OutrunRouterTest` for the same solc 0.8.35 via-ir assembly-tag ceiling that
- *     froze the parent contract (see `OutrunRouterTestNativeValueGate`); inherits the parent
- *     fixture (so every parent test re-runs in this context) and extends it only with the
- *     test-owned uAsset minting cap. The POLend market is wired per-test via
- *     `_wirePolendFixture` instead of in setUp: inherited parent tests assert a pristine
- *     `router.polend() == address(0)` start. The credit token and its factory are setUp-scoped
- *     (inert to the parent tests); only the POLend-side wiring rides `_wirePolendFixture`.
+ * @title OutrunRouterCombinedEntryBase
+ * @notice Combined-entry fixtures: extends the base router fixture with the test-owned uAsset
+ *     minting cap, the family credit token plus its resolution factory, and the FundInput
+ *     helpers used by the combined-entry suites.
+ * @dev Fixture extending `OutrunRouterTestBase`, split out for the same solc 0.8.35 via-ir
+ *     assembly-tag ceiling that froze the consolidated suite (see `OutrunRouterTestNativeValueGate`).
+ *     The POLend market is wired per-test via `_wirePolendFixture` instead of in setUp, so suites
+ *     that never wire it keep a pristine `router.polend() == address(0)` start; the credit token
+ *     and its factory are setUp-scoped.
  */
-contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
+abstract contract OutrunRouterCombinedEntryBase is OutrunRouterTestBase {
     MockPOLend internal polend;
     RouterMockERC20 internal credit;
     MockCreditRegistry internal creditFactory;
@@ -1328,8 +1312,8 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
 
     /// @dev Wires the leveraged-family fixture: a POLend market bound to the family uAsset, serving
     ///      the verse, with its credit resolution pointed at the setUp-scoped factory and its hot
-    ///      path pulling the cached credit token. Per-test (not setUp) so inherited parent tests
-    ///      keep their pristine `router.polend() == address(0)` assumption.
+    ///      path pulling the cached credit token. Per-test (not setUp) so suites that never wire it
+    ///      keep a pristine `router.polend() == address(0)` start.
     function _wirePolendFixture() internal {
         polend = new MockPOLend(address(uAsset), 1e17);
         polend.setMarketUAsset(VERSE_ID, address(uAsset));
@@ -1338,6 +1322,56 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         router.setPolend(address(polend));
     }
 
+    // --------------------------------------------------------------------------
+    // FundInput helpers
+    // --------------------------------------------------------------------------
+
+    function _fundUAsset(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.UAsset, address(0), amount, address(0), 0, 0);
+    }
+
+    function _fundPsm(address reserve, uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Psm, reserve, amount, address(0), 0, 0);
+    }
+
+    function _fundStake(address sp, address tokenIn, uint256 amount)
+        internal
+        pure
+        returns (IOutrunRouter.FundInput memory f)
+    {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, 0, 0);
+    }
+
+    /// @dev `_fundStake` plus the two stake-only slippage floors (`minSyOut`/`minUAssetMinted`).
+    function _fundStakeWithMins(address sp, address tokenIn, uint256 amount, uint256 minSyOut, uint256 minUAssetMinted)
+        internal
+        pure
+        returns (IOutrunRouter.FundInput memory f)
+    {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, minSyOut, minUAssetMinted);
+    }
+
+    function _fundCredit(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
+        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Credit, address(0), amount, address(0), 0, 0);
+    }
+}
+
+/**
+ * @title OutrunRouterCombinedEntryTest
+ * @notice Combined-entrypoint coverage: the FundInput validation matrix (family-scoped source
+ *     gating and zero-field gating, both rejected before any funds move), the full end-to-end
+ *     leg-pair matrix (normal family: {UAsset, Psm, Stake} genesis x {UAsset, Psm} preorder;
+ *     leveraged family: {UAsset, Psm, Credit} genesis x {UAsset, Psm} preorder) with the summed
+ *     native accounting (msg.value == sum of per-leg native requirements, fee-adjusted mint output
+ *     credited by the preorder leg, and oversize native sums reverting the named value-gate
+ *     error instead of an arithmetic panic), the stake-funded genesis sub-paths (the tokenIn
+ *     deposit through SY.deposit with both slippage floors and the token == canonical-SY direct
+ *     charge in SY units that skips the deposit), the stake-leg verse-SP uAsset family binding
+ *     (a foreign-family SP reverts RouterTargetMismatch before any pull), and the credit-funded
+ *     leveraged interest legs (factory-resolved credit pull escrowed by POLend, the cached-token
+ *     divergence fail-closed, and the unresolved-factory rejection).
+ */
+contract OutrunRouterCombinedEntryTest is OutrunRouterCombinedEntryBase {
     /// @notice Normal family: uAsset genesis + uAsset preorder, one atomic call, each leg crediting `user`.
     function test_CombinedUAssetGenesisAndUAssetPreorder() external {
         uint256 genesisAmount = 10e18;
@@ -1742,17 +1776,18 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
 
     /// @notice `genesisBySY`'s zero-value rule is enforced structurally by the non-payable
     ///         dispatcher: a value-carrying call reverts before the function body (and any registry
-    ///         read). A bare `vm.expectRevert()` probe (via a low-level call that bypasses
-    ///         Solidity's type-level ban on value to non-payable entrypoints) anchors that revert
-    ///         surface, keeping the removal of the unreachable explicit `_requireNoNativeValue`
-    ///         check behavior-equivalent.
+    ///         read). A low-level call (bypassing Solidity's type-level ban on value to non-payable
+    ///         entrypoints) anchors that revert surface by asserting the raw failure, keeping the
+    ///         removal of the unreachable explicit `_requireNoNativeValue` check
+    ///         behavior-equivalent.
     function test_RevertIf_GenesisBySYCallCarriesValue() external {
         vm.prank(user);
-        vm.expectRevert();
         (bool ok,) = address(router).call{value: 1}(
             abi.encodeCall(IOutrunRouter.genesisBySY, (address(position), 1e18, VERSE_ID, user, 0))
         );
-        ok; // expectRevert consumes the revert surface; the raw result is intentionally not asserted.
+        // The non-payable dispatcher rejects the value before the function body (and any registry
+        // read) runs.
+        assertFalse(ok, "value-carrying call must be rejected by the non-payable dispatcher");
 
         _assertNoPositionCreated();
         assertEq(sy.balanceOf(address(router)), 0, "value-carrying call must not pull SY");
@@ -2026,39 +2061,6 @@ contract OutrunRouterCombinedEntryTest is OutrunRouterTest {
         assertEq(address(psmNative).balance, 0, "PSM native unchanged");
         assertEq(uAsset.balanceOf(address(router)), 0, "no uAsset minted to the router");
     }
-
-    // --------------------------------------------------------------------------
-    // FundInput helpers
-    // --------------------------------------------------------------------------
-
-    function _fundUAsset(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
-        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.UAsset, address(0), amount, address(0), 0, 0);
-    }
-
-    function _fundPsm(address reserve, uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
-        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Psm, reserve, amount, address(0), 0, 0);
-    }
-
-    function _fundStake(address sp, address tokenIn, uint256 amount)
-        internal
-        pure
-        returns (IOutrunRouter.FundInput memory f)
-    {
-        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, 0, 0);
-    }
-
-    /// @dev `_fundStake` plus the two stake-only slippage floors (`minSyOut`/`minUAssetMinted`).
-    function _fundStakeWithMins(address sp, address tokenIn, uint256 amount, uint256 minSyOut, uint256 minUAssetMinted)
-        internal
-        pure
-        returns (IOutrunRouter.FundInput memory f)
-    {
-        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Stake, tokenIn, amount, sp, minSyOut, minUAssetMinted);
-    }
-
-    function _fundCredit(uint256 amount) internal pure returns (IOutrunRouter.FundInput memory f) {
-        f = IOutrunRouter.FundInput(IOutrunRouter.FundSource.Credit, address(0), amount, address(0), 0, 0);
-    }
 }
 
 /**
@@ -2139,7 +2141,7 @@ contract PairDonatingPSM {
  *     zero-user guard, and the uint128 launcher-domain bound. Grows in a fresh contract because the
  *     consolidated `OutrunRouterTest` sits at the solc 0.8.35 via-ir assembly-tag ceiling.
  */
-contract OutrunRouterPreorderByPSMTest is OutrunRouterTest {
+contract OutrunRouterPreorderByPSMTest is OutrunRouterTestBase {
     /// @notice ERC20 reserve leg: the caller pays `amountIn`, the PSM mints the fee-adjusted face-value
     ///         amount to the router, and the launcher preorder credits the full minted amount; no
     ///         residual stays anywhere and no genesis position is created.
@@ -2196,11 +2198,13 @@ contract OutrunRouterPreorderByPSMTest is OutrunRouterTest {
 
     /// @notice A zero credited user fails ZeroInput before any funds move.
     function test_RevertWhen_PreorderByPSMZeroUser() external {
+        uint256 userUnderlyingBefore = underlying.balanceOf(user);
+
         vm.prank(user);
         vm.expectRevert(IOutrunRouter.ZeroInput.selector);
         router.preorderByPSM(address(uAsset), address(underlying), 1e18, VERSE_ID, address(0));
         assertEq(IPSM(address(psm)).netUAssetMinted(), 0, "failed call must not move the PSM ledger");
-        assertEq(underlying.balanceOf(user), 1e40, "failed call must not pull the reserve");
+        assertEq(underlying.balanceOf(user), userUnderlyingBefore, "failed call must not pull the reserve");
     }
 
     /// @notice A mint above the uint128 launcher domain reverts InvalidParam before the launcher
@@ -2238,7 +2242,7 @@ contract OutrunRouterPreorderByPSMTest is OutrunRouterTest {
  *     fee starts at zero, so the fee-free mint equals the reserve input and every residual payload
  *     is exact.
  */
-contract OutrunRouterConsumptionFailureTest is OutrunRouterCombinedEntryTest {
+contract OutrunRouterConsumptionFailureTest is OutrunRouterCombinedEntryBase {
     /// @notice `preorderByPSM` with a launcher pulling only half of the preorder mint: the residual
     ///         balance and the residual allowance are both reported and the whole call reverts.
     function test_RevertWhen_PreorderByPSMLauncherConsumesHalf() external {
@@ -2516,7 +2520,7 @@ contract OutrunRouterConsumptionFailureTest is OutrunRouterCombinedEntryTest {
  *     0.8.35 via-ir assembly-tag ceiling (see `OutrunRouterTestNativeValueGate`); inherits the
  *     combined-entry fixture.
  */
-contract OutrunRouterCombinedGuardTest is OutrunRouterCombinedEntryTest {
+contract OutrunRouterCombinedGuardTest is OutrunRouterCombinedEntryBase {
     // --------------------------------------------------------------------------
     // Shared preamble ZeroInput branches
     // --------------------------------------------------------------------------
@@ -2870,7 +2874,7 @@ contract OutrunRouterCombinedGuardTest is OutrunRouterCombinedEntryTest {
  *     0.8.35 via-ir assembly-tag ceiling (see `OutrunRouterTestNativeValueGate`); inherits the
  *     base router fixture.
  */
-contract OutrunRouterAdminSurfaceTest is OutrunRouterTest {
+contract OutrunRouterAdminSurfaceTest is OutrunRouterTestBase {
     // --------------------------------------------------------------------------
     // sweep
     // --------------------------------------------------------------------------

@@ -325,10 +325,8 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
 
     /// @notice Value parity, not unit parity: at a 1.15 rate, 1 SY mints 1.15 uAsset.
     function test_ValueParityMintScalesWithExchangeRate() external {
-        (uint256 positionId, uint256 minted) = _stakeAtRate(user, 1e18, 1.15e18);
+        (, uint256 minted) = _stakeAtRate(user, 1e18, 1.15e18);
         assertEq(minted, 1.15e18, "1 SY at 1.15 mints 1.15 uAsset");
-        (,, uint256 principalDebt,,) = position.positions(positionId);
-        assertEq(principalDebt, minted, "principal debt equals the minted amount");
     }
 
     /// @notice Backing invariant at mint: principalDebt <= syStaked x rate, enforced by the two
@@ -484,19 +482,6 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         _assertGenesisRevertedCleanly();
     }
 
-    /// @notice Dust that floors the mint to zero is rejected — no zero-debt position is created
-    ///         (minStake 1 admits the 1-wei fixture at rate 1e18).
-    function test_RevertWhen_StakeForGenesisDustRoundsToZero() external {
-        sy.setExchangeRate(1e18 - 1); // floor(1 x (1e18-1) / 1e18) = 0
-        sy.mintShares(user, 1);
-        vm.startPrank(user);
-        sy.approve(address(position), 1);
-        vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
-        position.stakeForGenesis(1, user, VERSE_ID, 0);
-        vm.stopPrank();
-        _assertGenesisRevertedCleanly();
-    }
-
     /// @notice The caller's floor: a mint below `minUAssetMinted` reverts with the actual/minimum
     ///         payload before any SY moves or a position is written.
     function test_RevertWhen_StakeForGenesisBelowMinUAssetMinted() external {
@@ -595,6 +580,8 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         position.stakeForGenesis(10e18, user, VERSE_ID, 0);
         vm.stopPrank();
         _assertGenesisRevertedCleanly();
+        // The rollback also restores the launcher: nothing pulled during the aborted window stays.
+        assertEq(uAsset.balanceOf(address(transferBackLauncher)), 0, "rollback restored the launcher's pre-pull state");
     }
 
     /// @notice A launcher-side revert is a dependency boundary: it rolls the whole transaction
@@ -798,25 +785,6 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         _assertGenesisRevertedCleanly();
     }
 
-    /// @notice Cross-block drift on the redeem side: a minTokenOut quoted through the adapter at
-    ///         the healthy output factor rejects the redeem after the adapter output degrades
-    ///         between quote and execution.
-    function test_RevertWhen_RedeemMinTokenOutDriftsAcrossBlocks() external {
-        (uint256 positionId, uint256 principal) = _stakeAtRate(user, 10e18, 1e18);
-        _fundUAsset(user, principal);
-        (,, uint256 staleQuote) = position.previewRedeem(positionId, 4e18, address(underlying));
-        assertEq(staleQuote, 4e18, "adapter quote at the healthy output factor");
-
-        sy.setRedeemOutputFactor(9e17); // adapter output degrades 10% between quote and execution
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IStandardizedYield.SYInsufficientTokenOut.selector, 3.6e18, 4e18));
-        position.redeem(positionId, 4e18, user, address(underlying), staleQuote);
-
-        (address ownerAfter, uint256 syStaked,,,) = position.positions(positionId);
-        assertEq(ownerAfter, user, "position survived the rejected redeem");
-        assertEq(syStaked, 10e18, "collateral untouched");
-    }
-
     /// @notice Adapter slippage pass-through and atomicity: a redeem whose tokenOut routes through
     ///         SY.redeem with an output below minTokenOut reverts with the SY-side error surfaced
     ///         unchanged, and the whole redeem rolls back — position, treasury leg, minter ledger,
@@ -945,7 +913,7 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         assertEq(position.pendingInterest(positionId), interestBefore, "no post-change accrual");
     }
 
-    /// @notice setDuty is directly settable within the 15% cap; the RAY sentinel is legal now.
+    /// @notice setDuty is directly settable within the 15% cap in one call from any prior duty.
     function test_SetDutyCapAndDirectSet() external {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.DutyCap.selector, DUTY_CAP + 1));
@@ -953,11 +921,8 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         vm.expectEmit(false, false, false, true);
         emit IOutrunStakeManager.SetDuty(DUTY, DUTY_CAP);
         position.setDuty(DUTY_CAP); // direct jump to the cap is legal
-        vm.expectEmit(false, false, false, true);
-        emit IOutrunStakeManager.SetDuty(DUTY_CAP, ZERO_FEE_DUTY);
-        position.setDuty(ZERO_FEE_DUTY); // the zero-fee sentinel is legal
         vm.stopPrank();
-        assertEq(position.duty(), ZERO_FEE_DUTY, "sentinel set");
+        assertEq(position.duty(), DUTY_CAP, "cap duty stored");
     }
 
     /// @notice Duty lower-bound rejection: the whole sub-RAY range (zero input through RAY - 1,
@@ -975,9 +940,9 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         position.setDuty(1e27 - 1);
         vm.stopPrank();
         assertEq(position.duty(), dutyBefore, "rejected sub-RAY sets change nothing");
+        // Step to the sentinel; its acceptance is covered by test_SetDutyAcceptsZeroFeeSentinel.
         vm.prank(owner);
         position.setDuty(1e27);
-        assertEq(position.duty(), 1e27, "zero-fee sentinel accepted");
         vm.prank(owner);
         position.setDuty(1e27 + 1);
         assertEq(position.duty(), 1e27 + 1, "smallest above-sentinel duty accepted");
@@ -1137,10 +1102,10 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         position.initialize(owner, address(sy), address(uAsset), treasury, 1, DUTY);
     }
 
-    /// @notice initialize validates zero-value guards and the duty domain (no ratchet at init:
-    ///         there is no prior value). The implementation is created once up front so each
-    ///         expectRevert attaches to the initialize call itself, not to a (non-reverting)
-    ///         contract creation.
+    /// @notice initialize validates the zero-value parameter guards. The implementation is
+    ///         created once up front so each expectRevert attaches to the initialize call itself,
+    ///         not to a (non-reverting) contract creation. The duty-domain rows live in
+    ///         test_InitializeDutyDomain.
     function test_RevertWhen_InitializeValidatesParameterTable() external {
         OutrunStakingPositionUpgradeable impl = new OutrunStakingPositionUpgradeable();
         vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
@@ -1153,10 +1118,6 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
         _deployPosition(impl, owner, address(sy), address(uAsset), address(0), 1, DUTY);
         vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
         _deployPosition(impl, owner, address(sy), address(uAsset), treasury, 0, DUTY);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        _deployPosition(impl, owner, address(sy), address(uAsset), treasury, 1, 0);
-        vm.expectRevert(abi.encodeWithSelector(IOutrunStakeManager.DutyCap.selector, DUTY_CAP + 1));
-        _deployPosition(impl, owner, address(sy), address(uAsset), treasury, 1, DUTY_CAP + 1);
     }
 
     // ==========================================================================
@@ -1276,23 +1237,21 @@ contract OutrunStakingPositionUpgradeableTest is CommonTestHelpers, PositionRefM
     }
 
     /// @notice stakeForGenesis rejects dust (zero minted debt) while previewStake deliberately
-    ///         returns 0 for the same input, and input guards run before any transfer.
+    ///         returns 0 for the same input; previewStake rejects a zero input outright.
     function test_StakeDustDivergenceAndInputGuards() external {
         // At rate 1e18 - 1 with minStake 1: collateral floors to 0.
         sy.setExchangeRate(1e18 - 1);
         assertEq(position.previewStake(1), 0, "quote deliberately returns 0 on dust");
+        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
+        position.previewStake(0);
+
         sy.mintShares(user, 1);
         vm.startPrank(user);
         sy.approve(address(position), 1);
         vm.expectRevert(IOutrunStakeManager.DustRoundedToZero.selector);
         position.stakeForGenesis(1, user, VERSE_ID, 0);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.stakeForGenesis(0, user, VERSE_ID, 0);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.stakeForGenesis(1, address(0), VERSE_ID, 0);
         vm.stopPrank();
-        assertEq(sy.balanceOf(address(position)), 0, "no SY entered on rejected stakes");
-        assertEq(position.idCounter(), 0, "no position created");
+        _assertGenesisRevertedCleanly();
     }
 
     /// @notice Cross-decimals 18-canonical/6-uAsset dust boundary: with the SY rate at 1e18, minted

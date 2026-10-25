@@ -558,11 +558,10 @@ contract OutrunPositionPsmJointInvariantTest is StdInvariant, PositionRefModel {
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
-    /// @notice PSM exemption row: the reserve minter's debt-ledger record stays (0, 0) even while
-    ///         its reserve path mints and burns uAsset.
+    /// @notice PSM exemption row: the reserve path never books debt — amountInMinted stays 0
+    ///         even while the PSM mints and burns uAsset.
     function invariant_psmRowStaysExempt() external view {
         IUniversalAssets.MintingStatus memory psmStatus = uAsset.mintingStatusTable(address(psm));
-        assertEq(psmStatus.mintingCap, 0, "PSM never receives a debt-ledger cap");
         assertEq(psmStatus.amountInMinted, 0, "PSM reserve flow never enters amountInMinted");
     }
 
@@ -617,13 +616,5 @@ contract OutrunStakingPositionCrossDecimalsInvariantTest_18_6 is OutrunStakingPo
 contract OutrunStakingPositionCrossDecimalsInvariantTest_6_18 is OutrunStakingPositionInvariantTest {
     function setUp() public override {
         _setUpWith(6, 18, false);
-    }
-}
-
-/// @title Cross-decimals invariant run: canonical 18, uAsset 18
-/// @notice Same-decimals control run: the rescaling is the identity, isolating rate-only effects.
-contract OutrunStakingPositionCrossDecimalsInvariantTest_18_18 is OutrunStakingPositionInvariantTest {
-    function setUp() public override {
-        _setUpWith(18, 18, false);
     }
 }

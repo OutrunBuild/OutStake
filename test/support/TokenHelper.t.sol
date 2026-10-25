@@ -165,14 +165,4 @@ contract TokenHelperTest is Test {
         uint256 balance = harness.exposedSelfBalance(address(token));
         assertEq(balance, 100 ether);
     }
-
-    function testSelfBalanceZeroNative() external {
-        uint256 balance = harness.exposedSelfBalance(address(0));
-        assertEq(balance, 0);
-    }
-
-    function testSelfBalanceZeroERC20() external {
-        uint256 balance = harness.exposedSelfBalance(address(token));
-        assertEq(balance, 0);
-    }
 }

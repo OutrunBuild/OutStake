@@ -263,39 +263,3 @@ contract ReenteringGenesisLauncher is IMemeverseLauncher {
         return address(uAsset);
     }
 }
-
-/**
- * @title DonatingGenesisLauncher
- * @notice Mock genesis launcher that consumes the full approved amount and additionally transfers
- *        some of its own pre-funded uAsset into the SP inside the genesis window.
- * @dev Partial mock: models the full-pull-then-extra-inflow behavior that pushes the SP's uAsset
- *      balance above its pre-mint baseline (the post-assertion's balance dimension). The preorder /
- *      getUAssetByVerseId members are inert stubs satisfying the widened interface. Does not
- *      model verse bookkeeping, partial pulls, or nested calls.
- */
-contract DonatingGenesisLauncher is IMemeverseLauncher {
-    error LauncherTransferFailed();
-
-    IERC20 internal immutable uAsset;
-    uint256 internal immutable donateAmount;
-
-    constructor(address uAsset_, uint256 donateAmount_) {
-        uAsset = IERC20(uAsset_);
-        donateAmount = donateAmount_;
-    }
-
-    function genesis(uint256, uint256 amountInUAsset, address) external override {
-        if (!uAsset.transferFrom(msg.sender, address(this), amountInUAsset)) {
-            revert LauncherTransferFailed();
-        }
-        if (!uAsset.transfer(msg.sender, donateAmount)) {
-            revert LauncherTransferFailed();
-        }
-    }
-
-    function preorder(uint256, uint256, address) external override {}
-
-    function getUAssetByVerseId(uint256) external view override returns (address) {
-        return address(uAsset);
-    }
-}

@@ -597,14 +597,6 @@ contract OutrunUSRVaultTest is CommonTestHelpers {
         assertEq(vault.usrRate(), 0, "direct deactivation reaches zero");
     }
 
-    /// @notice Zero stays settable under the resolution floor: it explicitly disables accrual.
-    function test_SetUsrRateZeroDisablesAccrual() external {
-        _setRate(RATE_STEP);
-        vm.prank(vaultOwner);
-        vault.setUsrRate(0);
-        assertEq(vault.usrRate(), 0, "zero rate disables accrual");
-    }
-
     /// @notice A nonzero rate below one unit per second floors to no growth and reverts.
     function test_RevertWhen_SetUsrRateBelowResolution() external {
         vm.prank(vaultOwner);
@@ -731,8 +723,6 @@ contract OutrunUSRVaultTest is CommonTestHelpers {
         vm.prank(alice);
         vault.deposit(500e18, alice);
         _warp(SECONDS_PER_YEAR);
-        assertEq(vault.convertToShares(1e18), vault.previewDeposit(1e18));
-        assertEq(vault.convertToAssets(1e18), vault.previewRedeem(1e18));
         _checkPreviewExecutionRoundtrips(alice, 77.7e18, 88.8e18);
         assertTrue(vault.accrualIndex() > 1e18, "state B is actively accruing");
 

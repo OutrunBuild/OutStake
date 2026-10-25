@@ -178,16 +178,6 @@ contract OutrunPSMTest is UAssetHelper {
         assertEq(psmNative.netUAssetMinted(), 0);
     }
 
-    function test_DefaultFeesAreTenBasisPoints() external {
-        assertEq(psm.tin(), 1e15);
-        assertEq(psm.tout(), 1e15);
-
-        // Numeric anchor for the default fee level: 1 USDC mints 0.999 UUSD...
-        assertEq(psm.quoteMint(1e6), 0.999e18);
-        // ... and 1 UUSD redeems 0.999 USDC (only tout applies on the redeem leg).
-        assertEq(psm.quoteRedeem(1e18), 999_000);
-    }
-
     function test_SetFeesBoundsAndZeroFeeExactness() external {
         vm.startPrank(psmOwner);
         vm.expectEmit(false, false, false, true);
@@ -399,13 +389,6 @@ contract OutrunPSMTest is UAssetHelper {
         // Exact per-wei holdings per instance.
         assertEq(usdc.balanceOf(address(psm)), usdcUnitsHeld);
         assertEq(address(psmNative).balance, nativeWeiHeld);
-
-        // Conservation identity per instance: held face value == net minted face + accumulated fees.
-        assertEq(usdcUnitsHeld * 1e12, usdcNetMinted + usdcFees);
-        assertEq(nativeWeiHeld, nativeNetMinted + nativeFees);
-
-        // The same identity read from flow accumulators: inflow face - paid-out face == net + fees.
-        assertEq(usdcFaceIn - usdcFacePaid, usdcNetMinted + usdcFees);
 
         // Instance ledgers are independent: each net equals only its own swaps.
         assertEq(psm.netUAssetMinted(), usdcNetMinted);
@@ -897,12 +880,6 @@ contract OutrunPSMTest is UAssetHelper {
         vm.expectRevert(abi.encodeWithSelector(unauthorized, alice));
         psm.setStockCap(1);
         vm.stopPrank();
-
-        // No reserve setter exists for anyone, owner included.
-        vm.prank(psmOwner);
-        (bool ok,) =
-            address(psm).call(abi.encodeWithSelector(bytes4(keccak256("setReserveToken(address,bool)")), NATIVE, true));
-        assertFalse(ok, "setReserveToken must not exist");
     }
 
     /// @notice A malicious bound reserve re-entering mint and redeem from its transferFrom

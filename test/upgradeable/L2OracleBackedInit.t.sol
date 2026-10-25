@@ -60,14 +60,10 @@ contract L2OracleBackedInitTest is UAssetHelper {
         h.validateOracleBacked(L1_USDC, 255, address(oracle));
     }
 
-    function test_PassWhen_GenericAssetInRange() external {
+    function test_PassWhen_GenericAndKnownAssetsInRange() external {
         L2ValidationHarness h = new L2ValidationHarness();
         h.validateOracleBacked(L1_USDC, 6, address(oracle));
         h.validateOracleBacked(L1_USDC, 18, address(oracle));
-    }
-
-    function test_PassWhen_KnownAssetCorrect() external {
-        L2ValidationHarness h = new L2ValidationHarness();
         h.validateOracleBacked(L1_STETH, 18, address(oracle));
     }
 
@@ -168,7 +164,6 @@ contract L2OracleBackedInitTest is UAssetHelper {
         uint256 amountInSY = 10e18;
         uint256 preview6 = pos6.previewStake(amountInSY);
         uint256 preview18 = pos18.previewStake(amountInSY);
-        assertEq(preview6 / preview18, 1e12, "6 vs 18 mis-scale is 1e12");
         assertEq(preview6, preview18 * 1e12);
     }
 

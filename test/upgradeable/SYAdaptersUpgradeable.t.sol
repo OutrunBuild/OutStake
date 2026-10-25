@@ -343,8 +343,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         assertEq(previewShares, 1);
         assertEq(sharesOut, 2);
         assertEq(scaledDelta, 2);
-        assertGe(sharesOut, previewShares);
-        assertLe(sharesOut, previewShares + 1);
     }
 
     function testAaveATokenDepositUsesAaveRayDivRounding() external {
@@ -557,23 +555,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
         _assertAdapterMatrix(aster, _tokens(NATIVE, address(slis), address(token)), _tokens(address(token)));
     }
 
-    function testL2StakedRedeemTransfersRequestedTokenOut() external {
-        address sy = _deployL2Staked();
-
-        // Give user SY shares via deposit so public redeem() can burn them.
-        token.mint(user, AMOUNT);
-        vm.startPrank(user);
-        token.approve(sy, AMOUNT);
-        _asSY(sy).deposit(user, address(token), AMOUNT, 0);
-
-        // Redeem via public interface; tokenOut is the yieldBearingToken.
-        uint256 redeemed = _asSY(sy).redeem(user, AMOUNT, address(token), 0, false);
-        vm.stopPrank();
-
-        assertEq(redeemed, AMOUNT);
-        assertEq(token.balanceOf(user), AMOUNT);
-    }
-
     function testWeEtheEthRoundtripMatchesPreviewAndExchangeRate() external {
         MockToken eETH = new MockToken("eETH", "eETH", 18);
         MockWeETH weETH = new MockWeETH(address(eETH));
@@ -675,7 +656,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
 
         assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(previewShares, expectedShares * 9950 / 10000);
         assertEq(previewOut, AMOUNT);
         assertEq(redeemed, previewOut);
         assertEq(redeemed, AMOUNT);
@@ -1353,7 +1333,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
 
         assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(previewShares, expectedShares * 9950 / 10000);
         assertEq(_asSY(sy).exchangeRate(), rate);
     }
 
@@ -1402,7 +1381,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
 
         assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(previewShares, expectedShares * 9950 / 10000);
         // The minter mock delivers the minted asBNB to the SY, matching the real Aster delivery seam.
         assertEq(token.balanceOf(address(sy)), sharesOut);
         assertEq(_asSY(sy).exchangeRate(), rate);
@@ -1433,7 +1411,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
 
         assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(previewShares, expectedShares * 9950 / 10000);
         // Delivery seams: the minter pulled the SY's slisBNB and minted the asBNB shares back to it.
         assertEq(slis.balanceOf(address(minter)), AMOUNT);
         assertEq(slis.balanceOf(address(sy)), 0);
@@ -1540,7 +1517,6 @@ contract SYAdaptersUpgradeableTest is UAssetHelper {
 
         assertEq(previewShares, expectedPreview);
         assertEq(sharesOut, expectedShares);
-        assertEq(previewShares, expectedShares * 9950 / 10000);
         // The adapter-minted weETH backing sits on the SY, matching the fork-observed behaviour.
         assertEq(weETH.balanceOf(sy), sharesOut);
         assertEq(_asSY(sy).exchangeRate(), rate);

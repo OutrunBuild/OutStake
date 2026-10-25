@@ -11,7 +11,6 @@ import {
     OFTReceipt,
     SendParam
 } from "@layerzerolabs/oft-evm/contracts/interfaces/IOFT.sol";
-import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
@@ -118,7 +117,7 @@ contract OutrunOFTUpgradeableTest is Test {
 
     /// @dev First test to drive send() through the endpoint mock's return path: with a peer
     ///      configured and the token unpaused, the send must debit and burn the dust-free
-    ///      amount, decode the endpoint's MessagingReceipt return, and emit OFTSent with it.
+    ///      amount and emit OFTSent carrying the endpoint receipt's guid.
     function testUnpausedSendCompletesAndEmitsOftSent() external {
         vm.prank(owner);
         oft.setPeer(DST_EID, bytes32(uint256(uint160(address(oft)))));
@@ -126,11 +125,9 @@ contract OutrunOFTUpgradeableTest is Test {
         vm.prank(user);
         vm.expectEmit(true, true, false, true);
         emit IOFT.OFTSent(bytes32(0), DST_EID, user, 25e18, 25e18);
-        (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) =
+        (, OFTReceipt memory oftReceipt) =
             oft.send(_sendParam(25e18), MessagingFee({nativeFee: 0, lzTokenFee: 0}), user);
 
-        assertEq(receipt.guid, bytes32(0));
-        assertEq(receipt.nonce, 0);
         assertEq(oftReceipt.amountSentLD, 25e18);
         assertEq(oftReceipt.amountReceivedLD, 25e18);
         assertEq(oft.balanceOf(user), 75e18);
@@ -472,7 +469,6 @@ contract OutrunOFTUpgradeableTest is Test {
         uint256 envelope = uint256(type(uint64).max) * oft.decimalConversionRate();
         assertEq(canBeSent, envelope);
         assertEq(oftLimit.maxAmountLD, envelope);
-        assertEq(oftLimit.maxAmountLD, canBeSent);
         assertEq(oftLimit.minAmountLD, oft.decimalConversionRate());
     }
 
@@ -488,7 +484,6 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(canBeSent, 40e18);
 
         (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
-        assertEq(oftLimit.maxAmountLD, canBeSent);
         assertEq(oftLimit.maxAmountLD, 40e18);
     }
 
@@ -573,12 +568,6 @@ contract OutrunOFTUpgradeableTest is Test {
         assertEq(received, 25e18);
         assertEq(oft.balanceOf(user), 75e18);
         assertEq(oft.totalSupply(), 75e18);
-    }
-
-    /// @dev Regression: quoteOFT signals dust as unsendable via minAmountLD.
-    function testQuoteOFTMinAmountSignalsDustRejection() external {
-        (OFTLimit memory oftLimit,,) = oft.quoteOFT(_sendParam(0));
-        assertEq(oftLimit.minAmountLD, oft.decimalConversionRate());
     }
 }
 

@@ -124,10 +124,6 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
     // Band at elapsed = 0
     // --------------------------------------------------------------------------
 
-    function test_EqualReadingPassesAtZeroElapsed() external {
-        assertEq(sy.exchangeRate(), ANCHOR);
-    }
-
     /// @notice At elapsed 0 the rise allowance is 0: any strictly higher reading reverts instantly.
     function test_RevertWhen_StrictlyHigherReadingAtZeroElapsed() external {
         uint256 higher = ANCHOR + 1;
@@ -142,6 +138,8 @@ contract L2OracleRateBreakerUpgradeableTest is UAssetHelper {
         assertEq(sy.exchangeRate(), _applyBps(ANCHOR, -10));
         oracle.setExchangeRate(_applyBps(ANCHOR, -5));
         assertEq(sy.exchangeRate(), _applyBps(ANCHOR, -5));
+        oracle.setExchangeRate(ANCHOR); // equal reading: the 0 bps upper bound is also inclusive
+        assertEq(sy.exchangeRate(), ANCHOR);
     }
 
     // --------------------------------------------------------------------------

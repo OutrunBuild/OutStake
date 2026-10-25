@@ -560,15 +560,6 @@ contract OutstakeScriptMockSYDeployTest is Test {
             }
             assertTrue(found, "missing testnet chain id");
         }
-
-        // Belt-and-braces: with the length and every expected member already pinned, a duplicate
-        // is impossible, but this direct pairwise check keeps the multiset pinned even if the
-        // length assert above is ever relaxed.
-        for (uint256 i; i < actual.length; ++i) {
-            for (uint256 j = i + 1; j < actual.length; ++j) {
-                assertTrue(actual[i] != actual[j], "duplicate testnet chain id");
-            }
-        }
     }
 
     function _assertUsableSY(IStandardizedYield sy, address yieldToken, uint256 expectedExchangeRate) internal {

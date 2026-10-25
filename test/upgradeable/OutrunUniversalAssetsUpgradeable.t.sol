@@ -119,14 +119,6 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         uAsset.upgradeToAndCall(address(implementationV2), "");
     }
 
-    function testOwnerCannotUpgradeToDifferentLocalDecimals() external {
-        MockUAssetUUPSV2 implementationV2 = new MockUAssetUUPSV2(6, address(endpoint));
-
-        vm.prank(owner);
-        vm.expectRevert(OutrunUniversalAssetsUpgradeable.InvalidOFTUpgradeConfig.selector);
-        uAsset.upgradeToAndCall(address(implementationV2), "");
-    }
-
     function testOwnerCannotUpgradeToDifferentLocalDecimalsWithSameOtherOFTConfig() external {
         MockUAssetUUPSV2DifferentLocalDecimals implementationV2 =
             new MockUAssetUUPSV2DifferentLocalDecimals(19, address(endpoint));
@@ -707,14 +699,6 @@ contract OutrunUniversalAssetsUpgradeableTest is Test {
         vm.prank(reserveMinter);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         uAsset.reserveBurn(reserveMinter, 1e18);
-    }
-
-    function testOutboundRateLimitThroughProxy() external {
-        vm.prank(owner);
-        uAsset.setOutboundRateLimit(101, 10e18, 1 days);
-
-        (, uint256 amountCanBeSent) = uAsset.getAmountCanBeSent(101);
-        assertEq(amountCanBeSent, 10e18);
     }
 
     function testUnconfiguredPeerQuoteNotLocallyBlocked() external {

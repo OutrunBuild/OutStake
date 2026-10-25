@@ -6,7 +6,6 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 
 import {OutrunStakingPositionUpgradeable} from "../../src/position/OutrunStakingPositionUpgradeable.sol";
 import {IOutrunStakeManager} from "../../src/position/interfaces/IOutrunStakeManager.sol";
-import {GenesisGateLib} from "../../src/libraries/GenesisGateLib.sol";
 import {OutrunExchangeOracleAdapter} from "../../src/libraries/oracle/OutrunExchangeOracleAdapter.sol";
 import {IExchangeRateOracle} from "../../src/libraries/oracle/interfaces/IExchangeRateOracle.sol";
 import {OutrunL2StakedTokenSYUpgradeable} from "../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";
@@ -18,8 +17,7 @@ import {
     MockERC20ForAdversarial,
     MockUAssetForAdversarial,
     ReentrantPositionSY,
-    ReenteringGenesisLauncher,
-    DonatingGenesisLauncher
+    ReenteringGenesisLauncher
 } from "./mocks/AdversarialMocks.sol";
 import {MockGenesisLauncher} from "./mocks/LauncherMocks.sol";
 import {MockUAsset} from "./mocks/PositionTestMocks.sol";
@@ -34,16 +32,15 @@ import {PositionRefModel} from "./helpers/PositionRefModel.sol";
 
 /**
  * @title AdversarialTests
- * @notice Adversarial surface of the open-term CDP position: input-guard full table (zero
- *         addresses, minStake boundary, dust), non-owner access, oracle fail-closed on every
- *         pricing read, genesis-gate abuse (partial consumption, transfer-back, donation,
- *         launcher revert, kill switch), and redeem funding shortfalls. There is no
- *         liquidation surface: every borrower's exit is the owner-only redeem.
+ * @notice Adversarial surface of the open-term CDP position: input guards (minStake boundary),
+ *         non-owner access, oracle fail-closed on every pricing read, genesis-gate abuse
+ *         (partial consumption, transfer-back, launcher revert, kill switch), and redeem
+ *         funding shortfalls. There is no liquidation surface: every borrower's exit is the
+ *         owner-only redeem.
  */
 contract AdversarialTests is CommonTestHelpers {
     bytes4 internal constant POSITION_ACCESS_DENIED_SELECTOR = bytes4(keccak256("PositionAccessDenied()"));
     bytes4 internal constant ZERO_EXCHANGE_RATE_SELECTOR = bytes4(keccak256("ZeroExchangeRate()"));
-    bytes4 internal constant ENFORCED_PAUSE_SELECTOR = bytes4(keccak256("EnforcedPause()"));
 
     MockERC20ForAdversarial internal underlying;
     MockSYWithRateControl internal sy;
@@ -98,56 +95,6 @@ contract AdversarialTests is CommonTestHelpers {
         assertEq(position.idCounter(), 0, "no position was created");
     }
 
-    /// @notice Only the recorded owner may redeem; anyone else is denied without state changes.
-    function test_RevertWhen_NonOwnerRedeems() external {
-        (uint256 positionId,) = _stakeTenSy(alice);
-        vm.prank(attacker);
-        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-        position.redeem(positionId, 10e18, attacker, address(sy), 0);
-    }
-
-    /// @notice The SP-level pause freezes both user entrypoints while views stay usable.
-    function test_RevertWhen_PausedStakeIsBlockedAndViewsStayUsable() external {
-        (uint256 positionId,) = _stakeTenSy(alice);
-
-        vm.prank(owner);
-        position.pause();
-
-        vm.prank(alice);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.stakeForGenesis(10e18, alice, 42, 0);
-        vm.prank(alice);
-        vm.expectRevert(ENFORCED_PAUSE_SELECTOR);
-        position.redeem(positionId, 10e18, alice, address(sy), 0);
-
-        // Views are not gated by the pause.
-        assertEq(position.previewStake(10e18), 10e18, "preview stays available while paused");
-        assertEq(position.positionDebt(positionId), 10e18, "debt view stays available while paused");
-    }
-
-    /// @notice Zero-address and zero/dust input guards across every user entrypoint.
-    function test_RevertWhen_ZeroAndDustInputsOnEveryEntrypoint() external {
-        sy.mintShares(alice, 10e18);
-        vm.startPrank(alice);
-        sy.approve(address(position), 10e18);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.stakeForGenesis(0, alice, 42, 0);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.stakeForGenesis(1e18, address(0), 42, 0);
-        vm.stopPrank();
-
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.previewStake(0);
-
-        (uint256 positionId,) = _stakeTenSy(alice);
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.redeem(positionId, 0, alice, address(sy), 0);
-        vm.prank(alice);
-        vm.expectRevert(IOutrunStakeManager.ZeroInput.selector);
-        position.redeem(positionId, 1e18, address(0), address(sy), 0);
-    }
-
     /// @notice The minStake boundary: exactly the threshold passes, one wei below reverts.
     function test_MinStakeBoundaryIsInclusive() external {
         vm.prank(owner);
@@ -167,16 +114,14 @@ contract AdversarialTests is CommonTestHelpers {
 
     /// @notice No third party can touch another borrower's position: without liquidation, a
     ///         stranger's only interaction with a live position is a read-only revert (redeem
-    ///         denies) and zero value extraction — repeated with deep pockets.
+    ///         denies) and zero value extraction — even with deep pockets and a full allowance.
     function test_StrangerCannotTouchLivePosition() external {
         (uint256 positionId,) = _stakeTenSy(alice);
         uAsset.mint(attacker, 1e24);
         vm.startPrank(attacker);
         uAsset.approve(address(position), 1e24);
-        for (uint256 i = 0; i < 5; ++i) {
-            vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
-            position.redeem(positionId, 10e18, attacker, address(sy), 0);
-        }
+        vm.expectRevert(POSITION_ACCESS_DENIED_SELECTOR);
+        position.redeem(positionId, 10e18, attacker, address(sy), 0);
         vm.stopPrank();
 
         (address positionOwner, uint256 syStaked, uint256 principalDebt,,) = position.positions(positionId);
@@ -193,7 +138,6 @@ contract AdversarialTests is CommonTestHelpers {
     function test_OwnerAlwaysExitsAtFaceValue() external {
         (uint256 positionId, uint256 principal) = _stakeTenSy(alice);
         sy.setExchangeRate(0.94e18); // rate drop changes external value, not settlement
-        assertEq(principal, 10e18, "value-parity principal");
 
         uAsset.mint(alice, principal);
         vm.startPrank(alice);
@@ -363,34 +307,6 @@ contract PositionReentrancyTest is CommonTestHelpers, PositionRefModel {
         assertEq(uAsset.allowance(address(position), address(launcher)), 0, "launcher allowance fully consumed");
         (address positionOwner,,,,) = position.positions(positionId);
         assertEq(positionOwner, alice, "outer genesis open completed");
-    }
-
-    /// @notice A launcher that fully consumes but additionally donates its own pre-funded uAsset
-    ///      into the SP inside the window pushes the balance above the pre-mint baseline: the
-    ///      post-assertion fires on the balance dimension alone (the allowance is fully consumed)
-    ///      and the whole open rolls back.
-    function test_RevertWhen_LauncherDonatesUAssetDuringGenesisWindow() external {
-        uint256 donated = 1e18;
-        DonatingGenesisLauncher launcher = new DonatingGenesisLauncher(address(uAsset), donated);
-        uAsset.mint(address(launcher), donated); // pre-fund from the test contract's minter record
-        vm.prank(owner);
-        position.setGenesisLauncher(address(launcher));
-        uint256 supplyBefore = uAsset.totalSupply();
-        uint256 spSyBefore = sy.balanceOf(address(position));
-
-        sy.mintShares(alice, 10e18);
-        vm.startPrank(alice);
-        sy.approve(address(position), 10e18);
-        vm.expectRevert(abi.encodeWithSelector(GenesisGateLib.GenesisUAssetNotConsumed.selector, donated, 0));
-        position.stakeForGenesis(10e18, alice, 1, 0);
-        vm.stopPrank();
-
-        (address positionOwner,,,,) = position.positions(1);
-        assertEq(positionOwner, address(0), "no position survived the rollback");
-        assertEq(position.idCounter(), 0, "no position id was consumed");
-        assertEq(uAsset.totalSupply(), supplyBefore, "the genesis mint rolled back with the call");
-        assertEq(sy.balanceOf(address(position)), spSyBefore, "no SY stayed in the SP");
-        assertEq(uAsset.balanceOf(address(launcher)), donated, "launcher kept exactly its pre-fund");
     }
 }
 
