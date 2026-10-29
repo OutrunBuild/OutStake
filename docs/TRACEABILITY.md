@@ -9,7 +9,6 @@
 - Claude agents: .claude/agents/*
 - Codex agents: .codex/agents/*
 - ZCode agents: .zcode/agents/*
-- Pi agents: .pi/agents/*
 - Enforcement entrypoint: script/harness/gate.sh
 - Scope-rule generator: script/harness/sync-agent-docs.sh (regenerates `.claude/rules/solidity-*.md` from the nested `src/AGENTS.md`, `script/AGENTS.md`, `test/AGENTS.md`; `--check` verifies no drift)
 - Generated scope rules: `.claude/rules/solidity-contracts.md` (from `src/AGENTS.md`), `.claude/rules/solidity-scripts.md` (from `script/AGENTS.md`), `.claude/rules/solidity-tests.md` (from `test/AGENTS.md`)
