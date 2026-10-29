@@ -39,7 +39,7 @@ docs/TRACEABILITY.md lists control files and artifact locations; other repositor
 - Current Solidity contracts are pre-deployment development artifacts unless a human explicitly says deployed compatibility must be preserved.
 - Review roles remain reviewer-only; do not place verifier inside review roles.
 - Project agent files (all agent trees listed in docs/TRACEABILITY.md) are execution files. They do not define policy or verdict rules.
-- Agent role-body contract text (from the `## Role` section onward) is replicated across every agent tree listed in docs/TRACEABILITY.md (currently four: `.claude/agents/`, `.codex/agents/`, `.zcode/agents/`, `.pi/agents/`); each tree is that tool's agent-definition directory (Claude Code, Codex, ZCode, Pi). Any role-body revision or new role file must land in all trees' same-named files within the same change; never scope a role-body fix or addition to a single tree.
+- Agent role-body contract text (from the `## Role` section onward) is replicated across every agent tree listed in docs/TRACEABILITY.md (currently three: `.claude/agents/`, `.codex/agents/`, `.zcode/agents/`); each tree is that tool's agent-definition directory (Claude Code, Codex, ZCode). Any role-body revision or new role file must land in all trees' same-named files within the same change; never scope a role-body fix or addition to a single tree.
 - Do not create a parallel control plane outside policy, gate, and project agent files.
 - Deleting untracked files from the current git working tree requires explicit human confirmation.
 
