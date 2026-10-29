@@ -84,6 +84,7 @@
       "^lib/openzeppelin-contracts-upgradeable$",
       "^lib/solidity-bytes-utils$",
       "^lib/solmate$",
+      "^LICENSE.*$",
       "^npm-shrinkwrap\\.json$",
       "^package-lock\\.json$",
       "^package\\.json$",
