@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @title Address array utility library
 /// @notice Allocates fixed-length address arrays from plain arguments. Consumed by the yield adapter family

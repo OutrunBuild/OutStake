@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {PositionStackTestBase} from "./helpers/PositionStackTestBase.sol";
 import {MockPositionUUPSV2} from "./mocks/MockUUPSVersion.sol";

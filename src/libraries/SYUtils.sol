@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @title SY (Standardized Yield) conversion helpers
 /// @notice Conversion helpers from SY (Standardized Yield) shares to canonical asset amounts: canonical asset is

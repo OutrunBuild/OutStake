@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {IListaStakeManager} from "../../../integrations/lista/interfaces/IListaStakeManager.sol";
 import {ArrayLib} from "../../../libraries/ArrayLib.sol";

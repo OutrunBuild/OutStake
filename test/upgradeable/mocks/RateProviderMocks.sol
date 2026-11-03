@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @notice Rate provider whose conversion-rate call always reverts.
 /// @dev Models the failing-call seam of the Sky SSR rate provider: the L2 sUSDS SY adapter must

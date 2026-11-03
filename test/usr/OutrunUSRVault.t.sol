@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Vm} from "forge-std/Vm.sol";

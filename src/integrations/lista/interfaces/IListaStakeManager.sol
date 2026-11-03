@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @title Lista BNB StakeManager interface (BSC mainnet ABI mirror)
 /// @notice The on-chain Lista StakeManager that stakes native BNB and mints slisBNB.

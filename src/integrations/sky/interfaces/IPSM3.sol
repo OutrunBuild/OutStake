@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /**
  * @title Sky Peg Stability Module (PSM3) interface

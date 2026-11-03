@@ -32,10 +32,11 @@ case "$chain" in
     *) echo "unknown chain: $chain" >&2; exit 1 ;;
 esac
 
-# 部署代优先级：显式环境变量 > .env 的 DEPLOYMENT_NONCE（部署时由编排器回填）> 1（同 deploy.sh）
+# 部署代优先级：显式环境变量 > .env 的 CURRENT_DEPLOYMENT_NONCE（部署时由编排器回填；不用
+# DEPLOYMENT_NONCE 键名——forge test 自动加载 .env，同名键会击穿守卫测试的 unset 断言）> 1（同 deploy.sh）
 _explicit_nonce="${DEPLOYMENT_NONCE:-}"
 source "$repo_root/.env"
-export DEPLOYMENT_NONCE="${_explicit_nonce:-${DEPLOYMENT_NONCE:-1}}"
+export DEPLOYMENT_NONCE="${_explicit_nonce:-${CURRENT_DEPLOYMENT_NONCE:-1}}"
 export BATCH="$batch"
 
 # Verification is ON by default (VERIFY=0 disables): forge --verify failures are non-fatal,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @title Minimal POLend leveraged-genesis surface consumed by OutrunRouter.
 /// @notice Read/write subset of the Memeverse POLend used by the router's PSM-gate leveraged

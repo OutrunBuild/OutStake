@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @notice Minimal view over a Chainlink-style price feed. Only the two members
 /// OutrunExchangeOracleAdapter actually consumes are declared. The full official AggregatorV2V3Interface

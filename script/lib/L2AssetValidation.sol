@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @title L2 Oracle-Backed SY Deployment Validation
 /// @notice Deployment-time guard for L2 oracle-backed SY family.

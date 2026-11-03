@@ -66,7 +66,7 @@ Prefer custom errors: `error InsufficientBalance();` + `revert InsufficientBalan
 - **Treat compiler warnings as errors**; limit the value held by a single contract.
 
 ## Project specifics
-- Compiler: Solidity `0.8.35`, `via_ir = true`, `optimizer_runs = 200`, `evm_version = prague`. Verify deployments use exactly these settings.
+- Compiler: Solidity `0.8.38`, `via_ir = true`, `optimizer_runs = 200`, `evm_version = prague`. Verify deployments use exactly these settings.
 - `foundry.toml` sets no `[fmt]` override → `forge fmt` defaults (`line_length = 120`, `tab_width = 4`). `forge lint` runs all detectors; pre-existing accepted findings are snapshotted in `script/harness/forge-lint-baseline.json`, and only NEW findings fail the gate (`script/harness/forge-lint-baseline.sh`). All suppression — including formerly inline-suppressed sites — lives in the baseline file; rationale comments stay next to the code. Apply the naming table above regardless (immutables here are mixedCase by convention).
 - "Stack too deep": pack variables into structs, split large functions, or rely on `via_ir` (already enabled) as a last resort.
 - On surgical edits, follow the file's existing conventions; do not rename or reorder unrelated code.

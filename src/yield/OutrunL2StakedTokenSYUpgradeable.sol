@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {OutrunL2OracleBackedSYUpgradeable} from "./OutrunL2OracleBackedSYUpgradeable.sol";
 

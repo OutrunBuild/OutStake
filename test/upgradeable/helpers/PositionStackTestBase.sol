@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {OutrunUniversalAssetsUpgradeable} from "../../../src/assets/base/OutrunUniversalAssetsUpgradeable.sol";
 import {OutrunL2StakedTokenSYUpgradeable} from "../../../src/yield/OutrunL2StakedTokenSYUpgradeable.sol";

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 /// @dev Stand-in for a Chainlink-style feed. Only `decimals()` and `latestRoundData()` are read by
 /// OutrunExchangeOracleAdapter (via address cast); the `setLatest*` setters drive test scenarios.

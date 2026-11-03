@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {OutrunRouter} from "../../src/router/OutrunRouter.sol";
 import {IStandardizedYield} from "../../src/yield/interfaces/IStandardizedYield.sol";
