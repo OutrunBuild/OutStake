@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 // solhint-disable no-console,check-send-result
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {IOAppCore} from "@layerzerolabs/oapp-evm/contracts/oapp/interfaces/IOAppCore.sol";
 import {ILayerZeroEndpointV2} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
@@ -173,6 +173,9 @@ contract OutstakeScript is BaseScript {
             // returns; the orchestrator must run `mocks` first and backfill between the two.
             _deployMockERC20SY(nonce);
         } else if (batch == keccak256(bytes("mocksp"))) {
+            // The SP-side genesis guard compares against this pin — without the assignment
+            // it stays zero and every mock SP deploy reverts InvalidAddress.
+            memeverseLauncher = vm.envAddress("MEMEVERSE_LAUNCHER");
             _supportMockAUSDC(nonce); // fits the code size limit at any tier <= 100000
             _supportMockSUSDS(nonce); // fits the code size limit at any tier <= 100000
         } else {
@@ -842,6 +845,21 @@ contract OutstakeScript is BaseScript {
         // (stakeForGenesis disabled); a present key was validated above and is wired here.
         if (wireGenesisLauncher) {
             OutrunStakingPositionUpgradeable(spAddress).setGenesisLauncher(genesisLauncherAddr);
+        }
+
+        // Router CDP-gate trust: the router refuses genesisByToken/genesisBySY against any SP
+        // missing from its trust tables (UntrustedRouterTarget), so the SP is unusable until
+        // both setters run. Registering in the same broadcast as the deploy keeps a fresh
+        // generation from shipping SPs the router rejects. Order matters: setTrustedSP re-reads
+        // trustedSY(SY), so the SY goes first. Idempotent setters — reruns are no-ops.
+        // The code guard keeps local unit tests (no router deployed in their EVM) on the SP-only
+        // path while real broadcasts (phase 8 deploys the router before phase 9/10 run) register.
+        // wire-audit asserts trustedSYForSP[SP] == SP.SY() per SP, so a skipped registration
+        // cannot slip through a deploy.
+        address routerAddr = vm.envOr("OUTRUN_ROUTER", address(0));
+        if (routerAddr != address(0) && routerAddr.code.length > 0) {
+            IOutrunRouter(routerAddr).setTrustedSY(syAddress, true);
+            IOutrunRouter(routerAddr).setTrustedSP(spAddress, syAddress);
         }
     }
 

@@ -1,7 +1,7 @@
 module.exports = {
     extends: "solhint:recommended",
     rules: {
-        "compiler-version": ["error", "^0.8.28"],
+        "compiler-version": ["error", "^0.8.38"],
         "func-name-mixedcase": "off",
         "func-visibility": ["error", { ignoreConstructors: true }],
         "function-max-lines": "off",

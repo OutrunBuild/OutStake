@@ -26,7 +26,7 @@ profile="t$optimizer_runs"
 
 case "$chain" in
     bsc_testnet) chain_flags=(--priority-gas-price 100000000 --with-gas-price 600000000 --slow) ;;
-    sepolia) chain_flags=(--priority-gas-price 20000000 --with-gas-price 2000000000) ;;
+    sepolia) chain_flags=(--priority-gas-price 20000000 --with-gas-price 2000000000 --gas-estimate-multiplier 800) ;;
     base_sepolia) chain_flags=(--priority-gas-price 1000000 --with-gas-price 100000000) ;;
     arbitrum_sepolia) chain_flags=(--priority-gas-price 1000000 --with-gas-price 100000000) ;;
     *) echo "unknown chain: $chain" >&2; exit 1 ;;

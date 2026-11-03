@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 // solhint-disable no-console
-pragma solidity ^0.8.35;
+pragma solidity ^0.8.38;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -14,6 +14,7 @@ import {OutrunAaveV3SYUpgradeable} from "../../src/yield/adapters/aave/OutrunAav
 import {OutrunStakedUSDeSYUpgradeable} from "../../src/yield/adapters/ethena/OutrunStakedUSDeSYUpgradeable.sol";
 import {OutrunSlisBNBSYUpgradeable} from "../../src/yield/adapters/lista/OutrunSlisBNBSYUpgradeable.sol";
 import {SPDefaults} from "../lib/SPDefaults.sol";
+import {IOutrunRouter} from "../../src/router/interfaces/IOutrunRouter.sol";
 import {SYBaseUpgradeable} from "../../src/yield/SYBaseUpgradeable.sol";
 
 contract YieldDeployScript is BaseScript {
@@ -106,6 +107,13 @@ contract YieldDeployScript is BaseScript {
         IUniversalAssets(uAsset).setMintingCap(sp, mintingCap_);
         if (wireGenesisLauncher) {
             OutrunStakingPositionUpgradeable(sp).setGenesisLauncher(genesisLauncherAddr);
+        }
+        // Router CDP-gate trust, same rationale, ordering, and code guard as
+        // OutstakeScript._supportMockSY (unit-test EVMs carry no router code).
+        address routerAddr = vm.envOr("OUTRUN_ROUTER", address(0));
+        if (routerAddr != address(0) && routerAddr.code.length > 0) {
+            IOutrunRouter(routerAddr).setTrustedSY(sy, true);
+            IOutrunRouter(routerAddr).setTrustedSP(sp, sy);
         }
         return sp;
     }
